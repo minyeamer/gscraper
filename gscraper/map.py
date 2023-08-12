@@ -66,6 +66,7 @@ def filter_exists(__object, **kwargs) -> Any:
 ############################## Array ##############################
 ###################################################################
 
+is_2darray = lambda array: isinstance(array, List) and array and isinstance(array[0], List)
 iloc = lambda array, index: [array[i] for i in (range(index) if isinstance(index, int) else index) if i < len(array)]
 
 
@@ -76,7 +77,7 @@ def chain_list(iterable: Iterable[Iterable], empty=True, **kwargs) -> List:
 
 
 def chain_exists(iterable: Iterable[Iterable], **kwargs) -> List:
-    return chain_list(iterable, empty=False, **kwargs)
+    return chain_list(iterable, empty=False, **kwargs) if is_2darray(iterable) else filter_exists(iterable)
 
 
 def match_list(iterable: Iterable[Iterable], how="all", value=None, empty=True, unique=False, **kwargs) -> Tuple[List]:
