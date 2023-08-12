@@ -5,3 +5,5 @@ from .excel import *
 from .logs import *
 from .map import *
 from .parse import *
+
+__version__ = "0.0.3"
