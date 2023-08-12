@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from gscraper import __version__
 
 REQUIRES = [
     "pandas>=1.1.4",
@@ -16,7 +17,7 @@ REQUIRES = [
 
 setup(
     name="gcp-scraper",
-    version="0.0.4",
+    version=__version__,
     description="Scraping utils with GCP functions",
     url="https://github.com/minyeamer/gscraper.git",
     author="minyeamer",

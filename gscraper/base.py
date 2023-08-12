@@ -186,7 +186,7 @@ class Spider(CustomDict):
         self.redirectErrors = redirectErrors
         self.localSave = localSave
         self.extraSave = extraSave
-        if filterArgs: self.update(filterArgs(**kwargs))
+        self.update(filterArgs(**kwargs) if filterArgs else kwargs)
         if queryKey and querySheet:
             self.read_query(queryKey, querySheet, queryFields)
 
@@ -197,6 +197,7 @@ class Spider(CustomDict):
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, **kwargs):
+            if not args and kwargs: kwargs = self.__dict__.copy()
             with requests.Session() as session:
                 results = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
@@ -262,7 +263,7 @@ class Spider(CustomDict):
         self.logger.debug(log_messages(headers=headers, json=self.logJson))
         with session.get(url, headers=headers) as response:
             self.logger.info(log_response(response, url=url, query=query))
-            results = json.loads(response.text())
+            results = json.loads(response.text)
         self.logger.info(log_results(results, query=query))
         return results
 
@@ -421,6 +422,7 @@ class AsyncSpider(Spider):
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, **kwargs):
+            if not args and kwargs: kwargs = self.__dict__.copy()
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 results = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
