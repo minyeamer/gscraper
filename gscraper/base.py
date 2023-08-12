@@ -59,6 +59,8 @@ HEADERS = {
 DEFAULT_LIMIT = 100
 REDIRECT_LIMIT = 10
 
+REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
+
 GCLOUD_ACCOUNT = "env/gcloud.json"
 
 parse_path = lambda url: re.sub(urlparse(url).path+'$','',url)
@@ -487,7 +489,7 @@ class AsyncSpider(Spider):
 
     @Spider.gcloud_authorized
     async def redirect(self, startDate: dt.date, endDate: dt.date, message=str(), **kwargs) -> List[Dict]:
-        message = message if message else f"{self.operation} operation is redirecting"
+        message = message if message else REDIRECT_MSG(self.operation)
         return chain_exists(await self.tqdm.gather(
             *[self.fetch_redirect(startDate=date, endDate=date, **kwargs)
                 for date in date_range(startDate, endDate)], desc=message))

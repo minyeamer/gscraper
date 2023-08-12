@@ -16,7 +16,7 @@ REQUIRES = [
 
 setup(
     name="gcp-scraper",
-    version="0.0.3",
+    version="0.0.4",
     description="Scraping utils with GCP functions",
     url="https://github.com/minyeamer/gscraper.git",
     author="minyeamer",
