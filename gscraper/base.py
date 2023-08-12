@@ -197,7 +197,7 @@ class Spider(CustomDict):
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, **kwargs):
-            if not args and kwargs: kwargs = self.__dict__.copy()
+            if not (args and kwargs): kwargs = self.__dict__.copy()
             with requests.Session() as session:
                 results = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
@@ -422,7 +422,7 @@ class AsyncSpider(Spider):
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, **kwargs):
-            if not args and kwargs: kwargs = self.__dict__.copy()
+            if not (args and kwargs): kwargs = self.__dict__.copy()
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 results = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
