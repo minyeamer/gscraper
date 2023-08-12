@@ -3,7 +3,7 @@ from .cast import cast_str, cast_int, cast_datetime, cast_date
 from .date import now, get_date, get_datetime, date_range
 from .excel import update_gspread, read_gspread, clear_gspead, to_excel_date
 from .logs import CustomLogger, dumps_map, unraw
-from .map import chain_exists, filter_data, df_exist
+from .map import chain_exists, filter_data, re_get, df_exist
 from .map import exists_one, cast_get, list_get
 from .parse import parse_cookies
 
@@ -63,7 +63,7 @@ REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
 
 GCLOUD_ACCOUNT = "env/gcloud.json"
 
-parse_path = lambda url: re.sub(urlparse(url).path+'$','',url)
+parse_path = lambda url: re_get(f"(.*)(?={urlparse(url).path})", url) if urlparse(url).path else url
 
 encrypt = lambda s=str(), count=0, *args: encrypt(
     base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
