@@ -1,4 +1,4 @@
-from typing import Any, Iterable, Optional, Type, Union
+from typing import Any, Iterable, List, Optional, Tuple, Type, Union
 from dateutil.parser import parse as dateparse
 from pytz import timezone
 import datetime as dt
@@ -18,8 +18,8 @@ def cast_object(__object, type: Optional[Type], default=None, **kwargs) -> Any:
         return type(__object) if __object else default
 
 
-def cast_list(__object: Iterable, iterable=[list,set,tuple]) -> Iterable:
-    return list(__object) if type(__object) in iterable else [__object]
+def cast_list(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> List:
+    return list(__object) if isinstance(__object, iterable) else [__object]
 
 
 def cast_str(__object, default: Optional[str]=str(), match=str(), **kwargs) -> str:

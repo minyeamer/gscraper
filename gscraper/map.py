@@ -66,7 +66,9 @@ def filter_exists(__object, **kwargs) -> Any:
 ############################## Array ##############################
 ###################################################################
 
-is_2darray = lambda array: isinstance(array, List) and array and isinstance(array[0], List)
+ITERABLE = (list, set, tuple)
+
+is_2darray = lambda array: isinstance(array, ITERABLE) and array and isinstance(array[0], ITERABLE)
 iloc = lambda array, index: [array[i] for i in (range(index) if isinstance(index, int) else index) if i < len(array)]
 
 
