@@ -67,10 +67,11 @@ def cast_datetime(__date_string: Union[str,int], default: Optional[dt.datetime]=
                     tzinfo=None, droptz=True, timestamp=False, **kwargs) -> dt.datetime:
     try:
         if not __date_string: return default
-        elif not timestamp: __datetime = dateparse(__date_string, yearfirst=True)
+        tzinfo = timezone(tzinfo) if isinstance(tzinfo, str) else tzinfo
+        if not timestamp: __datetime = dateparse(__date_string, yearfirst=True)
         elif str(__date_string).isdigit(): __datetime = dt.datetime.fromtimestamp(int(__date_string)/1000, tzinfo)
         else: __datetime = dt.datetime.fromtimestamp(cast_float(__date_string), tzinfo)
-        __datetime = __datetime.astimezone(timezone(tzinfo)) if tzinfo else __datetime
+        __datetime = __datetime.astimezone(tzinfo) if tzinfo else __datetime
         return __datetime.replace(tzinfo=None) if droptz else __datetime
     except (ValueError, TypeError):
         return default
