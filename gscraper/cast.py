@@ -22,6 +22,10 @@ def cast_list(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) ->
     return list(__object) if isinstance(__object, iterable) else [__object]
 
 
+def cast_tuple(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> List:
+    return tuple(__object) if isinstance(__object, iterable) else (__object,)
+
+
 def cast_str(__object, default: Optional[str]=str(), match=str(), **kwargs) -> str:
     if not __object or (match and not re.search(match, str(__object))):
         return default
