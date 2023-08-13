@@ -21,7 +21,7 @@ JS_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
 
 strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST)
 strpdatekr = lambda date_string, default=None: get_date(strptimekr(date_string), default)
-dateptime = lambda __date: dt.datetime(*__date.timetuple()[:6]).date() if isinstance(__date, dt.date) else None
+dateptime = lambda __date: dt.datetime(*__date.timetuple()[:6]) if isinstance(__date, dt.date) else None
 
 date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_range(startDate, endDate)]
 
@@ -64,6 +64,14 @@ def get_datetime(__datetime: Union[dt.datetime,dt.date,str,int], default=0, time
     elif type(default) in [dt.datetime,dt.date,str,int]: return get_datetime(default, default=None, time=time)
     else: return default
     return __datetime if time else __datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def get_timestamp(__timestamp: Union[dt.datetime,dt.date,str,float,int], default=0, ms=True, **kwargs) -> dt.datetime:
+    if isinstance(__timestamp, float): pass
+    elif isinstance(__timestamp, int) and len(str(__timestamp)) >= 8: pass
+    elif isinstance(__timestamp, dt.datetime): __timestamp = __timestamp.timestamp()
+    else: __timestamp = get_timestamp(get_datetime(__timestamp, default=default), default=None)
+    return (__timestamp if ms else int(__timestamp*1000)) if __timestamp else default
 
 
 def get_date(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
