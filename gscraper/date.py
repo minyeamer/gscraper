@@ -21,7 +21,7 @@ JS_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
 
 strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST)
 strpdatekr = lambda date_string, default=None: get_date(strptimekr(date_string), default)
-dateptime = lambda date: dt.datetime(*date.timetuple()[:6]).date() if isinstance(date, dt.date) else None
+dateptime = lambda __date: dt.datetime(*__date.timetuple()[:6]).date() if isinstance(__date, dt.date) else None
 
 date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_range(startDate, endDate)]
 
@@ -33,15 +33,15 @@ def now(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes
     __datetime = dt.datetime.now(timezone(tzinfo)) - delta
     if droptz: __datetime = __datetime.replace(tzinfo=None)
     if dropms: __datetime = __datetime.replace(microsecond=0)
-    if datetimePart: date = trunc_datetime(date, datetimePart)
-    return date.strftime(format) if format else date
+    if datetimePart: __datetime = trunc_datetime(__datetime, datetimePart)
+    return __datetime.strftime(format) if format else __datetime
 
 
 def today(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, tzinfo=KST, droptz=True, dropms=True, **kwargs) -> Union[dt.datetime,str]:
-    date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo, droptz, dropms)
-    date = date.replace(hour=0, minute=0, second=0)
-    return date.strftime(format) if format else date
+    __date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo, droptz, dropms)
+    __date = __date.replace(hour=0, minute=0, second=0)
+    return __date.strftime(format) if format else __date
 
 
 def trunc_datetime(__datetime: dt.datetime, part=str(), **kwargs) -> dt.datetime:
