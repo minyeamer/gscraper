@@ -63,19 +63,22 @@ def isfloat(__object, **kwargs) -> bool:
         return False
 
 
-def cast_datetime(__date_string: Union[str,int], default: Optional[dt.datetime]=None, tzinfo=None, timestamp=False, **kwargs) -> dt.datetime:
+def cast_datetime(__date_string: Union[str,int], default: Optional[dt.datetime]=None,
+                    tzinfo=None, droptz=True, timestamp=False, **kwargs) -> dt.datetime:
     try:
         if not __date_string: return default
         elif not timestamp: __datetime = dateparse(__date_string, yearfirst=True)
-        elif str(__date_string).isdigit(): __datetime = dt.datetime.fromtimestamp(int(__date_string)/1000)
-        else: __datetime = dt.datetime.fromtimestamp(cast_float(__date_string))
-        return __datetime.astimezone(timezone(tzinfo)).replace(tzinfo=None) if tzinfo else __datetime
+        elif str(__date_string).isdigit(): __datetime = dt.datetime.fromtimestamp(int(__date_string)/1000, tzinfo)
+        else: __datetime = dt.datetime.fromtimestamp(cast_float(__date_string), tzinfo)
+        __datetime = __datetime.astimezone(timezone(tzinfo)) if tzinfo else __datetime
+        return __datetime.replace(tzinfo=None) if droptz else __datetime
     except (ValueError, TypeError):
         return default
 
 
-def cast_timestamp(__date_string: Union[str,int], default: Optional[dt.datetime]=None, tzinfo=None, timestamp=True, **kwargs) -> dt.datetime:
-    return cast_datetime(__date_string, default, tzinfo, timestamp=True, **kwargs)
+def cast_timestamp(__date_string: Union[str,int], default: Optional[dt.datetime]=None,
+                    tzinfo=None, droptz=True, timestamp=True, **kwargs) -> dt.datetime:
+    return cast_datetime(__date_string, default, tzinfo, droptz, timestamp=True, **kwargs)
 
 
 def cast_date(__date_string: str, default: Optional[dt.date]=None, ordinal=False, **kwargs) -> dt.date:

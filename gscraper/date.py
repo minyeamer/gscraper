@@ -27,16 +27,19 @@ date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_ra
 
 
 def now(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-        hours=0, weeks=0, datetimePart=str(), tzinfo=KST, **kwargs) -> Union[dt.datetime,str]:
+        hours=0, weeks=0, datetimePart=str(), tzinfo=KST, droptz=True, dropms=True,
+        **kwargs) -> Union[dt.datetime,str]:
     delta = dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
-    date = (dt.datetime.now(timezone(tzinfo))-delta).replace(microsecond=0, tzinfo=None)
+    __datetime = dt.datetime.now(timezone(tzinfo)) - delta
+    if droptz: __datetime = __datetime.replace(tzinfo=None)
+    if dropms: __datetime = __datetime.replace(microsecond=0)
     if datetimePart: date = trunc_datetime(date, datetimePart)
     return date.strftime(format) if format else date
 
 
 def today(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-            hours=0, weeks=0, tzinfo=KST, **kwargs) -> Union[dt.datetime,str]:
-    date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo)
+            hours=0, weeks=0, tzinfo=KST, droptz=True, dropms=True, **kwargs) -> Union[dt.datetime,str]:
+    date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo, droptz, dropms)
     date = date.replace(hour=0, minute=0, second=0)
     return date.strftime(format) if format else date
 
