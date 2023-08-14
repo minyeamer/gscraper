@@ -66,12 +66,11 @@ def get_datetime(__datetime: Union[dt.datetime,dt.date,str,int], default=0, time
     return __datetime if time else __datetime.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def get_timestamp(__timestamp: Union[dt.datetime,dt.date,str,float,int], default=0, ms=True, **kwargs) -> dt.datetime:
-    if isinstance(__timestamp, float): pass
-    elif isinstance(__timestamp, int) and len(str(__timestamp)) >= 8: pass
-    elif isinstance(__timestamp, dt.datetime): __timestamp = __timestamp.timestamp()
-    else: __timestamp = get_timestamp(get_datetime(__timestamp, default=default), default=None)
-    return (__timestamp if ms else int(__timestamp*1000)) if __timestamp else default
+def get_timestamp(__datetime: Union[dt.datetime,dt.date,str,float,int], default=0, time=True, tsUnit="ms",
+                    **kwargs) -> Union[float,int]:
+    __datetime = get_datetime(__datetime, default=default, time=time)
+    __timestamp = __datetime.timestamp() if __datetime else None
+    return int(__timestamp*1000) if __timestamp and tsUnit == "ms" else __timestamp
 
 
 def get_date(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
