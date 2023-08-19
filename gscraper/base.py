@@ -194,6 +194,15 @@ class Spider(CustomDict):
     ######################### Session Managers ########################
     ###################################################################
 
+    def requests_task(func):
+        @functools.wraps(func)
+        def wrapper(self: Spider, *args, **kwargs):
+            if not (args and kwargs): kwargs = self.__dict__.copy()
+            results = func(self, *args, **kwargs)
+            self.upload_data(results, **kwargs)
+            return results
+        return wrapper
+
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, **kwargs):
@@ -418,6 +427,16 @@ class AsyncSpider(Spider):
     ###################################################################
     ########################## Async Managers #########################
     ###################################################################
+
+    def asyncio_task(func):
+        @functools.wraps(func)
+        async def wrapper(self: AsyncSpider, *args, **kwargs):
+            if not (args and kwargs): kwargs = self.__dict__.copy()
+            semaphore = self.asyncio_semaphore(**kwargs)
+            results = await func(self, *args, semaphore=semaphore, **kwargs)
+            self.upload_data(results, **kwargs)
+            return results
+        return wrapper
 
     def asyncio_session(func):
         @functools.wraps(func)
