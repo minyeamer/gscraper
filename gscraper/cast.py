@@ -93,7 +93,7 @@ def cast_timestamp(__timestamp: Union[str,float,int], default: Optional[dt.datet
 
 
 def cast_datetime(__date_string: Union[str,float,int], default: Optional[dt.datetime]=None,
-                    tzinfo=None, astimezone=None, droptz=True, timestamp=False, tsUnit="ms", **kwargs) -> dt.datetime:
+                    tzinfo=None, astimezone=None, droptz=False, timestamp=False, tsUnit="ms", **kwargs) -> dt.datetime:
     try:
         if not (__date_string and isinstance(__date_string, (str,float,int))): return default
         if timestamp: __datetime = cast_timestamp(__date_string, tsUnit=tsUnit)
