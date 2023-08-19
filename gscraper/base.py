@@ -739,11 +739,9 @@ class Pipeline(Spider):
     returnType = "dataframe"
 
     @abstractmethod
+    @Spider.requests_task
     def crawl(self, query: List[str], **kwargs) -> Union[List[Dict],pd.DataFrame]:
-        results = self.gather(query, **kwargs)
-        results = self.map_reduce(results, **kwargs)
-        self.upload_data(results, **kwargs)
-        return results
+        return self.gather(query, **kwargs)
 
     @Spider.response_filter
     def gather(self, query: List[str], **kwargs) -> Union[List[Dict],pd.DataFrame]:
@@ -751,7 +749,7 @@ class Pipeline(Spider):
         results1 = crawler1.crawl(**crawler1.__dict__)
         crawler2 = Spider(query=query, **kwargs)
         results2 = crawler2.crawl(**crawler2.__dict__)
-        return results1 + results2
+        return self.map_reduce(results1 + results2, **kwargs)
 
     def map_reduce(self, data: Union[List[Dict],pd.DataFrame], **kwargs) -> Union[List[Dict],pd.DataFrame]:
         return data
@@ -763,11 +761,9 @@ class AsyncPipeline(AsyncSpider):
     returnType = "dataframe"
 
     @abstractmethod
+    @AsyncSpider.asyncio_task
     async def crawl(self, query: List[str], **kwargs) -> Union[List[Dict],pd.DataFrame]:
-        results = await self.gather(query, **kwargs)
-        results = self.map_reduce(results, **kwargs)
-        self.upload_data(results, **kwargs)
-        return results
+        return await self.gather(query, **kwargs)
 
     @abstractmethod
     @AsyncSpider.asyncio_filter
@@ -776,7 +772,7 @@ class AsyncPipeline(AsyncSpider):
         results1 = await crawler1.crawl(**crawler1.__dict__)
         crawler2 = AsyncSpider(query=query, **kwargs)
         results2 = await crawler2.crawl(**crawler2.__dict__)
-        return results1 + results2
+        return self.map_reduce(results1 + results2, **kwargs)
 
     def map_reduce(self, data: Union[List[Dict],pd.DataFrame], **kwargs) -> Union[List[Dict],pd.DataFrame]:
         return data
