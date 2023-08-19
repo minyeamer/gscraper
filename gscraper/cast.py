@@ -1,6 +1,6 @@
 from typing import Any, Iterable, List, Optional, Tuple, Type, Union
 from dateutil.parser import parse as dateparse
-from pytz import timezone, tzfile
+from pytz import timezone, BaseTzInfo
 import datetime as dt
 import re
 
@@ -63,7 +63,7 @@ def isfloat(__object, **kwargs) -> bool:
         return False
 
 
-def get_timezone(tzinfo=None, **kwargs) -> tzfile.DstTzInfo:
+def get_timezone(tzinfo=None, **kwargs) -> BaseTzInfo:
     if not tzinfo: return None
     try: return timezone(tzinfo)
     except: return None
@@ -72,7 +72,7 @@ def get_timezone(tzinfo=None, **kwargs) -> tzfile.DstTzInfo:
 def set_timezone(__datetime: dt.datetime, tzinfo=None, astimezone=None, droptz=False, **kwargs) -> dt.datetime:
     tzinfo = get_timezone(tzinfo)
     if tzinfo:
-        __datetime = __datetime.astimezone(tzinfo) if __datetime.tzinfo else __datetime.replace(tzinfo=tzinfo)
+        __datetime = __datetime.astimezone(tzinfo) if __datetime.tzinfo else tzinfo.localize(__datetime)
     if astimezone:
         __datetime = __datetime.astimezone(get_timezone(astimezone))
     return __datetime.replace(tzinfo=None) if droptz else __datetime
@@ -82,12 +82,10 @@ def cast_timestamp(__timestamp: Union[str,float,int], default: Optional[dt.datet
                     tzinfo=None, astimezone=None, tsUnit="ms", **kwargs) -> dt.datetime:
     try:
         if not (__timestamp and isinstance(__timestamp, (str,float,int))): return default
-        tzinfo = get_timezone(tzinfo)
         if isinstance(__timestamp, str):
             __timestamp = int(__timestamp) if __timestamp.isdigit() else cast_float(__timestamp)
         __timestamp = __timestamp/1000 if isinstance(__timestamp, int) and tsUnit == "ms" else __timestamp
-        __datetime = dt.datetime.fromtimestamp(__timestamp, tzinfo)
-        return __datetime.astimezone(get_timezone(astimezone)) if astimezone else __datetime
+        return set_timezone(dt.datetime.fromtimestamp(__timestamp), tzinfo, astimezone)
     except (ValueError, TypeError):
         return default
 
