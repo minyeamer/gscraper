@@ -19,7 +19,7 @@ DAETTIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 TIMEZONE_FORMAT = "%Y-%m-%d %H:%M:%S.%f%z"
 JS_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
 
-strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST)
+strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST, droptz=True)
 strpdatekr = lambda date_string, default=None: get_date(strptimekr(date_string), default)
 dateptime = lambda __date: dt.datetime(*__date.timetuple()[:6]) if isinstance(__date, dt.date) else None
 

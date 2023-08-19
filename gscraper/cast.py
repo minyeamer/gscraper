@@ -1,6 +1,6 @@
 from typing import Any, Iterable, List, Optional, Tuple, Type, Union
 from dateutil.parser import parse as dateparse
-from pytz import timezone
+from pytz import timezone, tzfile
 import datetime as dt
 import re
 
@@ -63,17 +63,23 @@ def isfloat(__object, **kwargs) -> bool:
         return False
 
 
+def get_timezone(tzinfo=None, **kwargs) -> tzfile.DstTzInfo:
+    if not tzinfo: return None
+    try: return timezone(tzinfo)
+    except: return None
+
+
 def cast_timestamp(__timestamp: Union[str,float,int], default: Optional[dt.datetime]=None,
-                    tzinfo=None, droptz=True, tsUnit="ms", **kwargs) -> dt.datetime:
+                    tzinfo=None, droptz=False, tsUnit="ms", **kwargs) -> dt.datetime:
     try:
         if not (__timestamp and isinstance(__timestamp, (str,float,int))): return default
-        tzinfo = timezone(tzinfo) if isinstance(tzinfo, str) else tzinfo
+        tzinfo = get_timezone(tzinfo)
         if isinstance(__timestamp, str):
             __timestamp = int(__timestamp) if __timestamp.isdigit() else cast_float(__timestamp)
         __timestamp = __timestamp/1000 if isinstance(__timestamp, int) and tsUnit == "ms" else __timestamp
         __datetime = dt.datetime.fromtimestamp(__timestamp, tzinfo)
         __datetime = __datetime.astimezone(tzinfo) if tzinfo else __datetime
-        return __datetime.replace(tzinfo=None) if droptz else __datetime
+        return __datetime.replace(tzinfo=None) if tzinfo and droptz else __datetime
     except (ValueError, TypeError):
         return default
 
@@ -82,11 +88,11 @@ def cast_datetime(__date_string: Union[str,float,int], default: Optional[dt.date
                     tzinfo=None, droptz=True, timestamp=False, tsUnit="ms", **kwargs) -> dt.datetime:
     try:
         if not (__date_string and isinstance(__date_string, (str,float,int))): return default
-        tzinfo = timezone(tzinfo) if isinstance(tzinfo, str) else tzinfo
+        tzinfo = get_timezone(tzinfo)
         if timestamp: __datetime = cast_timestamp(__date_string, tsUnit=tsUnit)
         else: __datetime = dateparse(__date_string, yearfirst=True)
         __datetime = __datetime.astimezone(tzinfo) if tzinfo else __datetime
-        return __datetime.replace(tzinfo=None) if droptz else __datetime
+        return __datetime.replace(tzinfo=None) if tzinfo and droptz else __datetime
     except (ValueError, TypeError):
         return default
 
