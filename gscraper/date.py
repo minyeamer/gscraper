@@ -2,7 +2,9 @@ from .cast import cast_int, cast_datetime, cast_date
 from .map import re_get
 
 from typing import Optional, Union
+from pandas.tseries.offsets import BDay
 from pytz import timezone
+import numpy as np
 import datetime as dt
 import pandas as pd
 import re
@@ -80,6 +82,11 @@ def get_date(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) ->
     elif str(__date).replace('-','').isdigit(): return now(days=int(__date)).date()
     elif type(default) in [dt.datetime,dt.date,str,int]: return get_date(default, default=None)
     else: return default
+
+
+def get_busdate(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
+    __date = get_date(__date, default)
+    return __date if np.is_busday(__date) else (__date-BDay(1)).date()
 
 
 def set_datetime(__datetime: dt.datetime, __type: Optional[Union[type,str]]=str,
