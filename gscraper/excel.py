@@ -5,7 +5,18 @@ import gspread
 
 from typing import Dict, List, Optional, Union
 import datetime as dt
+import json
+import os
 import pandas as pd
+
+DEFAULT_GCLOUD = "env/gcloud.json"
+
+
+def read_gcloud(file=str(), **kwargs) -> Dict:
+    file = str(file) if str(file).endswith(".json") else DEFAULT_GCLOUD
+    if not os.path.exists(file): return dict()
+    with open(file, 'r', encoding="utf-8") as f:
+        return json.loads(f.read())
 
 
 def to_excel_date(date: Union[dt.date,dt.datetime]):
@@ -22,6 +33,7 @@ def to_excel_date(date: Union[dt.date,dt.datetime]):
 ###################################################################
 
 def load_gspread(key: str, sheet: str, account: Optional[Dict]=dict(), **kwargs) -> Worksheet:
+    account = account if account and isinstance(account, dict) else read_gcloud(account)
     gs_acc = gspread.service_account_from_dict(account)
     gs = gs_acc.open_by_key(key)
     return gs.worksheet(sheet)

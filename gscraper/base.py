@@ -163,7 +163,7 @@ class Spider(CustomDict):
     def __init__(self, operation=str(), filter: Optional[List[str]]=list(), filterArgs: Callable[[],Dict]=None,
                 logName=str(), logLevel="WARN", logFile=str(), logErrors=False, errorArgs=list(), errorKwargs=list(),
                 delay=1., numTasks=100, maxLoops=1, progress=tqdm, debug=False,
-                queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(),
+                queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(), account: Optional[Dict]=dict(),
                 apiRedirect=False, redirectUnit=1, redirectErrors=False, localSave=True, extraSave=False, **kwargs):
         self.operation = self.operation
         self.initTime = now()
@@ -181,6 +181,7 @@ class Spider(CustomDict):
         self.maxLoops = maxLoops
         self.tqdm = progress
         self.debug = debug
+        self.account = account
         self.apiRedirect = apiRedirect
         self.redirectUnit = redirectUnit
         self.redirectErrors = redirectErrors
@@ -188,7 +189,7 @@ class Spider(CustomDict):
         self.extraSave = extraSave
         self.update(filterArgs(**kwargs) if filterArgs else kwargs)
         if queryKey and querySheet:
-            self.read_query(queryKey, querySheet, queryFields)
+            self.read_query(queryKey, querySheet, queryFields, account)
 
     ###################################################################
     ######################### Session Managers ########################
@@ -280,8 +281,8 @@ class Spider(CustomDict):
     ############################# Methods #############################
     ###################################################################
 
-    def read_query(self, queryKey: str, querySheet: str, queryFields: Union[List,str], **kwargs):
-        data = read_gspread(queryKey, querySheet, numericise=False)
+    def read_query(self, queryKey: str, querySheet: str, queryFields: Union[List,str], account=dict(), **kwargs):
+        data = read_gspread(queryKey, querySheet, account, numericise=False)
         self.logger.info(log_table(data, json=self.logJson))
         if isinstance(queryFields, str): queryFields = queryFields.split(',')
         for queryName in queryFields:
@@ -628,15 +629,15 @@ class EncryptedSpider(Spider):
     extraKeys = list()
     where = str()
 
-    def __init__(self, operation=str(), select: Optional[List[str]]=list(), extraSelect: Optional[List[str]]=list(),
-                configs: Optional[List[Dict]]=list(), logFile=str(), logLevel="WARN", logErrors=False,
-                errorArgs=list(), errorKwargs=list(), delay=1., numTasks=100, maxLoops=1, progress=tqdm,
-                debug=False, confirm=True, queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(),
+    def __init__(self, operation=str(), filter: Optional[List[str]]=list(), filterArgs: Callable[[],Dict]=None,
+                logName=str(), logLevel="WARN", logFile=str(), logErrors=False, errorArgs=list(), errorKwargs=list(),
+                delay=1., numTasks=100, maxLoops=1, progress=tqdm, debug=False,
+                queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(), account: Optional[Dict]=dict(),
                 apiRedirect=False, redirectUnit=1, redirectErrors=False, localSave=True, extraSave=False,
                 cookies=str(), encryptedKey=str(), **kwargs):
-        super().__init__(operation, select, extraSelect, configs, logFile, logLevel, logErrors, errorArgs, errorKwargs,
-                        delay, numTasks, maxLoops, progress, debug, confirm, queryKey, querySheet, queryFields, apiRedirect,
-                        redirectUnit, redirectErrors, localSave, extraSave, **kwargs)
+        super().__init__(operation, filter, filterArgs, logName, logLevel, logFile, logErrors, errorArgs, errorKwargs,
+                        delay, numTasks, maxLoops, progress, debug, queryKey, querySheet, queryFields, account,
+                        apiRedirect, redirectUnit, redirectErrors, localSave, extraSave, **kwargs)
         self.cookies = cookies
         self.read_secrets(encryptedKey)
 
@@ -679,15 +680,15 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     extraKeys = list()
     where = str()
 
-    def __init__(self, operation=str(), select: Optional[List[str]]=list(), extraSelect: Optional[List[str]]=list(),
-                configs: Optional[List[Dict]]=list(), logFile=str(), logLevel="WARN", logErrors=False,
-                errorArgs=list(), errorKwargs=list(), delay=1., numTasks=100, maxLoops=1, progress=tqdm,
-                debug=False, confirm=True, queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(),
+    def __init__(self, operation=str(), filter: Optional[List[str]]=list(), filterArgs: Callable[[],Dict]=None,
+                logName=str(), logLevel="WARN", logFile=str(), logErrors=False, errorArgs=list(), errorKwargs=list(),
+                delay=1., numTasks=100, maxLoops=1, progress=tqdm, debug=False,
+                queryKey=str(), querySheet=str(), queryFields: Optional[List[str]]=list(), account: Optional[Dict]=dict(),
                 apiRedirect=False, redirectUnit=1, redirectErrors=False, localSave=True, extraSave=False,
                 cookies=str(), encryptedKey=str(), **kwargs):
-        super().__init__(operation, select, extraSelect, configs, logFile, logLevel, logErrors, errorArgs, errorKwargs,
-                        delay, numTasks, maxLoops, progress, debug, confirm, queryKey, querySheet, queryFields, apiRedirect,
-                        redirectUnit, redirectErrors, localSave, extraSave, **kwargs)
+        super().__init__(operation, filter, filterArgs, logName, logLevel, logFile, logErrors, errorArgs, errorKwargs,
+                        delay, numTasks, maxLoops, progress, debug, queryKey, querySheet, queryFields, account,
+                        apiRedirect, redirectUnit, redirectErrors, localSave, extraSave, **kwargs)
         self.cookies = cookies
         self.read_secrets(encryptedKey)
 
