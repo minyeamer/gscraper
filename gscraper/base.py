@@ -293,15 +293,15 @@ class Spider(CustomDict):
                 self.update(**{queryName:data[queryName].tolist()})
 
     def upload_data(self, data: Union[List[Dict],pd.DataFrame], gsKey=str(), gsSheet=str(), gsMode="append", gsHistory=str(),
-                    gsIndex=str(), gsIndexKey=str(), gsRange=str(), gbqTable=str(), gbqPid=str(), gbqMode="append",
-                    gbqSchema=None, gbqIndex=str(), gbqIndexMode="replace", gbqIndexSchema=None, account=dict(), **kwargs):
+                    gsIndex=str(), gsIndexKey=str(), gsRange=str(), gbqTable=str(), gbqPid=str(), gbqMode="append", gbqSchema=None,
+                    gbqPartition=str(), gbqIndex=str(), gbqIndexMode="replace", gbqIndexSchema=None, account=dict(), **kwargs):
         if (gsKey and gsSheet) or (gbqTable and gbqPid) or (gbqIndex and gbqPid):
             data = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
             if data.empty: return
         if gsKey and gsSheet:
             self.upload_gspread(gsKey, gsSheet, data.copy(), gsMode, gsHistory, gsIndex, gsIndexKey, gsRange, account, **kwargs)
         if gbqTable and gbqPid:
-            self.upload_gbq(gbqTable, gbqPid, data.copy(), gbqMode, gbqSchema, **kwargs)
+            self.upload_gbq(gbqTable, gbqPid, data.copy(), gbqMode, gbqSchema, gbqPartition, **kwargs)
         if gbqIndex and gbqPid:
             self.index_gbq(gbqIndex, gbqPid, data.copy(), gbqIndexMode, gbqIndexSchema, **kwargs)
 
@@ -374,17 +374,26 @@ class Spider(CustomDict):
 
     @log_errors
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode="append",
-                    schema: Optional[List[Dict[str,str]]]=None, **kwargs):
+                    schema: Optional[List[Dict[str,str]]]=None, partition=str(), **kwargs):
         schema = schema if schema else self.get_gbq_schema(**kwargs)
         data = self.map_gbq_data(data, filter=[field.get("name") for field in schema])
         self.logger.info(log_table(data, table=table, projectId=project_id, mode=mode, schema=schema, json=self.logJson))
-        data.to_gbq(table, project_id=project_id, reauth=False, if_exists=mode, table_schema=schema, progress_bar=True)
+        if not partition:
+            data.to_gbq(table, project_id=project_id, reauth=False, if_exists=mode, table_schema=schema, progress_bar=True)
+        else: self.split_upload_gbq(table, project_id, data, partition, mode, schema)
 
     def get_gbq_schema(self, **kwargs) -> List[Dict[str,str]]:
         return self.get("gbqSchema", list())
 
     def map_gbq_data(self, data: pd.DataFrame, filter: Optional[List[str]]=list(), **kwargs) -> pd.DataFrame:
         return data[[column for column in filter if column in data.columns]]
+
+    def split_upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, partition: str,
+                        mode="append", schema: Optional[List[Dict[str,str]]]=None, **kwargs):
+        message = "Upload partitioned data to bigquery"
+        for value in self.tqdm(sorted(data[partition].unique()), desc=message):
+            part = data[data[partition]==value]
+            part.to_gbq(table, project_id=project_id, reauth=False, if_exists=mode, table_schema=schema, progress_bar=False)
 
     @log_errors
     def index_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode="replace",
