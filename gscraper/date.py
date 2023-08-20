@@ -86,6 +86,7 @@ def get_date(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) ->
 
 def get_busdate(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
     __date = get_date(__date, default)
+    if not isinstance(__date, dt.date): return __date
     return __date if np.is_busday(__date) else (__date-BDay(1)).date()
 
 
