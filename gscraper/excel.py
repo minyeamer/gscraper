@@ -40,12 +40,12 @@ def load_gspread(key: str, sheet: str, account: Optional[Dict]=dict(), **kwargs)
 
 
 def read_gspread(key=str(), sheet=str(), account: Optional[Dict]=dict(), gs: Optional[Worksheet]=None,
-                head=1, headers=None, numericise=True, str_cols: Optional[List[str]]=list(),
+                head=1, headers=None, numericise_ignore: Optional[Union[bool,List[str]]]=list(),
                 rename: Optional[Dict[str,str]]=dict(), **kwargs) -> pd.DataFrame:
     gs = gs if gs else load_gspread(key, sheet, account)
-    params = dict(head=head, expected_headers=headers, numericise_ignore=(list() if numericise else ["all"]))
-    df = pd.DataFrame(gs.get_all_records(**params)).rename(columns=rename)
-    return astype_str(df) if str_cols else df
+    if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()
+    params = dict(head=head, expected_headers=headers, numericise_ignore=numericise_ignore)
+    return pd.DataFrame(gs.get_all_records(**params)).rename(columns=rename)
 
 
 def update_gspread(data: Union[pd.DataFrame,List[Dict]], key=str(), sheet=str(),
