@@ -40,7 +40,7 @@ def load_gspread(key: str, sheet: str, account: Optional[Dict]=dict(), **kwargs)
 
 
 def read_gspread(key=str(), sheet=str(), account: Optional[Dict]=dict(), gs: Optional[Worksheet]=None,
-                head=1, headers=None, numericise_ignore: Optional[Union[bool,List[str]]]=list(),
+                head=1, headers=None, numericise_ignore: Optional[Union[bool,List[int]]]=list(),
                 rename: Optional[Dict[str,str]]=dict(), **kwargs) -> pd.DataFrame:
     gs = gs if gs else load_gspread(key, sheet, account)
     if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()

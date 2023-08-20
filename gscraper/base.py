@@ -163,7 +163,7 @@ class Spider(CustomDict):
     def __init__(self, operation=str(), filter: Optional[List[str]]=list(), filterArgs: Callable[[],Dict]=None,
                 logName=str(), logLevel="WARN", logFile=str(), logErrors=False, errorArgs=list(), errorKwargs=list(),
                 delay=1., numTasks=100, maxLoops=1, progress=tqdm, debug=False, queryKey=str(), querySheet=str(),
-                queryFields: Optional[List[str]]=list(), queryString: Optional[List[str]]=list(),
+                queryFields: Optional[List[str]]=list(), queryString: Optional[List[int]]=list(),
                 queryRename: Optional[Dict[str,str]]=dict(), account: Optional[Dict]=dict(),
                 apiRedirect=False, redirectUnit=1, redirectErrors=False, localSave=True, extraSave=False, **kwargs):
         self.operation = self.operation
@@ -341,9 +341,9 @@ class Spider(CustomDict):
 
     def read_gs_history(self, key: str, sheet: str, rename: Dict[str,str]=dict(),
                         date_cols: Optional[List[str]]=list(), datetime_cols: Optional[List[str]]=list(),
-                        str_cols: Optional[List[str]]=list(), account: Optional[Dict]=dict(), **kwargs) -> pd.DataFrame:
+                        numericise_ignore: Optional[List[int]]=list(), account: Optional[Dict]=dict(), **kwargs) -> pd.DataFrame:
         if not (key and sheet): return pd.DataFrame()
-        history = read_gspread(key, sheet, account, numericise_ignore=str_cols, rename=rename)
+        history = read_gspread(key, sheet, account, numericise_ignore=numericise_ignore, rename=rename)
         self.logger.info(log_table(history, key=key, sheet=sheet, json=self.logJson))
         for column in date_cols:
             if column in history: history[column] = history[column].apply(cast_date)
