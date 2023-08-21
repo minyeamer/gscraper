@@ -78,10 +78,6 @@ def chain_list(iterable: Iterable[Iterable], empty=True, **kwargs) -> List:
     return list(chain.from_iterable(iterable))
 
 
-def chain_exists(iterable: Iterable[Iterable], **kwargs) -> List:
-    return chain_list(iterable, empty=False, **kwargs) if is_2darray(iterable) else filter_exists(iterable)
-
-
 def match_list(iterable: Iterable[Iterable], how="all", value=None, empty=True, unique=False, **kwargs) -> Tuple[List]:
     if len(iterable) == 1:
         return fill_empty(iterable[0], value) if empty else filter_array(iterable[0], not_na)
@@ -283,11 +279,13 @@ def sort_records(records: List[Dict], by: List[str], **kwargs) -> List[Dict]:
 ############################ DataFrame ############################
 ###################################################################
 
-def astype_str(df: pd.DataFrame, str_cols: Optional[List[str]]=list(),) -> pd.DataFrame:
-    df = df.copy()
-    for column in str_cols:
-        if column in df: df[column] = df[column].apply(str_na)
-    return df
+is_dfarray = lambda array: isinstance(array, ITERABLE) and array and isinstance(array[0], pd.DataFrame)
+
+
+def chain_exists(iterable: Iterable[Union[Iterable,pd.DataFrame]], **kwargs) -> Union[List,pd.DataFrame]:
+    if is_2darray(iterable): return chain_list(iterable, empty=False, **kwargs)
+    elif is_dfarray(iterable): return pd.concat([df for df in iterable if df_exist(df)])
+    return filter_exists(iterable)
 
 
 def filter_data(data: Union[List[Dict],pd.DataFrame], filter: Optional[List[str]]=list(),

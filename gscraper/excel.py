@@ -1,5 +1,3 @@
-from .map import astype_str
-
 from gspread.worksheet import Worksheet
 import gspread
 
