@@ -1,28 +1,30 @@
-from typing import Any, Iterable, List, Optional, Tuple, Type, Union
+from typing import Any, Iterable, Optional, Tuple, Type, Union
 from dateutil.parser import parse as dateparse
 from pytz import timezone, BaseTzInfo
 import datetime as dt
 import re
 
+ITERABLE = (list, set, tuple)
+
 
 def cast_object(__object, type: Optional[Type], default=None, **kwargs) -> Any:
-    if isinstance(__object, dict):
-        return {key: cast_object(values, type) for key, values in __object.items()}
-    elif isinstance(__object, list):
-        return [cast_object(value, type) for value in __object]
-    elif type == int:
+    if type == int:
         return cast_int(__object, default=default)
     elif type == float:
         return cast_float(__object, default=default)
+    elif isinstance(__object, ITERABLE):
+        return type(__object)([cast_object(value, type) for value in __object])
+    elif isinstance(__object, dict):
+        return {key: cast_object(values, type) for key, values in __object.items()}
     else:
         return type(__object) if __object else default
 
 
-def cast_list(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> List:
-    return list(__object) if isinstance(__object, iterable) else [__object]
+def cast_list(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> Iterable:
+    return list(__object) if type(__object) in iterable else [__object]
 
 
-def cast_tuple(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> List:
+def cast_tuple(__object: Iterable, iterable: Optional[Tuple]=(list,set,tuple)) -> Tuple:
     return tuple(__object) if isinstance(__object, iterable) else (__object,)
 
 
@@ -33,15 +35,16 @@ def cast_str(__object, default: Optional[str]=str(), match=str(), **kwargs) -> s
         return str(__object)
 
 
-def cast_float(__object, default: Optional[float]=0., strict=False, **kwargs) -> float:
+def cast_float(__object, default: Optional[float]=0., strict=False, trunc=None, **kwargs) -> float:
     try:
-        return float(__object) if strict else float(re.sub("[^\d.-]",'',str(__object)))
+        __object = float(__object) if strict else float(re.sub("[^\d.-]",'',str(__object)))
+        return round(__object, trunc) if isinstance(trunc, int) else __object
     except (ValueError, TypeError):
         return default
 
 
 def cast_float2(__object, default: Optional[float]=0., strict=False, **kwargs) -> float:
-    return round(cast_float(__object, default, strict, **kwargs), 2)
+    return cast_float(__object, default, strict, trunc=2, **kwargs)
 
 
 def cast_int(__object, default: Optional[int]=0, strict=False, **kwargs) -> int:
@@ -108,3 +111,13 @@ def cast_date(__date_string: str, default: Optional[dt.date]=None, ordinal=False
         else: return dateparse(__date_string, yearfirst=True).date()
     except (ValueError, TypeError):
         return default
+
+
+def timefdate(__date: dt.date, default=None, **kwargs) -> dt.datetime:
+    try: return dt.datetime(*__date.timetuple()[:6])
+    except: return default
+
+
+def dateftime(__datetime: dt.datetime, default=None, **kwargs) -> dt.date:
+    try: return __datetime.date()
+    except: return default

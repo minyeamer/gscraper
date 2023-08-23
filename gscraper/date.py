@@ -4,8 +4,8 @@ from .map import re_get
 from typing import Optional, Union
 from pandas.tseries.offsets import BDay
 from pytz import timezone
-import numpy as np
 import datetime as dt
+import numpy as np
 import pandas as pd
 import re
 
@@ -23,8 +23,6 @@ JS_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
 
 strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST, droptz=True)
 strpdatekr = lambda date_string, default=None: get_date(strptimekr(date_string), default)
-dateptime = lambda __date: dt.datetime(*__date.timetuple()[:6]) if isinstance(__date, dt.date) else None
-
 date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_range(startDate, endDate)]
 
 
@@ -40,10 +38,10 @@ def now(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes
 
 
 def today(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-            hours=0, weeks=0, tzinfo=KST, droptz=True, dropms=True, **kwargs) -> Union[dt.datetime,str]:
-    __date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo, droptz, dropms)
-    __date = __date.replace(hour=0, minute=0, second=0)
-    return __date.strftime(format) if format else __date
+            hours=0, weeks=0, tzinfo=KST, **kwargs) -> Union[dt.datetime,str]:
+    date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo)
+    date = date.replace(hour=0, minute=0, second=0)
+    return date.strftime(format) if format else date
 
 
 def trunc_datetime(__datetime: dt.datetime, part=str(), **kwargs) -> dt.datetime:
