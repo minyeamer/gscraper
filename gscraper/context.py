@@ -8,7 +8,7 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(),
                         startDate=None, endDate=None, returnType=str(), \
                         logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
                         logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=dict(), \
-                        delay=1., numTasks=100, progress=True, debug=False, message=str(), rename=dict(), \
+                        delay=1., numTasks=100, maxLimit=1, progress=True, debug=False, message=str(), rename=dict(), \
                         apiRedirect=False, reidrectUnit=1, redirectErrors=False, localSave=False, extraSave=False, \
                         queryKey=str(), querySheet=str(), queryFields=list(), queryString=list(), queryArray=list(), \
                         authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=list(), \

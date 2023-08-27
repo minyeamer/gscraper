@@ -30,6 +30,7 @@ __or = lambda *args: reduce(lambda x,y: x|y, args)
 __and = lambda *args: reduce(lambda x,y: x&y, args)
 union = lambda *arrays: reduce(lambda x,y: x+y, arrays)
 inter = lambda *arrays: reduce(lambda x,y: [e for e in x if e in y], arrays)
+diff = lambda *arrays: reduce(lambda x,y: [e for e in x if e not in y], arrays)
 
 
 def __apply(__object, __applyFunc: ApplyFunction, default=None, **kwargs) -> Any:
@@ -147,8 +148,8 @@ def get_index(__s: IndexedSequence, values: _VT, default=None, multiple=True, **
 
 
 def get_scala(__object, index: Optional[int]=None, default=None, **kwargs) -> _VT:
-    if not (__object and is_array(__object)): return __object
-    elif isinstance(__object, Set): return __object.copy().pop()
+    if isinstance(__object, Set): return __object.copy().pop()
+    elif not is_array(__object): return __object
     else: return iloc(__object, (index if isinstance(index, int) else 0), default=default)
 
 
@@ -166,13 +167,17 @@ def filter_array(__s: Sequence, match: MatchFunction, apply: Optional[ApplyFunct
     else: [element for element in __s if match(element)]
 
 
-def is_same_length(*args: Sequence, how="all", **kwargs) -> bool:
+def is_same_length(*args: IndexedSequence, empty=True, **kwargs) -> bool:
     __l = set()
-    for idx, __object in enumerate(args):
-        if isinstance(__object, Sequence): __l.add(len(__object))
-        elif idx != 0 and how == "first": pass
-        else: return False
+    for __object in args:
+        if not is_array(__object): return False
+        elif not __object and not empty: return False
+        else: __l.add(len(__object))
     return len(__l) <= 1
+
+
+def unit_array(__s: Sequence, unit=1, **kwargs) -> List[Sequence]:
+    return [__s[i:i+unit] for i in range(0,len(__s),unit)]
 
 
 def align_index(*__s: Sequence, how="all", unique=False, null_only=False, **kwargs) -> List[int]:
@@ -435,8 +440,8 @@ def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, reorder=True, **kw
         elif default == "keep": return pd.DataFrame([default]*len(df), columns=[columns])
         else: return pd.DataFrame()
     elif columns:
-        if reorder: columns = [column for column in columns if column in df.columns]
-        else: columns = [column for column in df.columns if column in columns]
+        if reorder: columns = inter(columns, df.columns)
+        else: columns = inter(df.columns, columns)
         df = df[columns]
         if default == "keep": df = pd.concat([pd.DataFrame(columns=columns),df])
     return df

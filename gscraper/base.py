@@ -9,9 +9,9 @@ from .logs import CustomLogger, dumps_map, unraw
 from .types import _KT, _VT, ClassInstance, Context, ContextMapper, IndexLabel, Keyword, DateFormat, DateQuery, Timedelta, TypeHint
 from .types import RenameDict, JsonData, RedirectData, LogMessage, Records, TabularData, Data, Unit
 from .types import is_array, is_records, init_origin
-from .map import unique, exists_one, fill_array, is_same_length, align_array
+from .map import unique, get_scala, fill_array, is_same_length, unit_array, align_array, diff
 from .map import kloc, apply_dict, chain_dict, drop_dict
-from .map import cloc, apply_df, merge_drop, convert_data, filter_data, chain_exists, data_empty
+from .map import cloc, apply_df, merge_drop, exists_one, convert_data, filter_data, chain_exists, data_empty
 from .parse import parse_cookies, parse_origin
 
 from abc import ABCMeta, abstractmethod
@@ -280,14 +280,37 @@ class Spider(CustomDict):
 
     def set_iterator(self, *args, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
                     iterateUnit: Unit=1, interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
-        if args and iterateArgs:
-            iterateQuery = iterateArgs + iterateQuery
-            context = dict({key: args[idx] for idx, key in enumerate(cast_tuple(iterateArgs)[:len(args)])}, **context)
-        iterator, context = self.from_context(iterateQuery, iterateUnit, **context)
+        arguments, periods, iterator = list(), list(), list()
+        if is_same_length(args, iterateArgs, empty=False) and is_same_length(*args):
+            arguments = self.from_args(*args, iterateArgs=iterateArgs, iterateUnit=iterateUnit)
+            iterateQuery = diff(iterateQuery, iterateArgs)
         if interval:
-            period, context = self.from_period(interval=interval, **context)
-            iterator = self.product_iterator(iterator, period)
+            periods, context = self.from_date(interval=interval, **context)
+            iterateQuery = diff(iterateQuery, ("startDate", "endDate", "date", "interval"))
+            context = dict(context, interval=interval)
+        iterator, context = self.from_context(iterateQuery=iterateQuery, iterateUnit=iterateUnit, **context)
+        iterator = self.product_iterator(arguments, periods, iterator)
         return iterator, context
+
+    def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1) -> List[Context]:
+        if iterateUnit:
+            iterateUnit = get_scala(iterateUnit)
+            args = tuple(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
+        return [dict(zip(iterateArgs,values)) for values in zip(*args)]
+
+    def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
+                interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
+        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.startDate)
+        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.endDate)
+        date_range = get_date_range(startDate, endDate, interval=interval)
+        if (interval in ("D",1)) or (str(interval).startswith("1 day")):
+            period = [dict(date=date) for date in date_range]
+            context = drop_dict(context, "date", inplace=False)
+        elif len(date_range) > 1:
+            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
+                        for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
+        else: period = [dict(startDate=startDate, endDate=endDate)]
+        return period, context
 
     def from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
         if not iterateQuery: return list(), context
@@ -303,20 +326,6 @@ class Spider(CustomDict):
         combinations = product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
-
-    def from_period(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
-                    interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
-        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.startDate)
-        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.endDate)
-        date_range = get_date_range(startDate, endDate, interval=interval)
-        if (interval in ("D",1)) or (str(interval).startswith("1 day")):
-            period = [dict(date=date) for date in date_range]
-            context = drop_dict(context, "date", inplace=False)
-        elif len(date_range) > 1:
-            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
-                        for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
-        else: period = [dict(startDate=startDate, endDate=endDate)]
-        return period, context
 
     def product_iterator(self, *iterator: Sequence[Context], **kawrgs) -> List[Context]:
         iterator_array = map((lambda x: x if x else [{}]), iterator)
