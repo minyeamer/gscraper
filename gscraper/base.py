@@ -259,8 +259,8 @@ class Spider(CustomDict):
 
     def map_context(self, *args, iterateQuery: List[_KT]=list(), __unique=True, **context) -> Tuple[Tuple,Context]:
         args = (unique(*value) if is_array(value) and __unique else value for value in args)
-        context = {key: unique(*value) if is_array(value) and __unique else value
-                    for key, value in context.items() if key in iterateQuery}
+        context = {key: unique(*value) if (key in iterateQuery) and is_array(value) and __unique else value
+                    for key, value in context.items()}
         return args, context
 
     def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
