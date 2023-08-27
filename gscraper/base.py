@@ -328,6 +328,7 @@ class Spider(CustomDict):
                 for indices in combinations]
 
     def product_iterator(self, *iterator: Sequence[Context], **kawrgs) -> List[Context]:
+        if sum(map(len, iterator)) == 0: return list()
         iterator_array = map((lambda x: x if x else [{}]), iterator)
         return list(map(chain_dict, product(*iterator_array)))
 
