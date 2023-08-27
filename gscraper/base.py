@@ -258,9 +258,9 @@ class Spider(CustomDict):
         return self.gather(*args, **context)
 
     def map_context(self, *args, iterateQuery: List[_KT]=list(), __unique=True, **context) -> Tuple[Tuple,Context]:
-        args = (unique(*value) if is_array(value) and __unique else value for value in args)
-        context = {key: unique(*value) if (key in iterateQuery) and is_array(value) and __unique else value
-                    for key, value in context.items()}
+        args = (unique(*value) if is_array(value) and __unique else cast_list(value) for value in args)
+        context = {key: (unique(*value) if is_array(value) and __unique else cast_list(value))
+                    if key in iterateQuery else value for key, value in context.items()}
         return args, context
 
     def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
@@ -293,7 +293,8 @@ class Spider(CustomDict):
         return iterator, context
 
     def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1) -> List[Context]:
-        if iterateUnit:
+        iterateUnit = get_scala(iterateUnit)
+        if isinstance(iterateUnit, int) and iterateUnit > 1:
             iterateUnit = get_scala(iterateUnit)
             args = tuple(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
         return [dict(zip(iterateArgs,values)) for values in zip(*args)]
