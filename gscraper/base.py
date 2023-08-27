@@ -253,12 +253,15 @@ class Spider(CustomDict):
 
     @abstractmethod
     @requests_session
-    def crawl(self, **context) -> Data:
-        return self.gather(**self.map_context(**context))
+    def crawl(self, *args, **context) -> Data:
+        args, context = self.map_context(*args, **context)
+        return self.gather(*args, **context)
 
-    def map_context(self, __unique=True, **context) -> Context:
-        return {key: (unique(*value) if __unique else value)
-                if is_array(value) else value for key, value in context.items()}
+    def map_context(self, *args, contextQuery: List[_KT]=list(), __unique=True, **context) -> Tuple[Tuple,Context]:
+        args = (unique(*value) if is_array(value) and __unique else value for value in args)
+        context = {key: unique(*value) if is_array(value) and __unique else value
+                    for key, value in context.items() if key in contextQuery}
+        return args, context
 
     def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
                 returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -577,7 +580,8 @@ class AsyncSpider(Spider):
     @abstractmethod
     @asyncio_session
     async def crawl(self, **context) -> Data:
-        return await self.gather(**self.map_context(**context))
+        args, context = self.map_context(*args, **context)
+        return await self.gather(*args, **context)
 
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
