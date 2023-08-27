@@ -1,8 +1,9 @@
 from .cast import cast_int, cast_datetime, cast_date, get_timezone
 from .map import re_get
-from .types import TypeHint, DateNumeric, DateFormat, is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
+from .types import TypeHint, DateNumeric, DateFormat, Timedelta, Timezone
+from .types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
-from typing import Optional, Union
+from typing import List, Optional, Union
 from dateutil.parser import parse as dateparse
 from pandas.tseries.offsets import BDay
 from pytz import timezone
@@ -39,28 +40,46 @@ DATETIME_PATTERN = {
 COMMON_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
 COMMON_DATETIME_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)$"
 
+PANDAS_FREQUENCY = {
+    "B": "business day frequency",
+    "C": "custom business day frequency",
+    "D": "calendar day frequency",
+    "W": "weekly frequency",
+    "M": "month end frequency",
+    "SM": "semi-month end frequency (15th and end of month)",
+    "BM": "business month end frequency",
+    "CBM": "custom business month end frequency",
+    "MS": "month start frequency",
+    "SMS": "semi-month start frequency (1st and 15th)",
+    "BMS": "business month start frequency",
+    "CBMS": "custom business month start frequency",
+    "Q": "quarter end frequency",
+    "BQ": "business quarter end frequency",
+    "QS": "quarter start frequency",
+    "BQS": "business quarter start frequency",
+    "A": "year end frequency",
+    "Y": "year end frequency",
+    "BA": "business year end frequency",
+    "BY": "business year end frequency",
+    "AS": "year start frequency",
+    "YS": "year start frequency",
+    "BAS": "business year start frequency",
+    "BYS": "business year start frequency",
+    "BH": "business hour frequency",
+    "H": "hourly frequency",
+    "T": "minutely frequency",
+    "min": "minutely frequency",
+    "S": "secondly frequency",
+    "L": "milliseconds",
+    "ms": "milliseconds",
+    "U": "microseconds",
+    "us": "microseconds",
+    "N": "nanoseconds"
+}
+
+
 strptimekr = lambda date_string: cast_datetime(date_string, tzinfo=KST, droptz=True)
 strpdatekr = lambda date_string: cast_date(strptimekr(date_string))
-date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_range(startDate, endDate)]
-
-
-def is_datetime_format(__object: DateFormat, strict=False, **kwargs) -> bool:
-    if isinstance(__object, str) and re.fullmatch(COMMON_DATETIME_PATTERN, __object):
-        try: return bool(dateparse(__object)) if strict else True
-        except: return False
-    else: return False
-
-
-def get_datetime_format(__object: DateFormat, strict=False, **kwargs) -> str:
-    if is_datetime_format(__object, strict=strict):
-        return "date" if re.fullmatch(COMMON_DATE_PATTERN, __object) else "datetime"
-
-
-def cast_datetime_format(__object: DateFormat, default=None, strict=False, **kwargs) -> DateNumeric:
-    format = get_datetime_format(__object, strict=strict)
-    if format == "date": return cast_date(__object, default=default)
-    elif format == "datetime": return cast_datetime(__object, default=default)
-    else: return default
 
 
 def trunc_datetime(__datetime: dt.datetime, part=str(), **kwargs) -> dt.datetime:
@@ -85,16 +104,16 @@ def now(__format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minut
 
 
 def today(__format=str(), days=0, weeks=0, tzinfo=KST, **kwargs) -> Union[dt.date,str]:
-    if __format: now(__format, days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY")
-    else: now(days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY").date()
+    if __format: return now(__format, days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY")
+    else: return now(days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY").date()
 
 
 def get_datetime(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
                 minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, droptz=False, datetimePart="SECOND",
                 **kwargs) -> dt.datetime:
-    __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
-    if not isinstance(__datetime, dt.datetime):
-        __datetime = now()
+    context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
+    __datetime = cast_datetime(__object, **context)
+    __datetime = __datetime if isinstance(__datetime, dt.datetime) else now(days=cast_int(__object), **context)
     if isinstance(__datetime, dt.datetime):
         __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
         return trunc_datetime(__datetime, datetimePart) if datetimePart else __datetime
@@ -117,15 +136,51 @@ def get_timestamp(__object: Optional[DateFormat]=None, days=0, seconds=0, micros
 
 
 def get_date(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None, **kwargs) -> dt.date:
-    __date = cast_date(__object)
-    if isinstance(__date, dt.date): return __date - dt.timedelta(days=days, weeks=weeks)
-    else: return today(days=days, weeks=weeks, tzinfo=tzinfo)
+    __date = cast_date(__object, tzinfo=tzinfo)
+    __date = __date if isinstance(__date, dt.date) else today(days=cast_int(__object), tzinfo=tzinfo)
+    if isinstance(__date, dt.date):
+        return __date - dt.timedelta(days=days, weeks=weeks)
 
 
 def get_busdate(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None, **kwargs) -> dt.date:
     __date = get_date(**locals())
     if isinstance(__date, dt.date):
         return __date if np.is_busday(__date) else (__date-BDay(1)).date()
+
+
+def is_datetime_format(__object: DateFormat, strict=False, **kwargs) -> bool:
+    if isinstance(__object, str) and re.fullmatch(COMMON_DATETIME_PATTERN, __object):
+        try: return bool(dateparse(__object)) if strict else True
+        except: return False
+    else: return False
+
+
+def get_datetime_format(__object: DateFormat, strict=False, **kwargs) -> str:
+    if is_datetime_format(__object, strict=strict):
+        return "date" if re.fullmatch(COMMON_DATE_PATTERN, __object) else "datetime"
+
+
+def cast_datetime_format(__object: DateFormat, default=None, strict=False, **kwargs) -> DateNumeric:
+    format = get_datetime_format(__object, strict=strict)
+    if format == "date": return cast_date(__object, default=default)
+    elif format == "datetime": return cast_datetime(__object, default=default)
+    else: return default
+
+
+def is_pandas_frequency(__object: Timedelta, **kwargs) -> bool:
+    if isinstance(__object, dt.timedelta): return True
+    elif isinstance(__object, str): return any(map(lambda freq: __object.endswith(freq), PANDAS_FREQUENCY.keys()))
+    else: return False
+
+
+def get_date_range(startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                    periods: Optional[int]=None, interval: Timedelta="D",
+                    tzinfo: Optional[Timezone]=None, **kwargs) -> List[dt.date]:
+    if sum(map(bool, (startDate, endDate, periods, interval))) < 3: return list()
+    if isinstance(interval, int):
+        interval = dt.timedelta(days=interval)
+    if not is_pandas_frequency(interval): return list()
+    else: return [date.date() for date in pd.date_range(startDate, endDate, periods, interval, tzinfo)]
 
 
 def set_datetime(__datetime: dt.datetime, __type: TypeHint=str,

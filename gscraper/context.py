@@ -3,16 +3,20 @@ def exists_context(**context):
 
 
 CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(), which=str(), initTime=None, \
-                        session=None, semaphore=None, authType=None, idKey=None, pwKey=None, extraKeys=None, \
-                        filter=list(), filterContext=None, contextQuery=list(), redirectArgs=list(), redirectQuery=list(), \
-                        returnType=str(), logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
+                        session=None, semaphore=None, filter=list(), filterContext=None, \
+                        contextArgs=list(), contextQuery=list(), contextUnit=1, contextPeriod=str(), \
+                        startDate=None, endDate=None, returnType=str(), \
+                        logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
                         logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=dict(), \
                         delay=1., numTasks=100, progress=True, debug=False, message=str(), rename=dict(), \
-                        apiRedirect=False, redirectUnit=(1,), redirectErrors=False, localSave=False, extraSave=False, \
+                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, localSave=False, extraSave=False, \
                         queryKey=str(), querySheet=str(), queryFields=list(), queryString=list(), queryArray=list(), \
-                        dependencies=list(), data=None, results=None, crawler=None, prefix=str(), self_var=True, **context: \
+                        authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=list(), \
+                        data=None, results=None, crawler=None, prefix=str(), self_var=True, **context: \
     dict(exists_context(
         filter = filter,
+        startDate = startDate,
+        endDate = endDate,
         logName = logName,
         logLevel = logLevel,
         logFile = logFile,
@@ -26,7 +30,7 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(),
         message = message,
         rename = rename,
         apiRedirect = apiRedirect,
-        redirectUnit = redirectUnit,
+        reidrectUnit = reidrectUnit,
         redirectErrors = redirectErrors,
         ), **context)
 

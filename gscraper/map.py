@@ -287,7 +287,7 @@ def set_dict(__m: Dict, __keys: _KT, values: _VT, empty=True, inplace=True, **kw
     if not inplace: return __m
 
 
-def drop_dict(__m: Dict, __keys: _KT, inplace=True, **kwargs) -> Dict:
+def drop_dict(__m: Dict, __keys: _KT, inplace=False, **kwargs) -> Dict:
     if not inplace: __m = __m.copy()
     for __key in cast_tuple(__keys): __m.pop(__key, None)
     if not inplace: return __m

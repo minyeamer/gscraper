@@ -1,8 +1,9 @@
 from typing import Callable, Sequence, Tuple, Type, Union, TypeVar, Hashable
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
+from datetime import datetime, date, time, timedelta
 from pandas import DataFrame
-from datetime import datetime, date, time
+from pytz import BaseTzInfo
 
 
 _KT = TypeVar("_KT", Hashable, Sequence[Hashable])
@@ -48,10 +49,16 @@ IndexLabel = Union[Hashable, Sequence[Hashable]]
 
 Column = Union[str, Sequence[str]]
 Keyword = Union[str, Sequence[str]]
+Shape = Union[int, Sequence[int]]
+Unit = Union[int, Sequence[int]]
 
 Timestamp = Union[float, int]
 DateNumeric = Union[datetime, date, time, float, int]
 DateFormat = Union[datetime, date, time, float, int, str]
+
+DateQuery = Dict[str,datetime]
+Timedelta = Union[timedelta, str, int]
+Timezone= Union[BaseTzInfo, str]
 
 PatternStr = str
 ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]]]

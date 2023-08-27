@@ -1,16 +1,16 @@
 from __future__ import annotations
-from .cast import cast_list, cast_tuple, cast_int
+from .cast import cast_list, cast_tuple, cast_int, cast_date
 from .context import PROXY_CONTEXT, REDIRECT_CONTEXT, GCP_CONTEXT
-from .date import now, cast_datetime_format
+from .date import now, get_date, cast_datetime_format, get_date_range
 from .gcloud import Account, NumericiseIgnore, BigQuerySchema, SchemaSequence
 from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import read_gbq, to_gbq, validate_upsert_key, IDTokenCredentials
 from .logs import CustomLogger, dumps_map, unraw
-from .types import _KT, _VT, ClassInstance, Context, ContextMapper, IndexLabel, Keyword, TypeHint
-from .types import RenameDict, JsonData, RedirectData, LogMessage, Records, TabularData, Data
+from .types import _KT, _VT, ClassInstance, Context, ContextMapper, IndexLabel, Keyword, DateFormat, DateQuery, Timedelta, TypeHint
+from .types import RenameDict, JsonData, RedirectData, LogMessage, Records, TabularData, Data, Unit
 from .types import is_array, is_records, init_origin
 from .map import unique, exists_one, fill_array, is_same_length, align_array
-from .map import kloc, apply_dict, drop_dict
+from .map import kloc, apply_dict, chain_dict, drop_dict
 from .map import cloc, apply_df, merge_drop, convert_data, filter_data, chain_exists, data_empty
 from .parse import parse_cookies, parse_origin
 
@@ -24,6 +24,7 @@ import time
 
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 from collections import defaultdict
+import datetime as dt
 import json
 import logging
 import pandas as pd
@@ -130,26 +131,31 @@ class Spider(CustomDict):
     operation = "spider"
     where = "urls"
     which = "data"
+    contextArgs = list()
     contextQuery = list()
-    redirectQuery = list()
+    contextUnit = 1
+    contextPeriod = str()
     returnType = "records"
     errors = defaultdict(list)
     maxLimit = 1
     message = str()
     rename = dict()
 
-    def __init__(self, operation=str(), where=str(), which=str(), filter: IndexLabel=list(),
-                filterContext: Optional[ContextMapper]=None, contextQuery: IndexLabel=list(), redirectQuery: IndexLabel=list(),
+    def __init__(self, operation=str(), where=str(), which=str(), filter: IndexLabel=list(), filterContext: Optional[ContextMapper]=None,
+                contextArgs: List[_KT]=list(), contextQuery: List[_KT]=list(), contextUnit: Unit=1,
+                contextPeriod: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 returnType: Optional[TypeHint]=str(), logName=str(), logLevel: Union[str,int]="WARN", logFile: Optional[str]=str(),
                 logErrors=False, logJson=False, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(), errors: Dict=dict(),
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, maxLimit=1, progress=True, debug=False,
-                message=str(), rename: RenameDict=dict(), apiRedirect=False, redirectUnit: Union[int,Tuple[int]]=(1,),
-                redirectErrors=False, localSave=False, extraSave=False, dependencies: Tuple[Type]=tuple(), self_var=True, **context):
+                message=str(), rename: RenameDict=dict(), apiRedirect=False, reidrectUnit: Unit=1, redirectErrors=False,
+                localSave=False, extraSave=False, dependencies: Tuple[Type]=tuple(), self_var=True, **context):
         self.operation = self.operation
         self.initTime = now()
         self.filter = filter
+        self.contextArgs = contextArgs if contextArgs else self.contextArgs
         self.contextQuery = contextQuery if contextQuery else self.contextQuery
-        self.redirectQuery = redirectQuery if redirectQuery else self.redirectQuery
+        self.contextUnit = contextUnit if contextUnit else self.contextUnit
+        self.contextPeriod = contextPeriod if contextPeriod else self.contextPeriod
         self.logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
@@ -166,15 +172,23 @@ class Spider(CustomDict):
         self.message = message if message else self.message
         self.rename = rename if rename else self.rename
         self.apiRedirect = apiRedirect
-        self.redirectUnit = redirectUnit
+        self.reidrectUnit = reidrectUnit
         self.redirectErrors = redirectErrors
         self.localSave = localSave
         self.extraSave = extraSave
         self.set_context(filterContext=filterContext, **context)
+        self.set_date(startDate=startDate, endDate=endDate, contextPeriod=contextPeriod, **context)
         self.set_query(**context)
 
     def set_context(self, filterContext: Optional[ContextMapper]=None, **context):
         self.update(filterContext(**context) if isinstance(filterContext, Callable) else context)
+
+    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                contextPeriod: Timedelta=str(), **context):
+        if contextPeriod or (startDate != None) or (endDate != None):
+            startDate, endDate = get_date(startDate, default=1), get_date(endDate, default=1)
+            self.startDate = min(startDate, endDate)
+            self.endDate = max(startDate, endDate)
 
     ###################################################################
     ######################### Session Managers ########################
@@ -234,7 +248,7 @@ class Spider(CustomDict):
         else: return 0.
 
     ###################################################################
-    ############################# Requests ############################
+    ######################### Gather Requests #########################
     ###################################################################
 
     @abstractmethod
@@ -246,30 +260,74 @@ class Spider(CustomDict):
         return {key: (unique(*value) if __unique else value)
                 if is_array(value) else value for key, value in context.items()}
 
-    def gather(self, *args, contextQuery: IndexLabel=list(), message=str(), progress: Optional[bool]=None,
-                filter: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
+                returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
         hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        if contextQuery:
-            query, context = self.from_context(contextQuery, **context)
-            data = [self.fetch(**__q, filter=filter, **context) for __q in tqdm(query, desc=message, disable=hide_bar)]
-        else: data = [self.fetch(*__q, filter=filter, **context) for __q in tqdm(args, desc=message, disable=hide_bar)]
+        query, context = self.split_context(*args, **context)
+        data = [self.fetch(**__q, filter=filter, **context) for __q in tqdm(query, desc=message, disable=hide_bar)]
         return self.map_reduce(data, filter=filter, returnType=returnType, **context)
-
-    def from_context(self, contextQuery: IndexLabel, **context) -> Tuple[Sequence[Context],Context]:
-        if not contextQuery: return list(), context
-        query, context = kloc(context, contextQuery, default="pass"), drop_dict(context, contextQuery, inplace=False)
-        queryUnit = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
-        return queryUnit, context
 
     def map_reduce(self, data: List, filter=list(), returnType: Optional[TypeHint]=None, **kwargs) -> Data:
         return filter_data(chain_exists(data), filter=filter, returnType=returnType)
 
+    ###################################################################
+    ########################## Split Context ##########################
+    ###################################################################
+
+    def split_context(self, *args, contextArgs: List[_KT]=list(), contextQuery: List[_KT]=list(),
+                    contextUnit: Unit=1, contextPeriod: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
+        if args and contextArgs:
+            contextQuery = contextArgs + contextQuery
+            context = dict({key: args[idx] for idx, key in enumerate(cast_tuple(contextArgs)[:len(args)])}, **context)
+        query, context = self.from_context(contextQuery, contextUnit, **context)
+        if contextPeriod:
+            period, context = self.from_period(contextPeriod=contextPeriod, **context)
+            query = self.product_context(query, period)
+        return query, context
+
+    def from_context(self, contextQuery: List[_KT], contextUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
+        if not contextQuery: return list(), context
+        query, context = kloc(context, contextQuery, default="pass"), drop_dict(context, contextQuery, inplace=False)
+        contextUnit = cast_list(contextUnit)
+        if any(map(lambda x: x>1, contextUnit)): query = self.group_context(contextQuery, contextUnit, **query)
+        else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
+        return query, context
+
+    def group_context(self, contextQuery: List[_KT], contextUnit: Unit=1, **context) -> List[Context]:
+        query = apply_dict(context, apply=cast_list, all_keys=True)
+        keys, unit = query.keys(), fill_array(contextUnit, count=len(contextQuery), value=1)
+        combinations = product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
+        return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
+                for indices in combinations]
+
+    def from_period(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
+                    contextPeriod: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
+        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.startDate)
+        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.endDate)
+        date_range = get_date_range(startDate, endDate, interval=contextPeriod)
+        if (contextPeriod in ("D",1)) or (str(contextPeriod).startswith("1 day")):
+            period = [dict(date=date) for date in date_range]
+            context = drop_dict(context, "date", inplace=False)
+        elif len(date_range) > 1:
+            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
+                        for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
+        else: period = [dict(startDate=startDate, endDate=endDate)]
+        return period, context
+
+    def product_context(self, *context: Sequence[Context], **kawrgs) -> List[Context]:
+        context_array = map((lambda x: x if x else [{}]), context)
+        return list(map(chain_dict, product(*context_array)))
+
+    ###################################################################
+    ########################## Fetch Request ##########################
+    ###################################################################
+
     @abstractmethod
     @log_errors
     @requests_limit
-    def fetch(self, query: str, *args, **kwargs) -> Data:
-        return self.request_json("GET", EXAMPLE_URL, headers=get_headers(EXAMPLE_URL))
+    def fetch(self, *args, **kwargs) -> Data:
+        ...
 
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
@@ -431,6 +489,10 @@ class Spider(CustomDict):
         return data[data[key].notna()].drop_duplicates(key)
 
 
+###################################################################
+########################## Async Spiders ##########################
+###################################################################
+
 class AsyncSpider(Spider):
     __metaclass__ = ABCMeta
     asyncio = True
@@ -509,7 +571,7 @@ class AsyncSpider(Spider):
         return wrapper
 
     ###################################################################
-    ############################# Requests ############################
+    ########################## Async Requests #########################
     ###################################################################
 
     @abstractmethod
@@ -518,16 +580,13 @@ class AsyncSpider(Spider):
         return await self.gather(**self.map_context(**context))
 
     @asyncio_redirect
-    async def gather(self, *args, contextQuery: IndexLabel=tuple(), message=str(), progress: Optional[bool]=None,
-                    filter: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, *args, message=str(), progress=None, filter: IndexLabel=list(),
+                    returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
         hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        if contextQuery:
-            query, context = self.from_context(contextQuery, **context)
-            data = await tqdm.gather(*[
+        query, context = self.split_context(*args, **context)
+        data = await tqdm.gather(*[
                 self.fetch(**__q, filter=filter, **context) for __q in query], desc=message, disable=hide_bar)
-        else: data = await tqdm.gather(*[
-            self.fetch(*__q, filter=filter, **context) for __q in args], desc=message, disable=hide_bar)
         return self.map_reduce(data, filter=filter, returnType=returnType, **context)
 
     @abstractmethod
@@ -577,32 +636,18 @@ class AsyncSpider(Spider):
             return response.headers
 
     ###################################################################
-    ############################# Redirect ############################
+    ########################## Async Redirect #########################
     ###################################################################
 
     @Spider.gcloud_authorized
-    async def redirect(self, *args, redirectArgs: IndexLabel=list(), redirectQuery: IndexLabel=list(),
-                        redirectUnit: Tuple[int], message=str(), progress: Optional[bool]=None,
+    async def redirect(self, *args, contextUnit: Unit=1, redirectUnit: Unit=1, message=str(), progress=None,
                         filter: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = message if message else REDIRECT_MSG(self.operation)
+        message = message if message else GATHER_MSG(self.which, self.where)
         hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        if args and redirectArgs:
-            redirectQuery = redirectArgs + redirectQuery
-            context = dict({key: args[idx] for idx, key in enumerate(cast_tuple(redirectArgs)[:len(args)])}, **context)
-        query, context = self.redirect_context(redirectQuery, redirectUnit, **context)
+        query, context = self.split_context(*args, contextUnit=redirectUnit, **context)
         data = await tqdm.gather(*[
-            self.fetch_redirect(**__q, filter=filter, **context) for __q in query], desc=message, disable=hide_bar)
+                self.fetch_redirect(**__q, filter=filter, **context) for __q in query], desc=message, disable=hide_bar)
         return self.map_reduce(data, filter=filter, returnType=returnType, **context)
-
-    def redirect_context(self, redirectQuery: IndexLabel, redirectUnit: Tuple[int], **context) -> Tuple[Sequence[Context],Context]:
-        if not redirectQuery: return list(), context
-        query, context = kloc(context, redirectQuery, default="pass"), drop_dict(context, redirectQuery, inplace=False)
-        query = apply_dict(query, apply=cast_list, all_keys=True)
-        keys, unit = query.keys(), fill_array(redirectUnit, count=len(redirectQuery), value=1)
-        queryUnit, combinations = list(), product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
-        for indices in combinations:
-            queryUnit.append({key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))})
-        return queryUnit, context
 
     @asyncio_errors
     @asyncio_limit
@@ -827,7 +872,7 @@ class Pipeline(Spider):
 
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop="right", how="left", on=str(), **context) -> Data:
-        query = crawler.contextQuery
+        query = crawler.contextArgs+crawler.contextQuery
         if query and all(map(pd.notna, kloc(context, query, value_only=True))): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
@@ -859,16 +904,15 @@ class AsyncPipeline(AsyncSpider, Pipeline):
         args = list()
         for cralwer in self.dependencies:
             operation = self.get_operation(cralwer, **context)
-            is_async = cralwer.asyncio
-            if is_async: data = await self.crawl_async_proxy(cralwer, prefix=operation, **context)
+            if cralwer.asyncio: data = await self.async_proxy(cralwer, prefix=operation, **context)
             else: data = self.crawl_proxy(cralwer, prefix=operation, **context)
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    async def crawl_async_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
-                                appendix: Optional[pd.DataFrame]=None,
-                                drop="right", how="left", on=str(), **context) -> Data:
-        query = crawler.contextQuery
+    async def async_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
+                            appendix: Optional[pd.DataFrame]=None,
+                            drop="right", how="left", on=str(), **context) -> Data:
+        query = crawler.contextArgs+crawler.contextQuery
         if query and all(map(pd.notna, kloc(context, query, value_only=True))): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(await crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
