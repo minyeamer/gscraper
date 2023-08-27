@@ -1,7 +1,9 @@
-from .cast import cast_int, cast_datetime, cast_date
+from .cast import cast_int, cast_datetime, cast_date, get_timezone
 from .map import re_get
+from .types import TypeHint, DateNumeric, DateFormat, is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from typing import Optional, Union
+from dateutil.parser import parse as dateparse
 from pandas.tseries.offsets import BDay
 from pytz import timezone
 import datetime as dt
@@ -12,36 +14,53 @@ import re
 KST = "Asia/Seoul"
 NOW = dt.datetime.now(timezone(KST)).replace(microsecond=0, tzinfo=None)
 TODAY = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
-DATETYPE = {"datetime":dt.datetime, "date":dt.date, "str":str, "timestamp":int, "ordinal":int}
+
 DATEPART = ["SECOND", "MINUTE", "HOUR", "DAY", "MONTH", "YEAR"]
 WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
 
-DAET_FORMAT = "%Y-%m-%d"
-DAETTIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-TIMEZONE_FORMAT = "%Y-%m-%d %H:%M:%S.%f%z"
-JS_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%f%z"
+DATETIME_FORMAT = {
+    "date": "%Y-%m-%d",
+    "datetime": "%Y-%m-%d %H:%M:%S",
+    "datetime_ms": "%Y-%m-%d %H:%M:%S.%f",
+    "timezone": "%Y-%m-%d %H:%M:%S%z",
+    "timezone_ms": "%Y-%m-%d %H:%M:%S.%f%z",
+    "js": "%Y-%m-%dT%H:%M:%S.%f%z",
+}
 
-strptimekr = lambda date_string, default=None: cast_datetime(date_string, default, tzinfo=KST, droptz=True)
-strpdatekr = lambda date_string, default=None: get_date(strptimekr(date_string), default)
+DATETIME_PATTERN = {
+    "date": r"^\d{4}-\d{2}-\d{2}$",
+    "datetime": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+    "datetime_ms": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+$",
+    "timezone": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\+\d{2}:\d{2}$",
+    "timezone_ms": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\+\d{2}:\d{2}$",
+    "js": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}$",
+}
+
+COMMON_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
+COMMON_DATETIME_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)$"
+
+strptimekr = lambda date_string: cast_datetime(date_string, tzinfo=KST, droptz=True)
+strpdatekr = lambda date_string: cast_date(strptimekr(date_string))
 date_range = lambda startDate, endDate: [str(date.date()) for date in pd.date_range(startDate, endDate)]
 
 
-def now(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-        hours=0, weeks=0, datetimePart=str(), tzinfo=KST, droptz=True, dropms=True,
-        **kwargs) -> Union[dt.datetime,str]:
-    delta = dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
-    __datetime = dt.datetime.now(timezone(tzinfo)) - delta
-    if droptz: __datetime = __datetime.replace(tzinfo=None)
-    if dropms: __datetime = __datetime.replace(microsecond=0)
-    if datetimePart: __datetime = trunc_datetime(__datetime, datetimePart)
-    return __datetime.strftime(format) if format else __datetime
+def is_datetime_format(__object: DateFormat, strict=False, **kwargs) -> bool:
+    if isinstance(__object, str) and re.fullmatch(COMMON_DATETIME_PATTERN, __object):
+        try: return bool(dateparse(__object)) if strict else True
+        except: return False
+    else: return False
 
 
-def today(format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-            hours=0, weeks=0, tzinfo=KST, **kwargs) -> Union[dt.datetime,str]:
-    date = now(str(), days, seconds, microseconds, milliseconds, minutes, hours, weeks, tzinfo)
-    date = date.replace(hour=0, minute=0, second=0)
-    return date.strftime(format) if format else date
+def get_datetime_format(__object: DateFormat, strict=False, **kwargs) -> str:
+    if is_datetime_format(__object, strict=strict):
+        return "date" if re.fullmatch(COMMON_DATE_PATTERN, __object) else "datetime"
+
+
+def cast_datetime_format(__object: DateFormat, default=None, strict=False, **kwargs) -> DateNumeric:
+    format = get_datetime_format(__object, strict=strict)
+    if format == "date": return cast_date(__object, default=default)
+    elif format == "datetime": return cast_datetime(__object, default=default)
+    else: return default
 
 
 def trunc_datetime(__datetime: dt.datetime, part=str(), **kwargs) -> dt.datetime:
@@ -56,78 +75,94 @@ def trunc_datetime(__datetime: dt.datetime, part=str(), **kwargs) -> dt.datetime
     return __datetime
 
 
-def get_datetime(__datetime: Union[dt.datetime,dt.date,str,int], default=0, time=True, **kwargs) -> dt.datetime:
-    if isinstance(__datetime, dt.datetime): pass
-    elif isinstance(__datetime, dt.date): __datetime = dt.datetime(*__datetime.timetuple()[:6])
-    elif cast_datetime(__datetime): __datetime = cast_datetime(__datetime)
-    elif str(__datetime).isdigit(): __datetime = now(days=int(__datetime))
-    elif type(default) in [dt.datetime,dt.date,str,int]: return get_datetime(default, default=None, time=time)
-    else: return default
-    return __datetime if time else __datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+def now(__format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
+        hours=0, weeks=0, tzinfo=KST, droptz=True, datetimePart="SECOND", **kwargs) -> Union[dt.datetime,str]:
+    delta = dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
+    __datetime = dt.datetime.now(get_timezone(tzinfo)) - delta
+    if droptz: __datetime = __datetime.replace(tzinfo=None)
+    if datetimePart: __datetime = trunc_datetime(__datetime, datetimePart)
+    return __datetime.strftime(__format) if __format else __datetime
 
 
-def get_timestamp(__datetime: Union[dt.datetime,dt.date,str,float,int], default=0, time=True, tsUnit="ms",
-                    **kwargs) -> Union[float,int]:
-    __datetime = get_datetime(__datetime, default=default, time=time)
-    __timestamp = __datetime.timestamp() if __datetime else None
-    return int(__timestamp*1000) if __timestamp and tsUnit == "ms" else __timestamp
+def today(__format=str(), days=0, weeks=0, tzinfo=KST, **kwargs) -> Union[dt.date,str]:
+    if __format: now(__format, days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY")
+    else: now(days=days, weeks=weeks, tzinfo=tzinfo, datetimePart="DAY").date()
 
 
-def get_date(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
-    if isinstance(__date, dt.datetime): return __date.date()
-    elif isinstance(__date, dt.date): return __date
-    elif cast_date(__date): return cast_date(__date)
-    elif str(__date).replace('-','').isdigit(): return now(days=int(__date)).date()
-    elif type(default) in [dt.datetime,dt.date,str,int]: return get_date(default, default=None)
-    else: return default
+def get_datetime(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
+                minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, droptz=False, datetimePart="SECOND",
+                **kwargs) -> dt.datetime:
+    __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
+    if not isinstance(__datetime, dt.datetime):
+        __datetime = now()
+    if isinstance(__datetime, dt.datetime):
+        __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
+        return trunc_datetime(__datetime, datetimePart) if datetimePart else __datetime
 
 
-def get_busdate(__date: Union[dt.datetime,dt.date,str,int], default=0, **kwargs) -> dt.date:
-    __date = get_date(__date, default)
-    if not isinstance(__date, dt.date): return __date
-    return __date if np.is_busday(__date) else (__date-BDay(1)).date()
+def get_time(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
+            minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, datetimePart="SECOND",
+            **kwargs) -> dt.time:
+    __datetime = get_datetime(**locals())
+    if isinstance(__datetime, dt.datetime):
+        return __datetime.time()
 
 
-def set_datetime(__datetime: dt.datetime, __type: Optional[Union[type,str]]=str,
-                __format="%Y-%m-%d %H:%M:%S", **kwargs) -> Union[str,int]:
-    __type = __type if isinstance(__type, type) else DATETYPE.get(__type)
-    if not isinstance(__type, type): return None
-    elif isinstance(__datetime, __type): return __datetime
-    elif __type == str and __format: return __datetime.strftime(__format)
-    elif __type == float: return int(__datetime.timestamp()*1000)
-    elif __type == int: return __datetime.toordinal()
-    else: return __type(**kwargs)
+def get_timestamp(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
+                minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, droptz=False, datetimePart="SECOND",
+                tsUnit="ms", **kwargs) -> int:
+    __datetime = get_datetime(**locals())
+    if isinstance(__datetime, dt.datetime):
+        return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
 
 
-def set_date(__date: dt.date, __type: Optional[Union[type,str]]=str,
+def get_date(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None, **kwargs) -> dt.date:
+    __date = cast_date(__object)
+    if isinstance(__date, dt.date): return __date - dt.timedelta(days=days, weeks=weeks)
+    else: return today(days=days, weeks=weeks, tzinfo=tzinfo)
+
+
+def get_busdate(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None, **kwargs) -> dt.date:
+    __date = get_date(**locals())
+    if isinstance(__date, dt.date):
+        return __date if np.is_busday(__date) else (__date-BDay(1)).date()
+
+
+def set_datetime(__datetime: dt.datetime, __type: TypeHint=str,
+                __format="%Y-%m-%d %H:%M:%S", tsUnit="ms", **kwargs) -> Union[str,int]:
+    if __format: return __datetime.strftime(DATETIME_FORMAT.get(__format,__format))
+    elif is_str_type(__type): return str(__datetime)
+    elif is_timestamp_type(__type): return get_timestamp(__datetime, tsUnit=tsUnit)
+    else: return
+
+
+def set_date(__date: dt.date, __type: TypeHint=str,
             __format="%Y-%m-%d", **kwargs) -> Union[str,int]:
-    __type = __type if isinstance(__type, type) else DATETYPE.get(__type)
-    if not isinstance(__type, type): return None
-    elif isinstance(__date, __type): return __date
-    elif __type == str: return __date.strftime(__format)
-    elif __type == int: return __date.toordinal()
-    else: return __type(**kwargs)
+    if __format: return __date.strftime(DATETIME_FORMAT.get(__format,__format))
+    elif is_str_type(__type): return str(__date)
+    elif is_type(__type, INTEGER_TYPES+["ordinal"]): return __date.toordinal()
+    else: return
 
 
-def relative_strptime(date_string: str, **kwargs) -> dt.datetime:
+def relative_strptime(__date_string: str, **kwargs) -> dt.datetime:
     str2int = lambda pattern, string: cast_int(re_get(pattern, string))
-    if re.search("(\d+)초 전", date_string):
-        return now(seconds=str2int("(\d+)초 전", date_string))
-    elif re.search("(\d+)분 전", date_string):
-        return now(minutes=str2int("(\d+)분 전", date_string))
-    elif re.search("(\d+)시간 전", date_string):
-        return now(hours=str2int("(\d+)시간 전", date_string))
-    elif re.search("(\d+)일 전", date_string):
-        return today(days=str2int("(\d+)일 전", date_string))
-    elif "어제" in date_string:
+    if re.search("(\d+)초 전", __date_string):
+        return now(seconds=str2int("(\d+)초 전", __date_string))
+    elif re.search("(\d+)분 전", __date_string):
+        return now(minutes=str2int("(\d+)분 전", __date_string))
+    elif re.search("(\d+)시간 전", __date_string):
+        return now(hours=str2int("(\d+)시간 전", __date_string))
+    elif re.search("(\d+)일 전", __date_string):
+        return today(days=str2int("(\d+)일 전", __date_string))
+    elif "어제" in __date_string:
         return today(days=1)
-    else: return cast_datetime(date_string)
+    else: return cast_datetime(__date_string)
 
 
-def strptime_weeknum(std_date: dt.date, **kwargs) -> str:
-    cur_year, weeknum, _ = std_date.isocalendar()
-    year, first_week, first_day = std_date.replace(day=1).isocalendar()
+def strfweek(__date: dt.date, **kwargs) -> str:
+    cur_year, weeknum, _ = __date.isocalendar()
+    year, first_week, first_day = __date.replace(day=1).isocalendar()
     if cur_year != year:
-        return f"{cur_year}년{std_date.month}월{weeknum}주차"
+        return f"{cur_year}년{__date.month}월{weeknum}주차"
     monthly_week = weeknum - first_week + int(first_day < 4)
-    return f"{year}년{std_date.month}월{monthly_week}주차"
+    return f"{year}년{__date.month}월{monthly_week}주차"
