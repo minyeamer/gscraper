@@ -4,7 +4,7 @@ def exists_context(**context):
 
 CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(), which=str(), initTime=None, \
                         session=None, semaphore=None, filter=list(), filterContext=None, \
-                        contextArgs=list(), contextQuery=list(), contextUnit=1, contextPeriod=str(), \
+                        iterateArgs=list(), iterateQuery=list(), iterateUnit=1, interval=str(), \
                         startDate=None, endDate=None, returnType=str(), \
                         logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
                         logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=dict(), \
