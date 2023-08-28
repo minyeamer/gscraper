@@ -9,7 +9,7 @@ from .logs import CustomLogger, dumps_map, unraw
 from .types import _KT, _VT, ClassInstance, Context, ContextMapper, IndexLabel, Keyword, DateFormat, DateQuery, Timedelta, TypeHint
 from .types import RenameDict, JsonData, RedirectData, LogMessage, Records, TabularData, Data, Unit
 from .types import is_array, is_records, init_origin
-from .map import unique, get_scala, fill_array, is_same_length, unit_array, align_array, diff
+from .map import is_empty, unique, get_scala, fill_array, is_same_length, unit_array, align_array, diff
 from .map import kloc, apply_dict, chain_dict, drop_dict
 from .map import cloc, apply_df, merge_drop, exists_one, convert_data, filter_data, chain_exists, data_empty
 from .parse import parse_cookies, parse_origin
@@ -113,8 +113,8 @@ class CustomDict(dict):
         if __instance: return __instance.__class__(**self.__dict__)
         else: return self.__class__(**self.__dict__)
 
-    def get(self, __key: _KT, default=None, cast=False) -> Union[Any,Dict,List,str]:
-        return kloc(self.__dict__, __key, default, cast)
+    def get(self, __key: _KT, default=None, apply=False) -> Union[Any,Dict,List,str]:
+        return kloc(self.__dict__, __key, default, apply=apply)
 
     def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,Dict]:
         if not inplace: self = self.copy()
@@ -288,8 +288,14 @@ class Spider(CustomDict):
         return filter_data(chain_exists(data), filter=filter, return_type=returnType)
 
     ###################################################################
-    ########################### Set Iterator ##########################
+    ############################# Iterator ############################
     ###################################################################
+
+    def get_iterator(self, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
+                    startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
+                    date: Optional[dt.date]=None, values_only=False, **context) -> Union[Context,Sequence[_VT]]:
+        query = unique(*iterateArgs, *self.iterateArgs, *iterateQuery, *self.iterateQuery, startDate, endDate, date)
+        return kloc(context, query, if_null="drop", values_only=values_only)
 
     def set_iterator(self, *args, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
                     iterateUnit: Unit=1, interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
@@ -327,7 +333,7 @@ class Spider(CustomDict):
 
     def from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
         if not iterateQuery: return list(), context
-        query, context = kloc(context, iterateQuery, default="pass"), drop_dict(context, iterateQuery, inplace=False)
+        query, context = kloc(context, iterateQuery), drop_dict(context, iterateQuery, inplace=False)
         iterateUnit = cast_list(iterateUnit)
         if any(map(lambda x: x>1, iterateUnit)): query = self.group_context(iterateQuery, iterateUnit, **query)
         else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
@@ -357,42 +363,42 @@ class Spider(CustomDict):
 
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> bytes:
+                        allow_redirects=True, **context) -> bytes:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(log_response(response, url=url, **logQuery))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             return response.content
 
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> str:
+                    allow_redirects=True, **context) -> str:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(log_response(response, url=url, **logQuery))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             return response.text
 
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> JsonData:
+                    allow_redirects=True, **context) -> JsonData:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(log_response(response, url=url, **logQuery))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             return response.json()
 
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> Dict:
+                        allow_redirects=True, **context) -> Dict:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(log_response(response, url=url, **logQuery))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             return response.headers
 
     def extra_save(self, data: Data, prefix=str(), extraSave=False, rename: RenameDict=dict(), **kwargs):
@@ -478,7 +484,7 @@ class Spider(CustomDict):
         return data
 
     def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, **context) -> pd.DataFrame:
-        return cloc(data, base.columns, default="pass")
+        return cloc(data, base.columns, if_null="drop")
 
     ###################################################################
     ######################### Google Bigquery #########################
@@ -502,7 +508,7 @@ class Spider(CustomDict):
 
     def map_gbq_data(self, data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
         columns = (field.get("name") for field in schema) if schema else tuple()
-        return cloc(data, columns=columns, default="pass")
+        return cloc(data, columns=columns, if_null="drop")
 
     def read_gbq_base(self, query: str, project_id: str, **context) -> pd.DataFrame:
         return read_gbq(query, project_id, **context)
@@ -623,43 +629,43 @@ class AsyncSpider(Spider):
         ...
 
     async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> bytes:
+                                params=None, data=None, json=None, headers=None, cookies=None,
+                                allow_redirects=True, **context) -> bytes:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(await log_client(response, url=url, **logQuery))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             return await response.read()
 
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> str:
+                            params=None, data=None, json=None, headers=None, cookies=None,
+                            allow_redirects=True, **context) -> str:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(await log_client(response, url=url, **logQuery))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             return await response.text()
 
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> JsonData:
+                            params=None, data=None, json=None, headers=None, cookies=None,
+                            allow_redirects=True, **context) -> JsonData:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(await log_client(response, url=url, **logQuery))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             return await response.json()
 
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> Dict:
+                                params=None, data=None, json=None, headers=None, cookies=None,
+                                allow_redirects=True, **context) -> Dict:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
-            self.logger.info(await log_client(response, url=url, **logQuery))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             return response.headers
 
     ###################################################################
@@ -862,7 +868,7 @@ class Parser(CustomDict):
     __metaclass__ = ABCMeta
     operation = "parser"
 
-    def __init__(self, logName=str(), logLevel="WARN", logFile=str(), **kwargs):
+    def __init__(self, logName=str(), logLevel="WARN", logFile=str(), **context):
         super().__init__()
         self.logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
@@ -871,7 +877,7 @@ class Parser(CustomDict):
         self.logger = CustomLogger(name=self.logName, level=self.logLevel, file=self.logFile)
 
     @abstractmethod
-    def parse(self, response: Any, **kwargs) -> Data:
+    def parse(self, response: Any, **context) -> Data:
         ...
 
 
@@ -912,7 +918,7 @@ class Pipeline(Spider):
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop="right", how="left", on=str(), **context) -> Data:
         query = crawler.iterateArgs+crawler.iterateQuery
-        if query and all(map(pd.notna, kloc(context, query, value_only=True))): return pd.DataFrame()
+        if query and any(kloc(context, query, values_only=True, apply=is_empty)): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
         self.extra_save(data, prefix=prefix, extraSave=extraSave, **context)
@@ -952,7 +958,7 @@ class AsyncPipeline(AsyncSpider, Pipeline):
                             appendix: Optional[pd.DataFrame]=None,
                             drop="right", how="left", on=str(), **context) -> Data:
         query = crawler.iterateArgs+crawler.iterateQuery
-        if query and all(map(pd.notna, kloc(context, query, value_only=True))): return pd.DataFrame()
+        if query and any(kloc(context, query, values_only=True, apply=is_empty)): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(await crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
         self.extra_save(data, prefix=prefix, extraSave=extraSave, **context)

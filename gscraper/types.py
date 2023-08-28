@@ -64,7 +64,7 @@ Timedelta = Union[timedelta, str, int]
 Timezone= Union[BaseTzInfo, str]
 
 RegexFormat = str
-ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]]]
+ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]], Dict]
 MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
 
@@ -195,6 +195,9 @@ def is_nested_in(__object, __type: Type, how="any", empty=False) -> bool:
 def is_nested_map(__object, empty=False) -> bool:
     return isinstance(__object, Dict) and (empty or (bool(__object) and isin_instance(__object.values(), Dict)))
 
+def is_bool_array(__object, how="any", empty=False) -> bool:
+    return is_nested_in(__object, bool, how=how, empty=empty)
+
 def is_float_array(__object, how="any", empty=False) -> bool:
     return is_nested_in(__object, float, how=how, empty=empty)
 
@@ -212,6 +215,9 @@ def is_date_array(__object, how="any", empty=False) -> bool:
 
 def is_str_array(__object, how="any", empty=False) -> bool:
     return is_nested_in(__object, str, how=how, empty=empty)
+
+def is_func_array(__object, how="any", empty=False) -> bool:
+    return is_nested_in(__object, Callable, how=how, empty=empty)
 
 def is_2darray(__object, how="any", empty=False) -> bool:
     return is_nested_in(__object, OBJECT_SEQUENCE, how=how, empty=empty)

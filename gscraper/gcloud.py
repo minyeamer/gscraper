@@ -186,7 +186,7 @@ def gbq_authorized(func):
 def validate_schema(data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, fillna=False) -> pd.DataFrame:
     if not (schema and is_records(schema)): return data
     context = {field["name"]:BIGQUERY_TYPE_CAST(field["type"], fillna) for field in schema}
-    data = apply_df(cloc(data, list(context.keys()), default="pass"), **context)
+    data = apply_df(cloc(data, list(context.keys()), if_null="drop"), **context)
     if df_exists(data, allow_na=False): return data
     else: raise InvalidSchema(INVALID_SCHEMA_MSG, local_schema=data.dtypes.to_frame().to_dict()[0], remote_schema=schema)
 

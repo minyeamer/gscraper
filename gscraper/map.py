@@ -2,11 +2,11 @@ from .cast import cast_list, cast_tuple, cast_str
 from .types import _KT, _VT, _bool, _type, Comparable, Index, IndexLabel, Keyword, RegexFormat, TypeHint
 from .types import Context, NestedSequence, IndexedSequence, Records, TabularData, MappingData, Data
 from .types import ApplyFunction, MatchFunction, BetweenRange
-from .types import not_na, is_int_array, is_array, is_2darray, is_records, is_dfarray
-from .types import is_list_type,is_dict_type, is_records_type, is_dataframe_type
+from .types import not_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
+from .types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
 from typing import Any, Dict, List, Set
-from typing import Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import Callable, Iterable, Optional, Sequence, Tuple, Type, Union
 from itertools import chain
 from functools import cmp_to_key, reduce
 import pandas as pd
@@ -104,13 +104,17 @@ def replace_map(string: str, __m: dict) -> str:
 abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
 
 
-def iloc(__s: IndexedSequence, index: Index, default=None) -> _VT:
+def iloc(__s: IndexedSequence, index: Index, default=None, if_null="drop",
+        apply: Optional[ApplyFunction]=None) -> _VT:
     length = len(__s)
+    _apply = apply if isinstance(apply, Callable) else (lambda x: x)
     if isinstance(index, int):
-        return __s[index] if abs_idx(index) < length else (default if default != "pass" else None)
-    elif not is_int_array(index, empty=False): return __s
-    elif default == "pass": return [__s[i] for i in index if abs_idx(i) < length]
-    else: return [__s[i] if abs_idx(i) < length else default for i in index]
+        return _apply(__s[index]) if abs_idx(index) < length else default
+    elif not is_int_array(index, how="all", empty=False):
+        if is_array(index): return __s if if_null != "drop" else list()
+        else: return __s if if_null != "drop" else default
+    elif if_null == "drop": return [_apply(__s[i]) for i in index if abs_idx(i) < length]
+    else: return [_apply(__s[i]) if abs_idx(i) < length else default for i in index]
 
 
 def flatten(*args, iter_type: Tuple[_type]=(List,Set,Tuple)) -> List:
@@ -156,16 +160,18 @@ def match_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __match
 
 def chain_array(__s: NestedSequence, empty=True) -> List:
     if not __s: return list()
-    elif not empty: __s = [element for element in __s if exists(element)]
+    elif not empty: __s = [__e for __e in __s if exists(__e)]
     return list(chain.from_iterable(__s))
 
 
-def get_index(__s: IndexedSequence, values: _VT, default=None, multiple=True) -> _VT:
+def get_index(__s: IndexedSequence, values: _VT, default=None, if_null="drop",
+                apply: Optional[ApplyFunction]=None, multiple=True) -> Index:
+    _apply = apply if isinstance(apply, Callable) else (lambda x: x)
     if not (is_array(values) and multiple):
-        return __s.index(values) if values in __s else (default if default != "pass" else None)
-    elif not values: return __s
-    elif default == "pass": return [__s.index(value) for value in values if value in __s]
-    else: return [__s.index(value) if value in __s else default for value in values]
+        return _apply(__s.index(values)) if values in __s else default
+    elif not values: return _apply(__s) if if_null != "drop" else list()
+    elif if_null == "drop": return [_apply(__s.index(value)) for value in values if value in __s]
+    else: return [_apply(__s.index(value)) if value in __s else default for value in values]
 
 
 def get_scala(__object, index: Optional[int]=None, default=None, random=False) -> _VT:
@@ -184,18 +190,23 @@ def fill_array(__s: Sequence, count: int, value=None) -> List:
     return [__s[i] if i < len(__s) else value for i in range(count)]
 
 
-def filter_array(__s: Sequence, match: MatchFunction, apply: Optional[ApplyFunction]=None) -> List:
-    if apply: return [apply(element) for element in __s if match(element)]
-    else: [element for element in __s if match(element)]
-
-
 def is_same_length(*args: IndexedSequence, empty=True) -> bool:
     __l = set()
-    for __object in args:
-        if not is_array(__object): return False
-        elif not __object and not empty: return False
-        else: __l.add(len(__object))
+    for __s in args:
+        if not is_array(__s): return False
+        elif not __s and not empty: return False
+        else: __l.add(len(__s))
     return len(__l) <= 1
+
+
+def filter_array(__s: Sequence, match: Union[Sequence[bool],MatchFunction],
+                apply: Optional[ApplyFunction]=None) -> List:
+    _apply = apply if apply else (lambda x: x)
+    if is_bool_array(match, how="all", empty=False):
+        if is_same_length(__s, match, empty=False):
+            __s = [_apply(__e) for __e, __match in zip(__s, match) if __match]
+        else: return list()
+    else: return [_apply(__e) for __e in __s if match(__e)]
 
 
 def unit_array(__s: Sequence, unit=1) -> List[Sequence]:
@@ -213,10 +224,10 @@ def align_index(*__s: Sequence, how="all", unique=False, strict=False) -> List[i
     if unique:
         index = [set() for _ in __iter]
         for cur, array in enumerate(__iter):
-            for idx, element in enumerate(array):
-                if is_empty(element) or (element in __set[cur]): continue
+            for idx, __e in enumerate(array):
+                if is_empty(__e) or (__e in __set[cur]): continue
                 index[cur].add(idx)
-                __set[cur].add(element)
+                __set[cur].add(__e)
         return sorted(__and(*index))
     else: return [idx for idx in range(count) if all([is_valid(array[idx]) for array in __iter])]
 
@@ -243,16 +254,18 @@ def align_array(*__s: Sequence, how="all", default: Optional[Union[Any,Sequence]
 ############################### Map ###############################
 ###################################################################
 
-def kloc(__m: Dict, __keys: _KT, default=None, value_only=False, match_type=False) -> Union[_VT,Dict]:
-    cast = default.__class__ if match_type and default != None else (lambda x: x)
-    if not is_array(__keys): return __m.get(__keys, cast(default if default != "pass" else None))
-    elif __keys and value_only:
-        if default == "pass": return [cast(__m[key]) for key in __keys if key in __m]
-        else: return [cast(__m.get(key, default)) for key in __keys]
-    elif __keys and not value_only:
-        if default == "pass": return {key:cast(__m[key]) for key in __keys if key in __m}
-        else: return {key:cast(__m.get(key, default)) for key in __keys}
-    else: return __m
+def kloc(__m: Dict, __keys: _KT, default=None, if_null="drop", values_only=False,
+        apply: Optional[ApplyFunction]=None) -> Union[_VT,Dict]:
+    if isinstance(apply, Dict): _apply = (lambda x: apply[x](x) if isinstance(apply.get(x), Callable) else x)
+    else: _apply = apply if isinstance(apply, Callable) else (lambda x: x)
+    if not is_array(__keys): return _apply(__m.get(__keys, default))
+    elif __keys and values_only:
+        if if_null == "drop": return [_apply(__m[key]) for key in __keys if key in __m]
+        else: return [_apply(__m.get(key, default)) for key in __keys]
+    elif __keys and not values_only:
+        if if_null == "drop": return {key:_apply(__m[key]) for key in __keys if key in __m}
+        else: return {key:_apply(__m.get(key, default)) for key in __keys}
+    else: return __m if if_null != "drop" else dict()
 
 
 def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
@@ -365,7 +378,7 @@ def match_keywords(__m: Dict, __keys: _KT, include: Optional[Keyword]=list(), ex
     for condition, keywords in enumerate([include, exclude]):
         if not keywords: continue
         pattern = re.compile('|'.join(map(re.escape, keywords)))
-        match = tuple(map(pattern.search, map(cast_str, kloc(__m, __keys, value_only=True, default="pass"))))
+        match = tuple(map(pattern.search, map(cast_str, kloc(__m, __keys, values_only=True))))
         if len(match): matches[condition] = any(match) if how == "any" else all(match)
         else: matches[condition] = if_null
     return (matches[INCLUDE] or not include) and not (matches[EXCLUDE] and exclude)
@@ -375,11 +388,12 @@ def match_keywords(__m: Dict, __keys: _KT, include: Optional[Keyword]=list(), ex
 ############################# Records #############################
 ###################################################################
 
-def vloc(__r: List[Dict], __keys: _KT, default=None, value_only=False, match_type=False) -> Union[Records,List]:
-    base = list()
+def vloc(__r: List[Dict], __keys: _KT, default=None, if_null="drop", values_only=False,
+        apply: Optional[ApplyFunction]=None) -> Union[Records,List]:
+    base, __keys = list(), cast_tuple(__keys)
     for __m in __r:
-        values = kloc(__m, __keys, default=default, value_only=value_only, match_type=match_type)
-        if default == "pass" and (values in (None, dict(), default)): continue
+        values = kloc(__m, __keys, default=default, if_null=if_null, values_only=values_only, apply=apply)
+        if not values and if_null == "drop": continue
         else: base.append(values)
     return base
 
@@ -450,24 +464,34 @@ def between_records(__r: Records, __keys: Optional[_KT]=list(), __ranges: Option
     return __s
 
 
+def filter_records(__r: Records, match: Union[Sequence[bool],MatchFunction],
+                    apply: Optional[ApplyFunction]=None) -> Records:
+    if isinstance(apply, Dict): _apply = lambda x: apply_dict(x, **apply)
+    else: _apply = apply if isinstance(apply, Callable) else (lambda x: x)
+    if is_bool_array(match, how="all", empty=False):
+        if is_same_length(__r, match, empty=False):
+            return [_apply(__m) for __m, __match in zip(__r, match) if __match]
+        else: return list()
+    else: return [_apply(__m) for __m in __r if match(__m)]
+
+
 def sort_records(__r: Records, by: _KT, ascending=True) -> Records:
-    return sorted(__r, key=lambda x: kloc(x, cast_tuple(by), value_only=True), reverse=(not ascending))
+    return sorted(__r, key=lambda x: kloc(x, cast_tuple(by), values_only=True), reverse=(not ascending))
 
 
 ###################################################################
 ############################ DataFrame ############################
 ###################################################################
 
-def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, reorder=True) -> pd.DataFrame:
-    if isinstance(columns, str):
-        if columns in df: return df[[columns]]
-        elif default == "keep": return pd.DataFrame([default]*len(df), columns=[columns])
-        else: return pd.DataFrame()
-    elif columns:
-        if reorder: columns = inter(columns, df.columns)
-        else: columns = inter(df.columns, columns)
-        df = df[columns]
-        if default == "keep": df = pd.concat([pd.DataFrame(columns=columns),df])
+def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null="drop", reorder=True,
+        apply: Optional[ApplyFunction]=None) -> pd.DataFrame:
+    columns = cast_tuple(columns)
+    df = df[[inter(columns, df.columns) if reorder else inter(df.columns, columns)]]
+    if (len(df.columns) != len(columns)) and if_null != "drop":
+        if reorder: df = pd.concat([pd.DataFrame(columns=columns),df])
+        else: df = pd.concat([pd.DataFrame(columns=unique(*df.columns,*columns)),df])
+    if isinstance(apply, (str,Type,Dict)): df = df.astype(apply)
+    elif isinstance(apply, Callable): df = apply_df(df, all_cols=True, apply=apply)
     return df
 
 
@@ -595,13 +619,13 @@ def chain_exists(data: Data, return_type: Optional[TypeHint]=None) -> Data:
 
 
 def filter_data(data: Data, filter: Optional[Union[_KT,Index]]=list(), default=None,
-                return_type: Optional[TypeHint]=None) -> Data:
+                if_null="drop", apply: Optional[ApplyFunction]=None, return_type: Optional[TypeHint]=None) -> Data:
     if not filter: return convert_data(data, return_type)
     filter = cast_tuple(filter)
-    if is_records(data): data = vloc(data, __keys=filter, default=default)
-    elif isinstance(data, pd.DataFrame): data = cloc(data, columns=filter, default=default)
-    elif isinstance(data, Dict): data = kloc(data, __keys=filter, default=default)
-    elif isinstance(data, List): data = iloc(data, index=filter, default=default)
+    if is_records(data): data = vloc(data, __keys=filter, default=default, if_null=if_null, apply=apply)
+    elif isinstance(data, pd.DataFrame): data = cloc(data, columns=filter, default=default, if_null=if_null, apply=apply)
+    elif isinstance(data, Dict): data = kloc(data, __keys=filter, default=default, if_null=if_null, apply=apply)
+    elif isinstance(data, List): data = iloc(data, index=filter, default=default, if_null=if_null, apply=apply)
     return convert_data(data, return_type)
 
 
