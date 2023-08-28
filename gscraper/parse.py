@@ -9,7 +9,7 @@ from bs4.element import Tag
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
 import datetime as dt
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 import json
 import re
 
@@ -38,6 +38,12 @@ def encode_cookies(cookies: Union[Dict,str], **kwargs) -> str:
     [(parse_cookies(data) if isinstance(data, Dict) else str(data)) for data in [cookies,kwargs] if data])
 
 
+def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
+    if encode: params = urlencode(params)
+    else: params = '&'.join([f"{key}={value}" for key, value in params.items()])
+    return url+'?'+params if url else params
+
+
 def encode_object(__object: str) -> str:
     quote(str(__object).replace('\'','\"'))
 
@@ -53,7 +59,7 @@ class LazyDecoder(json.JSONDecoder):
         return super().decode(s, **kwargs)
 
 
-def validate_json(data: JsonData, __path: IndexLabel, default=dict(), **kwargs) -> JsonData:
+def validate_json(data: JsonData, __path: IndexLabel, default=dict()) -> JsonData:
     __m = data.copy()
     try:
         for key in __path:
@@ -65,7 +71,7 @@ def validate_json(data: JsonData, __path: IndexLabel, default=dict(), **kwargs) 
     except: return default
 
 
-def parse_invalid_json(raw_json: str, key: str, value_type="dict", **kwargs) -> JsonData:
+def parse_invalid_json(raw_json: str, key: str, value_type="dict") -> JsonData:
     rep_bool = lambda s: str(s).replace("null","None").replace("true","True").replace("false","False")
     try:
         if value_type == "dict" and re.search("\""+key+"\":\{[^\}]*\}+",raw_json):
@@ -76,7 +82,7 @@ def parse_invalid_json(raw_json: str, key: str, value_type="dict", **kwargs) -> 
         return dict()
 
 
-def select_text(source: Tag, selector: str, pattern='\n', sub=' ', multiple=False, **kwargs) -> Union[str,List[str]]:
+def select_text(source: Tag, selector: str, pattern='\n', sub=' ', multiple=False) -> Union[str,List[str]]:
     try:
         if multiple: return [re.sub(pattern, sub, select.text).strip() for select in source.select(selector)]
         else: return re.sub(pattern, sub, source.select_one(selector).text).strip()
@@ -84,7 +90,7 @@ def select_text(source: Tag, selector: str, pattern='\n', sub=' ', multiple=Fals
         return list() if multiple else str()
 
 
-def select_attr(source: Tag, selector: str, key: str, default=None, multiple=False, **kwargs) -> Union[str,List[str]]:
+def select_attr(source: Tag, selector: str, key: str, default=None, multiple=False) -> Union[str,List[str]]:
     try:
         if multiple: return [select.attrs.get(key,default).strip() for select in source.select(selector)]
         else: return source.select_one(selector).attrs.get(key,default).strip()
@@ -92,21 +98,21 @@ def select_attr(source: Tag, selector: str, key: str, default=None, multiple=Fal
         return list() if multiple else str()
 
 
-def select_datetime(source: Tag, selector: str, default=None, multiple=False, **kwargs) -> dt.datetime:
+def select_datetime(source: Tag, selector: str, default=None, multiple=False) -> dt.datetime:
     if multiple:
         return [cast_datetime(text, default) for text in select_text(source, selector, multiple=True)]
     else:
         return cast_datetime(select_text(source, selector, multiple=False), default)
 
 
-def select_date(source: Tag, selector: str, default=None, multiple=False, **kwargs) -> dt.datetime:
+def select_date(source: Tag, selector: str, default=None, multiple=False) -> dt.datetime:
     if multiple:
         return [cast_date(text, default) for text in select_text(source, selector, multiple=True)]
     else:
         return cast_date(select_text(source, selector, multiple=False), default)
 
 
-def match_class(source: Tag, class_name: str, **kwargs) -> bool:
+def match_class(source: Tag, class_name: str) -> bool:
     try:
         class_list = source.attrs.get("class")
         if isinstance(class_list, List):

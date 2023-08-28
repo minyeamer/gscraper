@@ -2,7 +2,7 @@ from typing import Callable, Sequence, Tuple, Type, Union, TypeVar, Hashable
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
 from datetime import datetime, date, time, timedelta
-from pandas import DataFrame
+from pandas import DataFrame, isna
 from pytz import BaseTzInfo
 
 
@@ -49,6 +49,9 @@ IndexLabel = Union[Hashable, Sequence[Hashable]]
 
 Column = Union[str, Sequence[str]]
 Keyword = Union[str, Sequence[str]]
+Id = Union[str, Sequence[str]]
+Token = Union[str, Sequence[str]]
+EncryptedKey = Union[str, Sequence[str]]
 Shape = Union[int, Sequence[int]]
 Unit = Union[int, Sequence[int]]
 
@@ -60,7 +63,7 @@ DateQuery = Dict[str,datetime]
 Timedelta = Union[timedelta, str, int]
 Timezone= Union[BaseTzInfo, str]
 
-PatternStr = str
+RegexFormat = str
 ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]]]
 MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
@@ -77,6 +80,16 @@ def init_origin(__object, default=None, **kawrgs) -> Any:
         elif __object is None: return default
         return init_origin(get_type_hints(__object).get("return") if isinstance(__object, Callable) else type(__object))
     except: return default
+
+
+def is_na(__object, strict=True) -> bool:
+    if isinstance(__object, float):
+        return isna(__object) and (True if strict else (not __object))
+    return (__object == None) if strict else (not __object)
+
+
+def not_na(__object, strict=True) -> bool:
+    return not is_na(__object, strict=strict)
 
 
 ###################################################################

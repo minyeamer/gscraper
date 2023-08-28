@@ -53,14 +53,16 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
 }
 
+MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}."
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting."
 INVALID_REDIRECT_LOG_MSG = "Please verify that the both results and errors are in redierct returns."
+INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
 LOGIN_REQUIRED_MSG = lambda where=str(): f"{where} login information is required.".strip()
-LOGIN_INVALID_MSG = lambda where=str(): f"{where} login information is not valid.".strip()
+INVALID_LOGIN_MSG = lambda where=str(): f"{where} login information is not valid.".strip()
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
 
@@ -77,14 +79,25 @@ def get_cookies(session, url=None) -> str:
         return "; ".join([str(key)+"="+str(value) for key,value in dict(session.cookies).items()])
 
 
+def get_content_type(content_type=str(), utf8=False, form=False) -> str:
+    if form: return "application/x-www-form-urlencoded"
+    if content_type == "json": __type = "application/json"
+    elif content_type == "text": __type = "text/plain"
+    else: return str()
+    return __type+(("; charset=UTF-8") if utf8 else str())
+
+
 def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
-                origin: Optional[Union[bool,str]]=False, **kwargs) -> Dict:
+                origin: Optional[Union[bool,str]]=False, secure=False,
+                content_type=str(), utf8=False, form=False, **kwargs) -> Dict:
     headers = HEADERS.copy()
     if authority: headers["Authority"] = urlparse(authority).hostname
     if referer: headers["referer"] = referer
     if host: headers["Host"] = urlparse(host).hostname
     if origin: headers["Origin"] = parse_origin(origin if isinstance(origin, str) else (authority if authority else host))
     if cookies: headers["Cookie"] = cookies
+    if secure: headers["Upgrade-Insecure-Requests"] = "1"
+    if content_type or form: headers["Content-Type"] = get_content_type(content_type, utf8, form)
     return dict(headers, **kwargs)
 
 
@@ -137,7 +150,7 @@ class Spider(CustomDict):
     interval = str()
     returnType = "records"
     errors = defaultdict(list)
-    maxLimit = 1
+    maxLimit = MIN_ASYNC_TASK_LIMIT
     message = str()
     rename = dict()
 
@@ -166,7 +179,7 @@ class Spider(CustomDict):
         self.errorKwargs = errorKwargs
         self.returnType = returnType if returnType else self.returnType
         self.delay = delay
-        self.numTasks = min(cast_int(numTasks, default=self.maxLimit), self.maxLimit)
+        self.numTasks = cast_int(numTasks, MIN_ASYNC_TASK_LIMIT)
         self.progress = progress
         self.debug = debug
         self.message = message if message else self.message
@@ -241,7 +254,7 @@ class Spider(CustomDict):
             return func(self, *args, **kwargs)
         return wrapper
 
-    def get_delay(self, tsUnit="ms", **kwargs) -> Union[float,int]:
+    def get_delay(self, tsUnit="ms") -> Union[float,int]:
         if isinstance(self.delay, (float,int)): return self.delay
         elif isinstance(self.delay, Tuple):
             random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
@@ -271,8 +284,8 @@ class Spider(CustomDict):
         data = [self.fetch(**__i, filter=filter, **context) for __i in tqdm(iterator, desc=message, disable=hide_bar)]
         return self.map_reduce(data, filter=filter, returnType=returnType, **context)
 
-    def map_reduce(self, data: List, filter=list(), returnType: Optional[TypeHint]=None, **kwargs) -> Data:
-        return filter_data(chain_exists(data), filter=filter, returnType=returnType)
+    def map_reduce(self, data: List, filter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        return filter_data(chain_exists(data), filter=filter, return_type=returnType)
 
     ###################################################################
     ########################### Set Iterator ##########################
@@ -282,8 +295,9 @@ class Spider(CustomDict):
                     iterateUnit: Unit=1, interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator = list(), list(), list()
         if is_same_length(args, iterateArgs, empty=False) and is_same_length(*args):
-            arguments = self.from_args(*args, iterateArgs=iterateArgs, iterateUnit=iterateUnit)
+            arguments = self.from_args(*args, iterateArgs=iterateArgs, iterateUnit=get_scala(iterateUnit))
             iterateQuery = diff(iterateQuery, iterateArgs)
+            if is_array(iterateQuery) and len(iterateQuery) > 1: iterateUnit = iterateUnit[1:]
         if interval:
             periods, context = self.from_date(interval=interval, **context)
             iterateQuery = diff(iterateQuery, ("startDate", "endDate", "date", "interval"))
@@ -292,17 +306,15 @@ class Spider(CustomDict):
         iterator = self.product_iterator(arguments, periods, iterator)
         return iterator, context
 
-    def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1) -> List[Context]:
-        iterateUnit = get_scala(iterateUnit)
-        if isinstance(iterateUnit, int) and iterateUnit > 1:
-            iterateUnit = get_scala(iterateUnit)
+    def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: int=1) -> List[Context]:
+        if iterateUnit > 1:
             args = tuple(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
         return [dict(zip(iterateArgs,values)) for values in zip(*args)]
 
     def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                 interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
-        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.startDate)
-        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.endDate)
+        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
+        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
         date_range = get_date_range(startDate, endDate, interval=interval)
         if (interval in ("D",1)) or (str(interval).startswith("1 day")):
             period = [dict(date=date) for date in date_range]
@@ -328,7 +340,7 @@ class Spider(CustomDict):
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
 
-    def product_iterator(self, *iterator: Sequence[Context], **kawrgs) -> List[Context]:
+    def product_iterator(self, *iterator: Sequence[Context]) -> List[Context]:
         if sum(map(len, iterator)) == 0: return list()
         iterator_array = map((lambda x: x if x else [{}]), iterator)
         return list(map(chain_dict, product(*iterator_array)))
@@ -340,12 +352,12 @@ class Spider(CustomDict):
     @abstractmethod
     @log_errors
     @requests_limit
-    def fetch(self, *args, **kwargs) -> Data:
+    def fetch(self, *args, **context) -> Data:
         ...
 
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> bytes:
+                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> bytes:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -355,7 +367,7 @@ class Spider(CustomDict):
 
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> str:
+                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> str:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -365,7 +377,7 @@ class Spider(CustomDict):
 
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> JsonData:
+                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> JsonData:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -375,7 +387,7 @@ class Spider(CustomDict):
 
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> Dict:
+                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> Dict:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -386,7 +398,7 @@ class Spider(CustomDict):
     def extra_save(self, data: Data, prefix=str(), extraSave=False, rename: RenameDict=dict(), **kwargs):
         if not extraSave: return
         file = prefix+'_' if prefix else str()+now("%Y%m%d%H%M%S")+".xlsx"
-        convert_data(data, returnType="dataframe").rename(columns=rename).to_excel(file, index=False)
+        convert_data(data, return_type="dataframe").rename(columns=rename).to_excel(file, index=False)
 
     ###################################################################
     ############################ Google API ###########################
@@ -394,10 +406,10 @@ class Spider(CustomDict):
 
     def gcloud_authorized(func):
         @functools.wraps(func)
-        async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **kwargs):
+        def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **kwargs):
             if not authorization:
-                authorization = fetch_gcloud_authorization(redirectUrl, account, **kwargs)
-            return await func(
+                authorization = fetch_gcloud_authorization(redirectUrl, account)
+            return func(
                 self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **kwargs)
         return wrapper
 
@@ -420,7 +432,7 @@ class Spider(CustomDict):
                     gbqPartition: Keyword=str(), gbqPartitionBy: Keyword="auto",
                     gbqReauth=False, account: Account=dict(), credentials: IDTokenCredentials=None, **context):
         if data_empty(data) or not ((gsKey and gsSheet) or (gbqPid and gbqTable)): return
-        data = convert_data(data, returnType="dataframe")
+        data = convert_data(data, return_type="dataframe")
         if gsKey and gsSheet and (isinstance(gsKey, str) and isinstance(gsSheet, str)) or is_same_length(gsKey, gsSheet):
             gs_args = tuple(map(cast_tuple, [gsKey, gsSheet, gsMode, gsBaseSheet, gsRange]))
             for key, sheet, mode, base_sheet, cell in zip(*align_array(gs_args, how="first", default=str())):
@@ -437,7 +449,7 @@ class Spider(CustomDict):
     ###################################################################
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: IndexLabel=list(), rename: RenameDict=dict(), account: Account=dict(), **kwargs):
+                    arr_cols: IndexLabel=list(), rename: RenameDict=dict(), account: Account=dict(), **context):
         data = read_gspread(key, sheet, account, numericise_ignore=str_cols, rename=rename)
         self.logger.info(log_table(data, logJson=self.logJson))
         self.update(**{field:data[field].tolist() for field in cast_tuple(fields) if field in data})
@@ -448,24 +460,24 @@ class Spider(CustomDict):
 
     @log_errors
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode="append", base_sheet=str(),
-                        cell=str(), rename: RenameDict=dict(), account: Account=dict(), clear=False, **kwargs):
-        data = self.map_gs_data(data, **kwargs)
+                        cell=str(), rename: RenameDict=dict(), account: Account=dict(), clear=False, **context):
+        data = self.map_gs_data(data, **context)
         if base_sheet:
-            data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, rename=rename, account=account), **kwargs)
+            data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, rename=rename, account=account), **context)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
         update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
 
-    def map_gs_data(self, data: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def map_gs_data(self, data: pd.DataFrame, **context) -> pd.DataFrame:
         return data
 
     def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
-                    rename: RenameDict=dict(), account: Account=dict(), **kwargs) -> pd.DataFrame:
+                    rename: RenameDict=dict(), account: Account=dict(), **context) -> pd.DataFrame:
         data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=rename)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         return data
 
-    def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, **kwargs) -> pd.DataFrame:
+    def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, **context) -> pd.DataFrame:
         return cloc(data, base.columns, default="pass")
 
     ###################################################################
@@ -475,28 +487,28 @@ class Spider(CustomDict):
     @log_errors
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode="append",
                     schema: Optional[BigQuerySchema]=None, progress=True, partition=str(), partition_by="auto",
-                    reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **kwargs):
-        schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **kwargs)
-        data = self.map_gbq_data(data, schema=schema, **kwargs)
+                    reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
+        schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
+        data = self.map_gbq_data(data, schema=schema, **context)
         context = dict(project_id=project_id, reauth=reauth, account=account, credentials=credentials)
         if mode == "upsert":
-            data = self.map_gbq_base(data, self.read_gbq_base(query=table, **context), schema=schema, **kwargs)
+            data = self.map_gbq_base(data, self.read_gbq_base(query=table, **context), schema=schema, **context)
         self.logger.info(log_table(data, table=table, pid=project_id, mode=mode, schema=schema, logJson=self.logJson))
         to_gbq(table, project_id, data, if_exists=("replace" if mode == "upsert" else mode), schema=schema, progress=progress,
-                partition=partition, partition_by=partition_by, **kwargs)
+                partition=partition, partition_by=partition_by, **context)
 
-    def get_gbq_schema(self, mode="append", schema=str(), **kwargs) -> BigQuerySchema:
+    def get_gbq_schema(self, mode="append", schema=str(), **context) -> BigQuerySchema:
         ...
 
-    def map_gbq_data(self, data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, **kwargs) -> pd.DataFrame:
+    def map_gbq_data(self, data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
         columns = (field.get("name") for field in schema) if schema else tuple()
         return cloc(data, columns=columns, default="pass")
 
-    def read_gbq_base(self, query: str, project_id: str, **kwargs) -> pd.DataFrame:
-        return read_gbq(query, project_id, **kwargs)
+    def read_gbq_base(self, query: str, project_id: str, **context) -> pd.DataFrame:
+        return read_gbq(query, project_id, **context)
 
     def map_gbq_base(self, data: pd.DataFrame, base: pd.DataFrame, key=str(),
-                    schema: Optional[BigQuerySchema]=None, **kwargs) -> pd.DataFrame:
+                    schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
         key = validate_upsert_key(data, base, key, schema)
         data = apply_df(data, apply=(lambda x: None if x == str() else x), all_cols=True)
         data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
@@ -549,7 +561,7 @@ class AsyncSpider(Spider):
         return wrapper
 
     def asyncio_semaphore(self, numTasks: Optional[int]=None, apiRedirect=False, **kwargs) -> asyncio.Semaphore:
-        numTasks = min(cast_int(numTasks, default=self.maxLimit), (self.redirectLimit if apiRedirect else self.maxLimit))
+        numTasks = min(self.numTasks, (self.redirectLimit if apiRedirect else self.maxLimit), self.maxLimit)
         return asyncio.Semaphore(numTasks)
 
     def asyncio_errors(func):
@@ -607,12 +619,12 @@ class AsyncSpider(Spider):
     @abstractmethod
     @asyncio_errors
     @asyncio_limit
-    async def fetch(self, *args, **kwargs) -> Data:
+    async def fetch(self, *args, **context) -> Data:
         ...
 
     async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> bytes:
+                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> bytes:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -622,7 +634,7 @@ class AsyncSpider(Spider):
 
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> str:
+                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> str:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -632,7 +644,7 @@ class AsyncSpider(Spider):
 
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                     params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> JsonData:
+                    allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> JsonData:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -642,7 +654,7 @@ class AsyncSpider(Spider):
 
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, logQuery: Optional[Dict]=dict(), **kwargs) -> Dict:
+                        allow_redirects=True, logQuery: Dict=dict(), **kwargs) -> Dict:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
@@ -654,7 +666,16 @@ class AsyncSpider(Spider):
     ########################## Async Redirect #########################
     ###################################################################
 
-    @Spider.gcloud_authorized
+    def gcloud_authorized(func):
+        @functools.wraps(func)
+        async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **kwargs):
+            if not authorization:
+                authorization = fetch_gcloud_authorization(redirectUrl, account)
+            return await func(
+                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **kwargs)
+        return wrapper
+
+    @gcloud_authorized
     async def redirect(self, *args, iterateUnit: Unit=1, redirectUnit: Unit=1, message=str(), progress=None,
                         filter: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
@@ -666,7 +687,7 @@ class AsyncSpider(Spider):
 
     @asyncio_errors
     @asyncio_limit
-    @Spider.gcloud_authorized
+    @gcloud_authorized
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
         data = self.filter_redirect_data(redirectUrl, authorization, account, **context)
@@ -682,21 +703,21 @@ class AsyncSpider(Spider):
             account=account,
             **REDIRECT_CONTEXT(**redirectFilter(**context)))
 
-    def parse_redirect(self, data: RedirectData, **kwargs) -> Records:
+    def parse_redirect(self, data: RedirectData, **context) -> Records:
         if self.redirectErrors:
             data = self.log_redirect_errors(data)
-        data = self.map_redirect(data, **kwargs)
-        self.logger.debug(log_data(data))
-        return data
+        results = self.map_redirect(data, **context)
+        self.logger.debug(log_data(results))
+        return results
 
-    def log_redirect_errors(self, data: RedirectData, **kwargs) -> Records:
+    def log_redirect_errors(self, data: RedirectData, **context) -> Records:
         if not isinstance(data, Dict): raise ValueError(INVALID_REDIRECT_LOG_MSG)
         errors = data.get("errors", default=dict())
         for key, values in (errors if isinstance(errors, Dict) else dict()).items():
             self.errors[key] += values
         return data.get("data", default=list())
 
-    def map_redirect(self, data: Records, **kwargs) -> Records:
+    def map_redirect(self, data: Records, **context) -> Records:
         if not isinstance(data, List): return list()
         cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
         return [apply_df(__m, apply=cast_datetime_or_keep, all_cols=True) for __m in data]
@@ -737,10 +758,10 @@ class LoginSpider(requests.Session, Spider):
         if not cookies:
             self.login()
             cookies = self.get_cookies()
-        if not cookies: raise KeyboardInterrupt(LOGIN_REQUIRED_MSG(self.where))
+        if not cookies: raise KeyboardInterrupt(INVALID_USER_INFO_MSG(self.where))
         else: return dict(cookies=cookies)
 
-    def get_cookies(self, **kwargs) -> str:
+    def get_cookies(self) -> str:
         return parse_cookies(self.cookies)
 
 
@@ -754,6 +775,7 @@ class EncryptedSpider(Spider):
     redirectQuery = list()
     returnType = "records"
     errors = defaultdict(list)
+    maxLimit = MIN_ASYNC_TASK_LIMIT
     message = str()
     rename = dict()
     authClass = LoginSpider
@@ -796,9 +818,9 @@ class EncryptedSpider(Spider):
         if not cookies: raise KeyboardInterrupt(LOGIN_REQUIRED_MSG(self.where))
         else: return dict(cookies=cookies)
 
-    def validate_response(self, response: requests.Response, invalid_status: Sequence[int]=(401,), **kwargs):
+    def validate_response(self, response: requests.Response, invalid_status: Sequence[int]=(401,)):
         if response.status_code in invalid_status:
-            raise KeyboardInterrupt(LOGIN_INVALID_MSG(self.where))
+            raise KeyboardInterrupt(INVALID_LOGIN_MSG(self.where))
 
 
 class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
@@ -811,6 +833,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     redirectQuery = list()
     returnType = "records"
     errors = defaultdict(list)
+    maxLimit = MIN_ASYNC_TASK_LIMIT
+    redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
     rename = dict()
     authClass = LoginSpider
@@ -825,9 +849,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             return await func(self, *args, **kwargs, **context)
         return wrapper
 
-    def validate_response(self, response: aiohttp.ClientResponse, invalid_status: Sequence[int]=(401,), **kwargs):
+    def validate_response(self, response: aiohttp.ClientResponse, invalid_status: Sequence[int]=(401,)):
         if response.status in invalid_status:
-            raise KeyboardInterrupt(LOGIN_INVALID_MSG(self.where))
+            raise KeyboardInterrupt(INVALID_LOGIN_MSG(self.where))
 
 
 ###################################################################
@@ -880,7 +904,7 @@ class Pipeline(Spider):
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    def get_operation(self, crawler: Spider, rename: RenameDict=dict(), **kwargs) -> str:
+    def get_operation(self, crawler: Spider, rename: RenameDict=dict(), **context) -> str:
         operation = crawler.__dict__.get("operation")
         if not operation: raise ValueError(DEPENDENCY_HAS_NO_NAME_MSG)
         return rename.get(operation, default=operation)
@@ -896,7 +920,7 @@ class Pipeline(Spider):
 
     @abstractmethod
     def map_reduce(self, *data: Data, filter=list(), returnType: Optional[TypeHint]=None, **kwargs) -> Data:
-        return filter_data(chain_exists(data), filter=filter, returnType=returnType)
+        return filter_data(chain_exists(data), filter=filter, return_type=returnType)
 
 
 class AsyncPipeline(AsyncSpider, Pipeline):
@@ -967,8 +991,8 @@ async def log_client(response: aiohttp.ClientResponse, url: str, **kwargs) -> Lo
     return dict(**kwargs, **{"url":unquote(url), "status":response.status, "contents-length":length})
 
 
-def log_data(results: List, **kwargs) -> LogMessage:
-    try: length = len(results)
+def log_data(data: Data, **kwargs) -> LogMessage:
+    try: length = len(data)
     except: length = None
     return dict(**kwargs, **{"data-length":length})
 
