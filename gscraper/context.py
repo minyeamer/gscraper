@@ -2,31 +2,33 @@ def exists_context(**context):
     return {key: value for key, value in context.items() if value or isinstance(value, (bool,float,int))}
 
 
-CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(), which=str(), initTime=None, \
-                        session=None, semaphore=None, filter=list(), filterContext=None, \
-                        iterateArgs=list(), iterateQuery=list(), iterateUnit=1, interval=str(), \
-                        startDate=None, endDate=None, returnType=str(), \
+CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, which=None, initTime=None, \
+                        session=None, semaphore=None, fields=list(), contextFields=None, \
+                        iterateArgs=None, iterateQuery=None, iterateUnit=None, interval=None, \
+                        startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
                         logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
-                        logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=dict(), \
-                        delay=1., numTasks=100, maxLimit=1, progress=True, debug=False, message=str(), rename=dict(), \
-                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, localSave=False, extraSave=False, \
-                        queryKey=str(), querySheet=str(), queryFields=list(), queryString=list(), queryArray=list(), \
-                        authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=list(), \
-                        data=None, results=None, crawler=None, prefix=str(), self_var=True, **context: \
+                        logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=None, \
+                        debug=False, delay=1., numTasks=100, maxLimit=None, progress=True, message=str(), rename=dict(), \
+                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, localSave=None, extraSave=None, \
+                        queryKey=None, querySheet=None, queryFields=None, queryString=None, queryArray=None, \
+                        authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=None, \
+                        data=None, results=None, crawler=None, prefix=None, self_var=True, **context: \
     dict(exists_context(
-        filter = filter,
+        fields = fields,
         startDate = startDate,
         endDate = endDate,
+        datetimeUnit = datetimeUnit,
+        tzinfo = tzinfo,
         logName = logName,
         logLevel = logLevel,
         logFile = logFile,
         logErrors = logErrors,
         errorArgs = errorArgs,
         errorKwargs = errorKwargs,
+        debug = debug,
         delay = delay,
         numTasks = numTasks,
         progress = progress,
-        debug = debug,
         message = message,
         rename = rename,
         apiRedirect = apiRedirect,
@@ -35,7 +37,7 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=str(), host=str(), where=str(),
         ), **context)
 
 
-ENC_CONTEXT = lambda encryptedKey=str(), decryptedKey=dict(), cookies=str(), userid=str(), passwd=str(), \
+ENC_CONTEXT = lambda encryptedKey=str(), decryptedKey=None, cookies=str(), userid=None, passwd=None, \
                     **context: \
     dict(exists_context(
         encryptedKey = encryptedKey,
@@ -43,23 +45,23 @@ ENC_CONTEXT = lambda encryptedKey=str(), decryptedKey=dict(), cookies=str(), use
         ), **context)
 
 
-UPLOAD_CONTEXT = lambda gsKey=str(), gsSheet=str(), gsMode="append", gsBaseSheet=str(), gsRange=str(), \
-                    gbqPid=str(), gbqTable=str(), gbqMode="append", gbqSchema=None, gbqProgress=True, \
-                    gbqPartition=str(), gbqPartitionBy="auto", gbqReauth=False, \
+UPLOAD_CONTEXT = lambda gsKey=None, gsSheet=None, gsMode=None, gsBaseSheet=None, gsRange=None, \
+                    gbqPid=None, gbqTable=None, gbqMode=None, gbqSchema=None, gbqProgress=True, \
+                    gbqPartition=None, gbqPartitionBy=None, gbqReauth=False, \
                     **context: context
 
 
-GS_CONTEXT = lambda key=str(), sheet=str(), mode="append", base_sheet=str(), cell=str(), clear=False, **context: context
+GS_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, clear=None, **context: context
 
 
-GBQ_CONTEXT = lambda table=str(), project_id=str(), mode="append", schema=None, progress=True, \
-                    partition=str(), partition_by="auto", reauth=False, **context: context
+GBQ_CONTEXT = lambda table=None, project_id=None, mode=None, schema=None, progress=None, \
+                    partition=None, partition_by=None, reauth=None, **context: context
 
 
 PROXY_CONTEXT = lambda **context: CONFIG_CONTEXT(**UPLOAD_CONTEXT(**context))
 
 
-REDIRECT_CONTEXT = lambda apiRedirect=False, redirectUnit=(1,), redirectErrors=False, logFile=str(), **context: \
+REDIRECT_CONTEXT = lambda apiRedirect=None, redirectUnit=None, redirectErrors=None, logFile=None, **context: \
     CONFIG_CONTEXT(**ENC_CONTEXT(**UPLOAD_CONTEXT(**context)))
 
 

@@ -1,4 +1,10 @@
+from .types import LogLevel, LogMessage, Data, BigQuerySchema
+
+from typing import Dict, Optional
 from ast import literal_eval
+from aiohttp import ClientResponse
+from pandas import DataFrame
+from requests import Response
 import json
 import logging
 import os
@@ -27,7 +33,7 @@ dumps_map = lambda struct: unmap(json.dumps(struct, ensure_ascii=False, default=
 dumps_exc = lambda: unraw(''.join(traceback.format_exception(*sys.exc_info())))
 
 class CustomLogger(logging.Logger):
-    def __init__(self, name=__name__, level=WARN, file=str()):
+    def __init__(self, name=__name__, level: LogLevel=WARN, file=str()):
         super().__init__(name, level)
         format = JSON_LOG if file else GENERAL_LOG
         formatter = logging.Formatter(fmt=format, datefmt="%Y-%m-%d %H:%M:%S")
@@ -64,3 +70,52 @@ def fit_json_log(log_file=str()):
             log[-3] = re.sub(",$", "", log[-3])
     with open(log_file, "w", encoding="utf-8") as f:
         f.writelines(log)
+
+
+def log_encrypt(show=3, **kwargs) -> LogMessage:
+    encrypt = lambda string, show=3: str(string[:show]).ljust(len(string),'*')
+    return dict(**{key:encrypt(value, show=show) for key, value in kwargs.items()})
+
+
+def log_messages(params: Optional[Dict]=None, data: Optional[Dict]=None, json: Optional[Dict]=None,
+                headers: Optional[Dict]=None, cookies=None, logJson=False, **kwargs) -> LogMessage:
+    dumps = lambda struct: dumps_map(struct) if logJson else str(struct)
+    params = {"params":dumps(params)} if params else dict()
+    data = {"data":dumps(data if data else json)} if data or json else dict()
+    headers = {"headers":dumps(headers)} if headers else dict()
+    cookies = {"cookies":dumps(cookies)} if cookies else dict()
+    kwargs = {key:dumps(values) for key,values in kwargs.items()}
+    return dict(**kwargs, **data, **params, **headers, **cookies)
+
+
+def log_response(response: Response, url: str, **kwargs) -> LogMessage:
+    try: length = len(response.text)
+    except: length = None
+    return dict(**kwargs, **{"url":unquote(url), "status":response.status_code, "contents-length":length})
+
+
+async def log_client(response: ClientResponse, url: str, **kwargs) -> LogMessage:
+    try: length = len(await response.text())
+    except: length = None
+    return dict(**kwargs, **{"url":unquote(url), "status":response.status, "contents-length":length})
+
+
+def log_data(data: Data, **kwargs) -> LogMessage:
+    try: length = int(bool(data)) if isinstance(data, Dict) else len(data)
+    except: length = None
+    return dict(**kwargs, **{"data-length":length})
+
+
+def log_exception(func: str, *args, logJson=False, **kwargs) -> LogMessage:
+    dumps = lambda struct: (dumps_map(struct) if logJson else str(struct))[:1000]
+    error = ''.join(traceback.format_exception(*sys.exc_info()))
+    error = unraw(error) if logJson else error
+    return dict(func=func, args=dumps(args), kwargs=dumps(kwargs), error=error)
+
+
+def log_table(data: DataFrame, schema: Optional[BigQuerySchema]=None, logJson=False, **kwargs) -> LogMessage:
+    dumps = lambda struct: dumps_map(struct) if logJson else str(struct)
+    schema = {"schema":dumps(schema)} if schema else dict()
+    try: shape = data.shape
+    except: shape = (0,0)
+    return dict(**kwargs, **{"table-shape":str(shape)}, **schema)

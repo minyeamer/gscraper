@@ -1,8 +1,9 @@
-from .cast import cast_datetime, cast_date
-from .map import re_get
 from .types import JsonData, IndexLabel
 
-from typing import Dict, List, Union
+from .cast import cast_datetime, cast_date
+from .map import re_get
+
+from typing import Dict, List, Literal, Union
 from ast import literal_eval
 from bs4 import BeautifulSoup
 from bs4.element import Tag
@@ -71,13 +72,14 @@ def validate_json(data: JsonData, __path: IndexLabel, default=dict()) -> JsonDat
     except: return default
 
 
-def parse_invalid_json(raw_json: str, key: str, value_type="dict") -> JsonData:
+def parse_invalid_json(raw_json: str, key: str, value_type: Literal["any","dict"]="dict") -> JsonData:
     rep_bool = lambda s: str(s).replace("null","None").replace("true","True").replace("false","False")
     try:
         if value_type == "dict" and re.search("\""+key+"\":\{[^\}]*\}+",raw_json):
             return literal_eval(rep_bool("{"+re.search("\""+key+"\":\{[^\}]*\}+",raw_json).group()+"}"))
         elif value_type == "any" and re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json):
             return literal_eval(rep_bool(re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json).group()))
+        else: return dict()
     except:
         return dict()
 

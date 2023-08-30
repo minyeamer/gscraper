@@ -5,7 +5,7 @@ from .types import is_str_type, is_list_type, is_tuple_type
 from .types import RegexFormat, MatchFunction
 from .types import DateFormat, DateNumeric, Timestamp
 
-from typing import Any, Callable, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, List, Literal, Optional, Set, Tuple, Union
 from dateutil.parser import parse as dateparse
 from pytz import timezone, BaseTzInfo
 import datetime as dt
@@ -42,7 +42,8 @@ def cast_numeric(__object, __type: TypeHint="auto", default=0, strict=False, tru
     if __type == "auto": pass
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict, trunc=trunc)
-    else: return
+    else: return default
+
     __object = cast_float(__object, default=default, strict=strict, trunc=trunc)
     if isinstance(__object, float):
         return __object if __object % 1. else int(__object)
@@ -100,7 +101,7 @@ def cast_time(__object: DateFormat, default=None, tzinfo=None, astimezone=None) 
     if isinstance(__datetime, dt.datetime): return __datetime.time()
 
 
-def cast_timestamp(__object: DateFormat, default=None, tzinfo=None, astimezone=None, tsUnit="ms") -> int:
+def cast_timestamp(__object: DateFormat, default=None, tzinfo=None, astimezone=None, tsUnit: Literal["ms","s"]="ms") -> int:
     __datetime = cast_datetime(**locals())
     if isinstance(__datetime, dt.datetime):
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
@@ -125,6 +126,33 @@ def to_datetime(__object: DateFormat, __type: TypeHint="auto", default=None, tzi
     __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone)
     if isinstance(__datetime, dt.datetime):
         return __datetime.date() if __datetime.time() == dt.time(0,0) else __datetime
+
+
+###################################################################
+########################## Datetime Forat #########################
+###################################################################
+
+COMMON_DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
+COMMON_DATETIME_PATTERN = r"^(?:\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{4})?)$"
+
+
+def is_datetime_format(__object: DateFormat, strict=False) -> bool:
+    if isinstance(__object, str) and re.fullmatch(COMMON_DATETIME_PATTERN, __object):
+        try: return bool(dateparse(__object)) if strict else True
+        except: return False
+    else: return False
+
+
+def get_datetime_format(__object: DateFormat, strict=False) -> str:
+    if is_datetime_format(__object, strict=strict):
+        return "date" if re.fullmatch(COMMON_DATE_PATTERN, __object) else "datetime"
+
+
+def cast_datetime_format(__object: DateFormat, default=None, strict=False) -> DateNumeric:
+    format = get_datetime_format(__object, strict=strict)
+    if format == "date": return cast_date(__object, default=default)
+    elif format == "datetime": return cast_datetime(__object, default=default)
+    else: return default
 
 
 ###################################################################

@@ -1,4 +1,4 @@
-from typing import Callable, Sequence, Tuple, Type, Union, TypeVar, Hashable
+from typing import Callable, Literal, Sequence, Tuple, Type, Union, TypeVar, Hashable
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
 from datetime import datetime, date, time, timedelta
@@ -8,6 +8,8 @@ from pytz import BaseTzInfo
 
 _KT = TypeVar("_KT", Hashable, Sequence[Hashable])
 _VT = TypeVar("_VT", Any, Sequence[Any])
+
+_PASS = None
 _bool = TypeVar("_bool", bool, Sequence[bool])
 _type = TypeVar("_type", Type, Sequence[Type])
 
@@ -42,6 +44,7 @@ Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
 JsonData = Union[Dict, List]
 RedirectData = Union[Records, Dict[str,Records], JsonData]
 
+LogLevel = Union[str,int]
 LogMessage = Dict[str,str]
 
 Index = Union[int, Sequence[int]]
@@ -55,18 +58,27 @@ EncryptedKey = Union[str, Sequence[str]]
 Shape = Union[int, Sequence[int]]
 Unit = Union[int, Sequence[int]]
 
+Datetime = Union[datetime, date]
 Timestamp = Union[float, int]
 DateNumeric = Union[datetime, date, time, float, int]
 DateFormat = Union[datetime, date, time, float, int, str]
+DateUnit = Literal["second","minute","hour","day","month","year"]
 
 DateQuery = Dict[str,datetime]
 Timedelta = Union[timedelta, str, int]
-Timezone= Union[BaseTzInfo, str]
+Timezone = Union[BaseTzInfo, str]
 
 RegexFormat = str
 ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]], Dict]
 MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
+
+Account = Union[Dict[str,str], str]
+PostData = Union[Dict[str,Any],str]
+
+NumericiseIgnore = Union[bool, Sequence[int]]
+BigQuerySchema = List[Dict[str,str]]
+SchemaSequence = Union[BigQuerySchema, Sequence[BigQuerySchema]]
 
 CastError = (ValueError, TypeError)
 
@@ -188,44 +200,44 @@ def allin_instance(__object: Sequence, __type: Type, empty=False) -> bool:
 def type_allin_instance(__object: Sequence, __type: TypeHint, empty=False) -> bool:
     return (empty or __object) and all(map(lambda x: is_type(__type, TYPE_LIST[type(x)]), __object))
 
-def is_nested_in(__object, __type: Type, how="any", empty=False) -> bool:
+def is_nested_in(__object, __type: Type, how: Literal["any","all"]="any", empty=False) -> bool:
     return isinstance(__object, OBJECT_SEQUENCE) and (
         isin_instance(__object, __type, empty) if how == "any" else allin_instance(__object, __type, empty))
 
 def is_nested_map(__object, empty=False) -> bool:
     return isinstance(__object, Dict) and (empty or (bool(__object) and isin_instance(__object.values(), Dict)))
 
-def is_bool_array(__object, how="any", empty=False) -> bool:
+def is_bool_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, bool, how=how, empty=empty)
 
-def is_float_array(__object, how="any", empty=False) -> bool:
+def is_float_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, float, how=how, empty=empty)
 
-def is_int_array(__object, how="any", empty=False) -> bool:
+def is_int_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, int, how=how, empty=empty)
 
-def is_datetime_array(__object, how="any", empty=False) -> bool:
+def is_datetime_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, datetime, how=how, empty=empty)
 
-def is_time_array(__object, how="any", empty=False) -> bool:
+def is_time_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, time, how=how, empty=empty)
 
-def is_date_array(__object, how="any", empty=False) -> bool:
+def is_date_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, date, how=how, empty=empty)
 
-def is_str_array(__object, how="any", empty=False) -> bool:
+def is_str_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, str, how=how, empty=empty)
 
-def is_func_array(__object, how="any", empty=False) -> bool:
+def is_func_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, Callable, how=how, empty=empty)
 
-def is_2darray(__object, how="any", empty=False) -> bool:
+def is_2darray(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, OBJECT_SEQUENCE, how=how, empty=empty)
 
-def is_records(__object, how="any", empty=True) -> bool:
+def is_records(__object, how: Literal["any","all"]="any", empty=True) -> bool:
     return is_nested_in(__object, Dict, how=how, empty=empty)
 
-def is_dfarray(__object, how="any", empty=True) -> bool:
+def is_dfarray(__object, how: Literal["any","all"]="any", empty=True) -> bool:
     return is_nested_in(__object, DataFrame, how=how, empty=empty)
 
 def is_df(__object) -> bool:

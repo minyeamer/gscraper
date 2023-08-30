@@ -1,7 +1,10 @@
-from .cast import cast_str, cast_float, cast_int, to_datetime
-from .date import is_datetime_format, get_datetime, get_timestamp, get_time, get_date, DATEPART
-from .map import iloc, cloc, apply_df, apply_data, df_exists, df_empty
-from .types import RenameDict, TabularData, TypeHint, is_records
+from .types import TypeHint, IndexLabel, RenameDict, TabularData, is_records
+from .types import Account, PostData, Datetime, NumericiseIgnore, BigQuerySchema
+
+from .cast import cast_str, cast_float, cast_int, cast_datetime_format
+from .date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
+from .map import df_exists, df_empty, iloc, cloc, apply_df, apply_data
+from .map import multitype_allowed, multitype_rename, multitype_filter
 
 from google.oauth2 import service_account
 from google.oauth2.service_account import IDTokenCredentials
@@ -13,7 +16,7 @@ import gspread
 from pandas_gbq.gbq import InvalidSchema
 import pandas_gbq
 
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Dict, Literal, Optional
 from tqdm.auto import tqdm
 import datetime as dt
 import functools
@@ -22,22 +25,14 @@ import os
 import pandas as pd
 import requests
 
-Account = Union[Dict[str,str], str]
-PostData = Union[Dict[str,Any],str]
-Datetime = Union[dt.datetime, dt.date]
-
-NumericiseIgnore = Union[bool, Sequence[int]]
-
-BigQuerySchema = List[Dict[str,str]]
-SchemaSequence = Union[BigQuerySchema, Sequence[BigQuerySchema]]
 
 ENV_PATH = "env/"
 GCLOUD_ACCOUNT = ENV_PATH+"gcloud.json"
 GCLOUD_DATA = ENV_PATH+"data.json"
 
-
+INVALID_GS_ACTION_MSG = lambda action: f"'{action}' is not valid action for gspread task."
 INVALID_SCHEMA_MSG = "Please verify that the structure and data types in the DataFrame match the schema of the destination table."
-INVALID_UPSERT_KEY_MSG = "Please verify that the key exists and is in both DataFrame objects."
+INVALID_UPSERT_KEY_MSG = "Please verify that a primary key exists and is in both DataFrame objects."
 BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery."
 
 
@@ -109,7 +104,8 @@ def gs_loaded(func):
     return wrapper
 
 
-def to_excel_date(date: Datetime) -> int:
+def to_excel_date(date: Datetime, default) -> int:
+        if not isinstance(date, dt.date): return default
         offset = 693594
         days = date.toordinal() - offset
         if isinstance(date, dt.datetime):
@@ -118,23 +114,32 @@ def to_excel_date(date: Datetime) -> int:
         return days
 
 
-def validate_excel_format(data: TabularData, action="download", returnType: Optional[TypeHint]=None) -> TabularData:
-    if action == "download":
+@multitype_allowed
+@multitype_rename
+@multitype_filter
+def validate_gs_format(data: TabularData, action: Literal["read","update"]="read",
+                        fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="drop",
+                        reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(),
+                        convert_first=False, rename_first=False, filter_first=False, **kwargs) -> TabularData:
+    if action == "read":
         cast_boolean = lambda x: {"TRUE":True, "FALSE":False}.get(x, x)
-        applyFunc = lambda x: to_datetime(x, __type="auto") if is_datetime_format(x) else cast_boolean(x)
-    elif action == "upload":
-        applyFunc = lambda x: to_excel_date(x) if isinstance(dt.date) else x
-    return apply_data(data, __applyFunc=applyFunc, all_keys=True, returnType=returnType)
+        applyFunc = lambda x: cast_datetime_format(x, default=cast_boolean(x))
+    elif action == "update": applyFunc = lambda x: to_excel_date(x, default=x)
+    else: raise ValueError(INVALID_GS_ACTION_MSG(action))
+    return apply_data(data, apply=applyFunc, all_keys=True)
 
 
 @gs_loaded
 def read_gspread(key: str, sheet: str, account: Account=dict(), gs: Optional[Worksheet]=None,
-                head=1, headers=None, if_null=str(), numericise_ignore: NumericiseIgnore=list(),
-                rename: RenameDict=dict(), **kwargs) -> pd.DataFrame:
+                fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="drop",
+                head=1, headers=None, numericise_ignore: NumericiseIgnore=list(), reorder=True,
+                return_type: Optional[TypeHint]="dataframe", rename: RenameDict=dict(),
+                convert_first=True, rename_first=True, filter_first=True, **kwargs) -> TabularData:
     if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()
-    params = dict(head=head, default_blank=if_null, expected_headers=headers, numericise_ignore=numericise_ignore)
-    data = pd.DataFrame(gs.get_all_records(**params)).rename(columns=rename)
-    return validate_excel_format(data, action="download", returnType="dataframe")
+    data = gs.get_all_records(head=head, default_blank=default, numericise_ignore=numericise_ignore, expected_headers=headers)
+    return validate_gs_format(data, action="read", fields=fields, default=default, if_null=if_null, reorder=reorder,
+                                return_type=return_type, rename=rename,
+                                convert_first=convert_first, rename_first=rename_first, filter_first=filter_first)
 
 
 @gs_loaded
@@ -147,7 +152,7 @@ def clear_gspead(key: str, sheet: str, account: Account=dict(), gs: Optional[Wor
 @gs_loaded
 def update_gspread(key: str, sheet: str, data: TabularData, account: Account=dict(),
                     gs: Optional[Worksheet]=None, col='A', row=0, cell=str(), clear=False, clear_header=False, **kwargs):
-    records = validate_excel_format(data, action="upload", returnType="records")
+    records = validate_gs_format(data, action="update", return_type="records")
     if not records: return
     values = [[value if pd.notna(value) else None for value in record.values()] for record in records]
     if clear: clear_gspead(gs=gs, include_header=clear_header)
@@ -186,7 +191,7 @@ def gbq_authorized(func):
 def validate_schema(data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, fillna=False) -> pd.DataFrame:
     if not (schema and is_records(schema)): return data
     context = {field["name"]:BIGQUERY_TYPE_CAST(field["type"], fillna) for field in schema}
-    data = apply_df(cloc(data, list(context.keys()), if_null="drop"), **context)
+    data = apply_df(cloc(data, list(context.keys()), if_null="pass"), **context)
     if df_exists(data, allow_na=False): return data
     else: raise InvalidSchema(INVALID_SCHEMA_MSG, local_schema=data.dtypes.to_frame().to_dict()[0], remote_schema=schema)
 
@@ -197,9 +202,11 @@ def read_gbq(query: str, project_id: str, reauth=False, credentials: Optional[ID
 
 
 @gbq_authorized
-def to_gbq(table: str, project_id: str, data: pd.DataFrame, reauth=False, if_exists="append",
-            schema: Optional[BigQuerySchema]=None, progress=True, validate=True, fillna=False,
-            partition=str(), partition_by="auto", credentials: Optional[IDTokenCredentials]=None, **kwargs):
+def to_gbq(table: str, project_id: str, data: pd.DataFrame, reauth=False,
+            if_exists: Literal["fail","replace","append"]="append", schema: Optional[BigQuerySchema]=None,
+            progress=True, validate=True, fillna=False, partition=str(),
+            partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
+            credentials: Optional[IDTokenCredentials]=None, **kwargs):
     if validate: data = validate_schema(data, schema, fillna=fillna)
     context = dict(reauth=reauth, if_exists=if_exists, credentials=credentials)
     if partition:
@@ -209,15 +216,17 @@ def to_gbq(table: str, project_id: str, data: pd.DataFrame, reauth=False, if_exi
 
 
 @gbq_authorized
-def to_gbq_partition(table: str, project_id: str, data: pd.DataFrame, reauth=False, if_exists="append",
-                    schema: Optional[BigQuerySchema]=None, progress=True, validate=True, fillna=False,
-                    partition=str(), partition_by="auto", credentials: Optional[IDTokenCredentials]=None, **kwargs):
+def to_gbq_partition(table: str, project_id: str, data: pd.DataFrame, reauth=False,
+                    if_exists: Literal["fail","replace","append"]="append", schema: Optional[BigQuerySchema]=None,
+                    progress=True, validate=True, fillna=False, partition=str(),
+                    partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
+                    credentials: Optional[IDTokenCredentials]=None, **kwargs):
     if validate: data = validate_schema(data, schema, fillna=fillna)
     context = dict(destination_table=table, project_id=project_id, reauth=reauth, if_exists=if_exists,
                     table_schema=schema, progress_bar=progress, credentials=credentials)
     if partition not in data: data.to_gbq(**context)
-    elif partition_by in DATEPART+["DATE"]:
-        set_partition = (lambda x: get_datetime(x, datetimePart=partition_by)) if partition_by in DATEPART else get_date
+    elif partition_by.upper() in DATE_UNIT+["date"]:
+        set_partition = (lambda x: get_datetime(x, datetimePart=partition_by)) if partition_by in DATE_UNIT else get_date
         data["_PARTITIONTIME"] = data[partition].apply(set_partition)
         for date in tqdm(sorted(data["_PARTITIONTIME"].unique()), desc=BIGQUERY_PARTITION_MSG):
             data[data["_PARTITIONTIME"]==date].drop(columns="_PARTITIONTIME").to_gbq(**context)
@@ -237,8 +246,9 @@ def validate_upsert_key(data: pd.DataFrame, base: pd.DataFrame, key=str(),
 
 @gbq_authorized
 def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, base: Optional[pd.DataFrame]=None, key=str(),
-                reauth=False, if_exists="replace", schema: Optional[BigQuerySchema]=None, progress=True,
-                validate=True, fillna=False, credentials: Optional[IDTokenCredentials]=None, **kwargs):
+                reauth=False, if_exists: Literal["fail","replace","append"]="replace",
+                schema: Optional[BigQuerySchema]=None, progress=True, validate=True, fillna=False,
+                credentials: Optional[IDTokenCredentials]=None, **kwargs):
     if validate: data = validate_schema(data, schema, fillna=fillna)
     context = dict(reauth=reauth, credentials=credentials)
     if df_empty(base): base = read_gbq(table, project_id, **context)
