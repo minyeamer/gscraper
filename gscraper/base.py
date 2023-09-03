@@ -1,9 +1,9 @@
 from __future__ import annotations
 from .context import PROXY_CONTEXT, REDIRECT_CONTEXT, GCP_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
-from .types import IndexLabel, Keyword, DateFormat, DateUnit, DateQuery, Timedelta, Timezone
-from .types import RenameDict, JsonData, RedirectData, Records, TabularData, Data, Unit
-from .types import Account, NumericiseIgnore, BigQuerySchema, SchemaSequence
+from .types import RenameDict, IndexLabel, Keyword, Unit, DateFormat, DateUnit, DateQuery, Timedelta, Timezone
+from .types import JsonData, RedirectData, Records, TabularData, Data
+from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, SchemaSequence
 from .types import is_array, is_records, init_origin
 
 from .cast import cast_list, cast_tuple, cast_int, cast_date, cast_datetime_format
@@ -12,9 +12,9 @@ from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from .logs import CustomLogger, log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
 from .map import exists, is_empty, unique, get_scala, fill_array, is_same_length, unit_array, align_array, diff
-from .map import kloc, apply_dict, chain_dict, drop_dict
-from .map import cloc, apply_df, merge_drop, exists_one, convert_data, filter_data, chain_exists, data_empty
-from .parse import parse_cookies, parse_origin
+from .map import kloc, apply_dict, chain_dict, drop_dict, cloc, apply_df, merge_drop
+from .map import exists_one, convert_data, filter_data, chain_exists, set_data, data_empty
+from .parse import parse_cookies, parse_origin, validate_schema, parse_schema
 
 from abc import ABCMeta, abstractmethod
 from urllib.parse import urlparse
@@ -138,7 +138,7 @@ class CustomDict(dict):
 
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
-    operation = "parser"
+    operation = "session"
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
@@ -149,14 +149,15 @@ class BaseSession(CustomDict):
     errors = defaultdict(list)
     errorArgs = tuple()
     errorKwargs = tuple()
+    schemaInfo = list()
 
     def __init__(self, operation: _PASS=None, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
                 iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(), iterateUnit: Unit=1,
                 interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second", tzinfo: Optional[Timezone]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(), logErrors=False, logJson: _PASS=None,
-                errors: _PASS=None, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(), debug=False,
-                localSave=False, extraSave=False, **context):
+                errors: _PASS=None, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(),
+                schemaInfo: SchemaInfo=list(), debug=False, localSave=False, extraSave=False, **context):
         super().__init__()
         self.operation = self.operation
         self.fields = fields if fields else self.fields
@@ -178,8 +179,16 @@ class BaseSession(CustomDict):
         self.debug = debug
         self.localSave = localSave
         self.extraSave = extraSave
+        self.set_schema(schemaInfo)
         self.set_date(startDate=startDate, endDate=endDate, interval=interval)
         self.set_context(contextFields=contextFields, **context)
+
+    def set_schema(self, schemaInfo: SchemaInfo=list()):
+        schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
+        if schemaInfo:
+            for __i, schemaContext in enumerate(schemaInfo):
+                schemaInfo[__i]["schema"] = validate_schema(schemaContext["schema"])
+            self.schemaInfo = schemaInfo
 
     def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 interval: Timedelta=str()):
@@ -333,14 +342,16 @@ class Spider(BaseSession):
                 interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second", tzinfo: Optional[Timezone]=None,
                 returnType: Optional[TypeHint]=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                logErrors=False, logJson=False, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(), debug=False,
+                logErrors=False, logJson=False, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(),
+                schemaInfo: SchemaInfo=list(), debug=False, localSave=False, extraSave=False,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, progress=True, message=str(), rename: RenameDict=dict(),
                 apiRedirect=False, redirectQuery: List[_KT]=list(), reidrectUnit: Unit=1, redirectErrors=False,
-                localSave=False, extraSave=False, maxLimit: _PASS=None, dependencies: _PASS=None, self_var: _PASS=None, **context):
+                maxLimit: _PASS=None, dependencies: _PASS=None, self_var: _PASS=None, **context):
         super().__init__(fields=fields, iterateArgs=iterateArgs, iterateQuery=iterateQuery, iterateUnit=iterateUnit,
                         interval=interval, startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
                         logName=logName, logLevel=logLevel, logFile=logFile, logErrors=logErrors, logJson=logJson,
-                        errorArgs=errorArgs, errorKwargs=errorKwargs, debug=debug, localSave=localSave, extraSave=extraSave)
+                        errorArgs=errorArgs, errorKwargs=errorKwargs, schemaInfo=schemaInfo,
+                        debug=debug, localSave=localSave, extraSave=extraSave)
         self.returnType = returnType if returnType else self.returnType
         self.delay = delay
         self.numTasks = cast_int(numTasks, MIN_ASYNC_TASK_LIMIT)
@@ -416,7 +427,7 @@ class Spider(BaseSession):
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     def map_reduce(self, data: List, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        return filter_data(chain_exists(data), fields=fields, return_type=returnType)
+        return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
 
     ###################################################################
     ########################## Fetch Request ##########################
@@ -949,19 +960,36 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 class Parser(BaseSession):
     __metaclass__ = ABCMeta
     operation = "parser"
+    fields = list()
+    dataType = "dict"
+    root = list()
+    rename = dict()
+    schemaInfo = list()
 
-    def __init__(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), **context):
-        super().__init__()
-        self.logName = logName if logName else self.operation
-        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
-        self.logFile = logFile
-        self.logJson = bool(logFile)
-        self.logger = CustomLogger(name=self.logName, level=self.logLevel, file=self.logFile)
+    def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                dataType: Optional[TypeHint]=None, root: _KT=list(), rename: RenameDict=dict(),
+                schemaInfo: SchemaInfo=list(), **context):
+        super().__init__(schemaInfo=schemaInfo, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile)
+        self.dataType = dataType if dataType else self.dataType
+        self.root = root if root else self.root
+        self.rename = rename if rename else self.rename
 
-    @abstractmethod
     @BaseSession.validate_response
-    def parse(self, response: Any, **context) -> Data:
-        ...
+    def parse(self, response: Any, dataType: Optional[TypeHint]=None, root: _KT=list(), rename: RenameDict=dict(),
+                discard=False, schemaInfo: SchemaInfo=list(), fields: IndexLabel=list(), **context) -> Data:
+        data = self.parse_response(response, **context)
+        return parse_schema(data, schemaInfo, dataType, root, rename, discard, fields=fields, **context)
+
+    def parse_response(self, response: Any, **context) -> Data:
+        return json.loads(response)
+
+    def parse_data(self, data: Data, schemaInfo: SchemaInfo=list(), dataType: Optional[TypeHint]=None,
+                    root: _KT=list(), rename: RenameDict=dict(), discard=False, fields: IndexLabel=list(),
+                    updateTime=True, **context) -> Data:
+        data = parse_schema(data, schemaInfo, dataType, root, rename, discard, **context)
+        if updateTime:
+            data = set_data(data, updateDate=self.today(), updateTime=self.now())
+        return filter_data(data, fields=fields, if_null="pass")
 
 
 ###################################################################

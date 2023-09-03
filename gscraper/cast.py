@@ -1,13 +1,13 @@
-from .types import _type, TypeHint, CastError
-from .types import not_na, is_float_type, is_int_type
+from .types import _TYPE, TypeHint, CastError
+from .types import get_type, not_na, is_float_type, is_int_type
 from .types import is_datetime_type, is_time_type, is_timestamp_type, is_date_type
-from .types import is_str_type, is_list_type, is_tuple_type
+from .types import is_str_type, is_list_type, is_tuple_type, is_set_type
 from .types import RegexFormat, MatchFunction
 from .types import DateFormat, DateNumeric, Timestamp
 
 from typing import Any, Callable, List, Literal, Optional, Set, Tuple, Union
 from dateutil.parser import parse as dateparse
-from pytz import timezone, BaseTzInfo
+from pytz import timezone, BaseTzInfo, UnknownTimeZoneError
 import datetime as dt
 import re
 
@@ -60,7 +60,7 @@ TS_MILLISECONDS = 13
 def get_timezone(tzinfo=None) -> BaseTzInfo:
     if not tzinfo: return None
     try: return timezone(tzinfo)
-    except: return
+    except UnknownTimeZoneError: return
 
 
 def set_timezone(__datetime: dt.datetime, tzinfo=None, astimezone=None, droptz=False) -> dt.datetime:
@@ -170,32 +170,42 @@ def cast_id(__object, default=str()) -> str:
     return cast_str(cast_int(__object, default=__object), default, match="^((?!nan).)*$")
 
 
-def cast_list(__object, strict=True, iter_type: _type=(List,Set,Tuple)) -> Union[List,List[str]]:
+def cast_list(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> List:
     if isinstance(__object, List): return __object
     elif isinstance(__object, iter_type): return list(__object)
     elif not_na(__object, strict=strict): return [__object]
     else: return list()
 
 
-def cast_tuple(__object, strict=True, iter_type: _type=(List,Set,Tuple)) -> Union[Tuple,Tuple[str]]:
+def cast_tuple(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Tuple:
     if isinstance(__object, Tuple): return __object
     elif isinstance(__object, iter_type): return tuple(__object)
     elif not_na(__object, strict=strict): return (__object,)
     else: return tuple()
 
 
+def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
+    if isinstance(__object, Set): return __object
+    elif isinstance(__object, iter_type): return set(__object)
+    elif not_na(__object, strict=strict): return {__object}
+    else: return set()
+
+
 ###################################################################
 ############################ Multitype ############################
 ###################################################################
 
-def cast_object(__object, __type: TypeHint, default=None) -> Any:
-    if is_list_type(__type): return cast_list(__object)
-    elif is_tuple_type(__type): return cast_tuple(__object)
-    elif is_str_type(__type): return cast_str(__object, default=default)
-    elif is_int_type(__type): return cast_int(__object, default=default)
-    elif is_float_type(__type): return cast_float(__object, default=default)
+def cast_object(__object, __type: TypeHint, default=None, strict=True) -> Any:
+    if isinstance(__object, get_type(__type)):
+        return __object if not_na(__object, strict=strict) else default
+    elif is_str_type(__type): return cast_str(__object, default=default, strict=strict)
+    elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
+    elif is_float_type(__type): return cast_float(__object, default=default, strict=strict)
     elif is_datetime_type(__type): return cast_datetime(__object, default=default)
+    elif is_date_type(__type): return cast_date(__object, default=default)
+    elif is_list_type(__type): return cast_list(__object, strict=strict)
+    elif is_tuple_type(__type): return cast_tuple(__object, strict=strict)
+    elif is_set_type(__type): return cast_set(__object, strict=strict)
     elif is_time_type(__type): return cast_time(__object, default=default)
     elif is_timestamp_type(__type): return cast_timestamp(__object, default=default)
-    elif is_date_type(__type): return cast_date(__object, default=default)
-    else: return default
+    else: return get_type(__type)(default)

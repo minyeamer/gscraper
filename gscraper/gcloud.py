@@ -3,8 +3,7 @@ from .types import Account, PostData, Datetime, NumericiseIgnore, BigQuerySchema
 
 from .cast import cast_str, cast_float, cast_int, cast_datetime_format
 from .date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
-from .map import df_exists, df_empty, iloc, cloc, apply_df, apply_data
-from .map import multitype_allowed, multitype_rename, multitype_filter
+from .map import df_exists, df_empty, iloc, drop_dict, cloc, apply_df, apply_data
 
 from google.oauth2 import service_account
 from google.oauth2.service_account import IDTokenCredentials
@@ -114,19 +113,16 @@ def to_excel_date(date: Datetime, default) -> int:
         return days
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
 def validate_gs_format(data: TabularData, action: Literal["read","update"]="read",
                         fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="drop",
                         reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(),
-                        convert_first=False, rename_first=False, filter_first=False, **kwargs) -> TabularData:
+                        convert_first=False, rename_first=False, filter_first=False) -> TabularData:
     if action == "read":
         cast_boolean = lambda x: {"TRUE":True, "FALSE":False}.get(x, x)
         applyFunc = lambda x: cast_datetime_format(x, default=cast_boolean(x))
     elif action == "update": applyFunc = lambda x: to_excel_date(x, default=x)
     else: raise ValueError(INVALID_GS_ACTION_MSG(action))
-    return apply_data(data, apply=applyFunc, all_keys=True)
+    return apply_data(apply=applyFunc, all_keys=True, **drop_dict(locals(), "action", inplace=False))
 
 
 @gs_loaded

@@ -8,8 +8,9 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
                         startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
                         logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
                         logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=None, \
-                        debug=False, delay=1., numTasks=100, maxLimit=None, progress=True, message=str(), rename=dict(), \
-                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, localSave=None, extraSave=None, \
+                        dataType=None, root=None, schemaInfo=None, debug=False, localSave=None, extraSave=None, \
+                        delay=1., numTasks=100, maxLimit=None, progress=True, message=str(), rename=dict(), \
+                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, \
                         queryKey=None, querySheet=None, queryFields=None, queryString=None, queryArray=None, \
                         authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=None, \
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: \
