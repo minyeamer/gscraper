@@ -740,16 +740,16 @@ def set_data(data: MappingData, __keys: Optional[_KT]=list(), __values: Optional
             return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
     if is_records(data): return set_records(data, __keys, __values, empty=empty, **context)
     elif isinstance(data, pd.DataFrame): return set_df(data, __keys, __values, empty=empty, **context)
-    elif isinstance(data, Dict): return set_dict(data, __keys, __values, empty=empty, **context)
+    elif isinstance(data, Dict): return set_dict(data, __keys, __values, empty=empty, inplace=False, **context)
     else: return data
 
 
 @multitype_allowed
-def set_data(data: MappingData, __keys: Optional[_KT]=list(),
+def drop_data(data: MappingData, __keys: Optional[_KT]=list(),
             return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
     if is_records(data): return drop_records(data, __keys)
     elif isinstance(data, pd.DataFrame): return drop_df(data, __keys)
-    elif isinstance(data, Dict): return drop_dict(data, __keys)
+    elif isinstance(data, Dict): return drop_dict(data, __keys, inplace=False)
     else: return data
 
 

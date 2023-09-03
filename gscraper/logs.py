@@ -106,11 +106,11 @@ def log_data(data: Data, **kwargs) -> LogMessage:
     return dict(**kwargs, **{"data-length":length})
 
 
-def log_exception(func: str, *args, logJson=False, **kwargs) -> LogMessage:
+def log_exception(func: str, logJson=False, **kwargs) -> LogMessage:
     dumps = lambda struct: (dumps_map(struct) if logJson else str(struct))[:1000]
     error = ''.join(traceback.format_exception(*sys.exc_info()))
     error = unraw(error) if logJson else error
-    return dict(func=func, args=dumps(args), kwargs=dumps(kwargs), error=error)
+    return dict(func=func, kwargs=dumps(kwargs), error=error)
 
 
 def log_table(data: DataFrame, schema: Optional[BigQuerySchema]=None, logJson=False, **kwargs) -> LogMessage:

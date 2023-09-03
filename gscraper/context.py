@@ -5,14 +5,13 @@ def exists_context(**context):
 CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, which=None, initTime=None, \
                         session=None, semaphore=None, fields=list(), contextFields=None, \
                         iterateArgs=None, iterateQuery=None, iterateUnit=None, interval=None, \
-                        startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
-                        logName=str(), logLevel="WARN", logFile=str(), logJson=False, logger=None, \
-                        logErrors=False, errorArgs=tuple(), errorKwargs=tuple(), errors=None, \
-                        dataType=None, root=None, schemaInfo=None, debug=False, localSave=None, extraSave=None, \
-                        delay=1., numTasks=100, maxLimit=None, progress=True, message=str(), rename=dict(), \
-                        apiRedirect=False, reidrectUnit=1, redirectErrors=False, \
+                        startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, \
+                        responseType=None, returnType=None, logName=str(), logLevel="WARN", logFile=str(), \
+                        logJson=False, logger=None, debug=False, errors=None, rename=dict(), \
+                        root=None, schemaInfo=None, delay=1., numTasks=100, maxLimit=None, redirectLimit=None, \
+                        progress=True, message=str(), apiRedirect=False, reidrectUnit=1, redirectErrors=False, \
                         queryKey=None, querySheet=None, queryFields=None, queryString=None, queryArray=None, \
-                        authType=None, idKey=None, pwKey=None, extraKeys=None, dependencies=None, \
+                        authType=None, idKey=None, pwKey=None, extraKeys=None, decryptedKey=None, dependencies=None, \
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: \
     dict(exists_context(
         fields = fields,
@@ -23,19 +22,24 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
         logName = logName,
         logLevel = logLevel,
         logFile = logFile,
-        logErrors = logErrors,
-        errorArgs = errorArgs,
-        errorKwargs = errorKwargs,
         debug = debug,
+        rename = rename,
         delay = delay,
         numTasks = numTasks,
+        redirectLimit = redirectLimit,
         progress = progress,
         message = message,
-        rename = rename,
         apiRedirect = apiRedirect,
         reidrectUnit = reidrectUnit,
         redirectErrors = redirectErrors,
         ), **context)
+
+
+FIXED_CONTEXT = lambda operation=None, where=None, which=None, initTime=None, contextFields=None, \
+                        iterateArgs=None, iterateQuery=None, redirectQuery=None, redirectUnit=None, \
+                        responseType=None, logger=None, logJson=None, errors=None, maxLimit=None, redirectLimit=None, \
+                        rename=None, authClass=None, idKey=None, pwKey=None, decryptedKey=None, \
+                        dependencies=None, **context: context
 
 
 ENC_CONTEXT = lambda encryptedKey=str(), decryptedKey=None, cookies=str(), userid=None, passwd=None, \

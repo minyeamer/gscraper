@@ -1,7 +1,7 @@
 from __future__ import annotations
-from .context import PROXY_CONTEXT, REDIRECT_CONTEXT, GCP_CONTEXT
+from .context import FIXED_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT, GCP_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
-from .types import RenameDict, IndexLabel, Keyword, Unit, DateFormat, DateUnit, DateQuery, Timedelta, Timezone
+from .types import RenameDict, IndexLabel, Keyword, Unit, DateFormat, DateUnitAuto, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, SchemaSequence
 from .types import is_array, is_records, init_origin
@@ -146,42 +146,42 @@ class BaseSession(CustomDict):
     interval = str()
     datetimeUnit = "second"
     tzinfo = None
-    errors = defaultdict(list)
-    errorArgs = tuple()
-    errorKwargs = tuple()
+    responseType = None
+    returnType = None
+    errors = list()
+    rename = dict()
     schemaInfo = list()
 
     def __init__(self, operation: _PASS=None, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
-                iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(), iterateUnit: Unit=1,
-                interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second", tzinfo: Optional[Timezone]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile=str(), logErrors=False, logJson: _PASS=None,
-                errors: _PASS=None, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(),
-                schemaInfo: SchemaInfo=list(), debug=False, localSave=False, extraSave=False, **context):
+                iterateArgs: _PASS=None, iterateQuery: _PASS=None, iterateUnit: Unit=1, interval: Timedelta=str(),
+                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
+                tzinfo: Optional[Timezone]=None, responseType: _PASS=None, returnType: Optional[TypeHint]=None,
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(), logJson: _PASS=None, debug=False,
+                errors: _PASS=None, rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(), **context):
         super().__init__()
         self.operation = self.operation
         self.fields = fields if fields else self.fields
-        self.iterateArgs = iterateArgs if iterateArgs else self.iterateArgs
-        self.iterateQuery = iterateQuery if iterateQuery else self.iterateQuery
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
+        self.returnType = returnType if returnType else returnType
+        self.rename = rename if rename else self.rename
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
-        self.logName = logName if logName else self.operation
-        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
-        self.logFile = logFile
-        self.logJson = bool(logFile)
-        self.logger = CustomLogger(name=self.logName, level=self.logLevel, file=self.logFile)
-        self.logErrors = logErrors
-        self.errorArgs = errorArgs
-        self.errorKwargs = errorKwargs
-        self.debug = debug
-        self.localSave = localSave
-        self.extraSave = extraSave
+        self.set_logger(logName, logLevel, logFile, debug)
         self.set_schema(schemaInfo)
         self.set_date(startDate=startDate, endDate=endDate, interval=interval)
         self.set_context(contextFields=contextFields, **context)
+
+    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False):
+        logName = logName if logName else self.operation
+        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
+        self.logFile = logFile
+        self.logJson = bool(logFile)
+        self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
+        self.debug = debug
+        self.errors = {__key: list() for __key in self.iterateArgs+self.iterateQuery}
 
     def set_schema(self, schemaInfo: SchemaInfo=list()):
         schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
@@ -191,7 +191,7 @@ class BaseSession(CustomDict):
             self.schemaInfo = schemaInfo
 
     def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                interval: Timedelta=str()):
+                interval: Timedelta=str(), **context):
         if interval or (startDate != None) or (endDate != None):
             startDate, endDate = get_date(startDate), get_date(endDate)
             self.startDate = min(startDate, endDate) if startDate and endDate else startDate
@@ -209,10 +209,10 @@ class BaseSession(CustomDict):
         unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
-    def extra_save(self, data: Data, prefix=str(), extraSave=False, rename: RenameDict=dict(), **kwargs):
+    def extra_save(self, data: Data, prefix=str(), extraSave=False, **kwargs):
         if not extraSave: return
         file = prefix+'_' if prefix else str()+self.now("%Y%m%d%H%M%S")+".xlsx"
-        convert_data(data, return_type="dataframe").rename(columns=rename).to_excel(file, index=False)
+        convert_data(data, return_type="dataframe").rename(columns=self.rename).to_excel(file, index=False)
 
     ###################################################################
     ########################### Log Managers ##########################
@@ -225,18 +225,16 @@ class BaseSession(CustomDict):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if self.logErrors: self.log_arguments(args, kwargs)
+                self.log_context(**kwargs)
                 if self.debug: raise exception
-                name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(name, *args, json=self.logJson, **kwargs))
+                func_name = f"{func.__name__}({self.__class__.__name__})"
+                self.logger.error(log_exception(func_name, json=self.logJson, **kwargs))
                 return init_origin(func)
         return wrapper
 
-    def log_arguments(self, args, kwargs):
-        for idx, key in enumerate(self.errorArgs):
-            if idx < len(args) and key: self.errors[key].append(args[idx])
-        for key in self.errorKwargs:
-            if key in kwargs: self.errors[key].append(kwargs[key])
+    def log_context(self, **context: Context):
+        query = kloc(context, self.iterateArgs+self.iterateQuery, if_null="drop")
+        self.errors.append(query)
 
     def validate_response(func):
         @functools.wraps(func)
@@ -254,10 +252,9 @@ class BaseSession(CustomDict):
     ############################# Iterator ############################
     ###################################################################
 
-    def get_iterator(self, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
-                    startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
+    def get_iterator(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     date: Optional[dt.date]=None, values_only=False, **context) -> Union[Context,Sequence[_VT]]:
-        query = unique(*iterateArgs, *self.iterateArgs, *iterateQuery, *self.iterateQuery, startDate, endDate, date)
+        query = unique(*self.iterateArgs, *self.iterateQuery, startDate, endDate, date)
         return kloc(context, query, if_null="drop", values_only=values_only)
 
     def set_iterator(self, *args, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
@@ -281,7 +278,7 @@ class BaseSession(CustomDict):
         return [dict(zip(iterateArgs,values)) for values in zip(*args)]
 
     def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
-                interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
+                    interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
         startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
         endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
         date_range = get_date_range(startDate, endDate, interval=interval)
@@ -337,24 +334,24 @@ class Spider(BaseSession):
     message = str()
     rename = dict()
 
-    def __init__(self, where: _PASS=None, which: _PASS=None, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(), iterateUnit: Unit=1,
-                interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second", tzinfo: Optional[Timezone]=None,
-                returnType: Optional[TypeHint]=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                logErrors=False, logJson=False, errorArgs: IndexLabel=tuple(), errorKwargs: IndexLabel=tuple(),
-                schemaInfo: SchemaInfo=list(), debug=False, localSave=False, extraSave=False,
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, progress=True, message=str(), rename: RenameDict=dict(),
-                apiRedirect=False, redirectQuery: List[_KT]=list(), reidrectUnit: Unit=1, redirectErrors=False,
-                maxLimit: _PASS=None, dependencies: _PASS=None, self_var: _PASS=None, **context):
-        super().__init__(fields=fields, iterateArgs=iterateArgs, iterateQuery=iterateQuery, iterateUnit=iterateUnit,
-                        interval=interval, startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
-                        logName=logName, logLevel=logLevel, logFile=logFile, logErrors=logErrors, logJson=logJson,
-                        errorArgs=errorArgs, errorKwargs=errorKwargs, schemaInfo=schemaInfo,
-                        debug=debug, localSave=localSave, extraSave=extraSave)
+    def __init__(self, operation: _PASS=None, where: _PASS=None, which: _PASS=None, fields: IndexLabel=list(),
+                contextFields: Optional[ContextMapper]=None, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+                iterateUnit: Unit=1, interval: Timedelta=str(),
+                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
+                tzinfo: Optional[Timezone]=None, responseType: _PASS=None, returnType: Optional[TypeHint]=None,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), logJson: _PASS=None, debug=False,
+                errors: _PASS=None, rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(),
+                delay: Union[float,int,Tuple[int]]=1., numTasks=100, maxLimit: _PASS=None, redirectLimit=10,
+                progress=True, message=str(),  apiRedirect=False, redirectQuery: List[_KT]=list(),
+                reidrectUnit: Unit=1, redirectErrors=False, dependencies: _PASS=None, self_var: _PASS=None, **context):
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
+                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, logName=logName, logLevel=logLevel, logFile=logFile,
+                        debug=debug, schemaInfo=schemaInfo)
         self.returnType = returnType if returnType else self.returnType
         self.delay = delay
         self.numTasks = cast_int(numTasks, MIN_ASYNC_TASK_LIMIT)
+        self.redirectLimit = cast_int(redirectLimit, MIN_ASYNC_TASK_LIMIT)
         self.progress = progress
         self.message = message if message else self.message
         self.rename = rename if rename else self.rename
@@ -372,7 +369,7 @@ class Spider(BaseSession):
     def requests_task(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **kwargs):
-            if self_var: kwargs = dict(self.__dict__, **kwargs)
+            if self_var: kwargs = FIXED_CONTEXT(**dict(self.__dict__, **kwargs))
             data = func(self, *args, **kwargs)
             self.upload_data(data, **GCP_CONTEXT(**kwargs))
             return data
@@ -381,7 +378,7 @@ class Spider(BaseSession):
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **kwargs):
-            if self_var: kwargs = dict(self.__dict__, **kwargs)
+            if self_var: kwargs = FIXED_CONTEXT(**dict(self.__dict__, **kwargs))
             with requests.Session() as session:
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
@@ -412,21 +409,21 @@ class Spider(BaseSession):
         args, context = self.map_context(*args, **context)
         return self.gather(*args, **context)
 
-    def map_context(self, *args, iterateQuery: List[_KT]=list(), __unique=True, **context) -> Tuple[Tuple,Context]:
+    def map_context(self, *args, __unique=True, **context) -> Tuple[Tuple,Context]:
         args = (unique(*value) if is_array(value) and __unique else cast_list(value) for value in args)
         context = {key: (unique(*value) if is_array(value) and __unique else cast_list(value))
-                    if key in iterateQuery else value for key, value in context.items()}
+                    if key in self.iterateQuery else value for key, value in context.items()}
         return args, context
 
-    def gather(self, *args, message=str(), progress=None, fields: IndexLabel=list(),
-                returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+                fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
-        hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        iterator, context = self.set_iterator(*args, **context)
-        data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=hide_bar)]
+        iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
+        data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
-    def map_reduce(self, data: List, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def map_reduce(self, data: List, fields: IndexLabel=list(),
+                    returnType: Optional[TypeHint]=None, **context) -> Data:
         return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
 
     ###################################################################
@@ -494,31 +491,30 @@ class Spider(BaseSession):
 
     def set_query(self, queryKey: Keyword=str(), querySheet: Keyword=str(), queryFields: IndexLabel=list(),
                     queryString: NumericiseIgnore=list(), queryArray: IndexLabel=list(),
-                    rename: Dict[str,str]=dict(), account: Account=dict(), **context):
+                    account: Account=dict(), **context):
         if not (queryKey and querySheet and queryFields): return
         elif is_same_length(queryKey, querySheet, queryFields):
             queryString = fill_array(queryString, count=len(queryKey), value=list())
             queryArray = fill_array(queryArray, count=len(queryKey), value=list())
             for key, sheet, fields, str_cols, arr_cols in zip(queryKey, querySheet, queryFields, queryString, queryArray):
-                self.set_gs_query(key, sheet, fields, str_cols, arr_cols, rename, account)
+                self.set_gs_query(key, sheet, fields, str_cols, arr_cols, account)
         elif isinstance(queryKey, str) and isinstance(querySheet, str):
-            self.set_gs_query(queryKey, querySheet, queryFields, queryString, queryArray, rename, account)
+            self.set_gs_query(queryKey, querySheet, queryFields, queryString, queryArray, account)
 
     def upload_data(self, data: TabularData, gsKey: Keyword=str(), gsSheet: Keyword=str(),
                     gsMode: Union[Literal["fail","replace","append"], Sequence[Literal]]="append",
-                    gsBaseSheet: Keyword=str(), gsRange: Keyword=str(), rename: RenameDict=dict(),
-                    gbqPid: Keyword=str(), gbqTable: Keyword=str(),
+                    gsBaseSheet: Keyword=str(), gsRange: Keyword=str(), gbqPid: Keyword=str(), gbqTable: Keyword=str(),
                     gbqMode: Union[Literal["fail","replace","append"], Sequence[Literal]]="append",
                     gbqSchema: Optional[SchemaSequence]=None, gbqProgress=True,
-                    gbqPartition: Keyword=str(), gbqPartitionBy: Union[DateUnit, Literal["auto","date"], Sequence[Literal]]="auto",
+                    gbqPartition: Keyword=str(), gbqPartitionBy: Union[DateUnitAuto, Sequence[DateUnitAuto]]="auto",
                     gbqReauth=False, account: Account=dict(), credentials: IDTokenCredentials=None, **context):
         if data_empty(data) or not ((gsKey and gsSheet) or (gbqPid and gbqTable)): return
         data = convert_data(data, return_type="dataframe")
         if gsKey and gsSheet and (isinstance(gsKey, str) and isinstance(gsSheet, str)) or is_same_length(gsKey, gsSheet):
             gs_args = tuple(map(cast_tuple, [gsKey, gsSheet, gsMode, gsBaseSheet, gsRange]))
             for key, sheet, mode, base_sheet, cell in zip(*align_array(gs_args, how="first", default=str())):
-                self.upload_gspread(key, sheet, data.copy(), (mode if mode else "append"), base_sheet, cell,
-                                    rename=rename, account=account, **context)
+                self.upload_gspread(key, sheet, data.copy(), (mode if mode else "append"),
+                                    base_sheet, cell, account=account, **context)
         if gbqPid and gbqTable and (isinstance(gbqPid, str) and isinstance(gbqTable, str)) or is_same_length(gbqPid, gbqTable):
             gbq_args = tuple(map(cast_tuple, [gbqPid, gbqTable, gbqMode, gbqSchema, gbqPartition, gbqPartitionBy]))
             for pid, table, mode, schema, partition, partition_by in zip(*align_array(gbq_args, how="first", default=str())):
@@ -530,9 +526,9 @@ class Spider(BaseSession):
     ###################################################################
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: IndexLabel=list(), rename: RenameDict=dict(), account: Account=dict()):
+                    arr_cols: IndexLabel=list(), account: Account=dict()):
         data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
-                            numericise_ignore=str_cols, rename=rename, return_type="dataframe")
+                            numericise_ignore=str_cols, rename=self.rename, return_type="dataframe")
         self.logger.info(log_table(data, logJson=self.logJson))
         for field in cast_tuple(fields):
             values = data[field].tolist() if field in data else None
@@ -541,10 +537,10 @@ class Spider(BaseSession):
 
     @BaseSession.log_errors
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["fail","replace","append"]="append",
-                        base_sheet=str(), cell=str(), rename: RenameDict=dict(), account: Account=dict(), clear=False, **context):
+                        base_sheet=str(), cell=str(), account: Account=dict(), clear=False, **context):
         data = self.map_gs_data(data, **context)
         if base_sheet:
-            data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, rename=rename, account=account), **context)
+            data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, account=account), **context)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
         update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
@@ -553,8 +549,8 @@ class Spider(BaseSession):
         return data
 
     def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
-                    rename: RenameDict=dict(), account: Account=dict(), **context) -> pd.DataFrame:
-        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=rename)
+                    account: Account=dict(), **context) -> pd.DataFrame:
+        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=self.rename)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         return data
 
@@ -568,7 +564,7 @@ class Spider(BaseSession):
     @BaseSession.log_errors
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["fail","replace","append"]="append",
                     schema: Optional[BigQuerySchema]=None, progress=True,
-                    partition=str(), partition_by: Union[DateUnit, Literal["auto","date"]]="auto",
+                    partition=str(), partition_by: Union[DateUnitAuto, Literal["auto","date"]]="auto",
                     reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
         data = self.map_gbq_data(data, schema=schema, **context)
@@ -629,7 +625,7 @@ class AsyncSpider(Spider):
     def asyncio_task(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **kwargs):
-            if self_var: kwargs = dict(self.__dict__, **kwargs)
+            if self_var: kwargs = FIXED_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
             data = await func(self, *args, semaphore=semaphore, **kwargs)
             self.upload_data(data, **GCP_CONTEXT(**kwargs))
@@ -639,7 +635,7 @@ class AsyncSpider(Spider):
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **kwargs):
-            if self_var: kwargs = dict(self.__dict__, **kwargs)
+            if self_var: kwargs = FIXED_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
@@ -659,7 +655,7 @@ class AsyncSpider(Spider):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if self.logErrors: self.log_arguments(args, kwargs)
+                self.log_context(**kwargs)
                 if self.debug: raise exception
                 name = f"{func.__name__}({self.__class__.__name__})"
                 self.logger.error(log_exception(name, *args, json=self.logJson, **kwargs))
@@ -695,13 +691,12 @@ class AsyncSpider(Spider):
         return await self.gather(*args, **context)
 
     @asyncio_redirect
-    async def gather(self, *args, message=str(), progress=None, fields: IndexLabel=list(),
-                    returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+                    fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
-        hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        iterator, context = self.set_iterator(*args, **context)
+        iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
         data = await tqdm.gather(*[
-                self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=hide_bar)
+                self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     @abstractmethod
@@ -764,13 +759,14 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, iterateUnit: _PASS=None, redirectUnit: Unit=1, message=str(), progress=None,
-                        fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+                        redirectQuery: _PASS=None, iterateUnit: _PASS=None, redirectUnit: Unit=1, fields: IndexLabel=list(),
+                        returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
-        hide_bar = not (progress if isinstance(progress, bool) else self.progress)
-        iterator, context = self.set_iterator(*args, iterateUnit=redirectUnit, **context)
+        redirect_context = dict(iterateArgs=self.iterateArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
+        iterator, context = self.set_iterator(*args, **redirect_context, **context)
         data = await tqdm.gather(*[
-                self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=hide_bar)
+                self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     @asyncio_errors
@@ -961,32 +957,31 @@ class Parser(BaseSession):
     __metaclass__ = ABCMeta
     operation = "parser"
     fields = list()
-    dataType = "dict"
+    responseType = "dict"
     root = list()
     rename = dict()
     schemaInfo = list()
 
     def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                dataType: Optional[TypeHint]=None, root: _KT=list(), rename: RenameDict=dict(),
+                responseType: _PASS=None, root: _KT=list(), rename: RenameDict=dict(),
                 schemaInfo: SchemaInfo=list(), **context):
-        super().__init__(schemaInfo=schemaInfo, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile)
-        self.dataType = dataType if dataType else self.dataType
+        super().__init__(fields=fields, logName=logName, logLevel=logLevel, logFile=logFile,
+                        rename=rename, schemaInfo=schemaInfo)
         self.root = root if root else self.root
         self.rename = rename if rename else self.rename
 
     @BaseSession.validate_response
-    def parse(self, response: Any, dataType: Optional[TypeHint]=None, root: _KT=list(), rename: RenameDict=dict(),
-                discard=False, schemaInfo: SchemaInfo=list(), fields: IndexLabel=list(), **context) -> Data:
+    def parse(self, response: Any, schemaInfo: SchemaInfo=list(), root: _KT=list(), discard=False,
+                fields: IndexLabel=list(), **context) -> Data:
         data = self.parse_response(response, **context)
-        return parse_schema(data, schemaInfo, dataType, root, rename, discard, fields=fields, **context)
+        return self.parse_data(data, schemaInfo, root, discard, fields, **context)
 
     def parse_response(self, response: Any, **context) -> Data:
         return json.loads(response)
 
-    def parse_data(self, data: Data, schemaInfo: SchemaInfo=list(), dataType: Optional[TypeHint]=None,
-                    root: _KT=list(), rename: RenameDict=dict(), discard=False, fields: IndexLabel=list(),
-                    updateTime=True, **context) -> Data:
-        data = parse_schema(data, schemaInfo, dataType, root, rename, discard, **context)
+    def parse_data(self, data: Data, schemaInfo: SchemaInfo=list(), root: _KT=list(), discard=False,
+                    fields: IndexLabel=list(), updateTime=True, **context) -> Data:
+        data = parse_schema(data, schemaInfo, self.responseType, root, self.rename, discard, **context)
         if updateTime:
             data = set_data(data, updateDate=self.today(), updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
@@ -1021,10 +1016,10 @@ class Pipeline(Spider):
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    def get_operation(self, crawler: Spider, rename: RenameDict=dict(), **context) -> str:
+    def get_operation(self, crawler: Spider, **context) -> str:
         operation = crawler.__dict__.get("operation")
         if not operation: raise ValueError(DEPENDENCY_HAS_NO_NAME_MSG)
-        return rename.get(operation, default=operation)
+        return self.rename.get(operation, default=operation)
 
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
