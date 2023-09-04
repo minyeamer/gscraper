@@ -398,7 +398,7 @@ def set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, default=None
     return __base
 
 
-def set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: _KT, default=None,
+def set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], default=None,
                     apply: SchemaApply=dict(), match: SchemaMatch=dict(), **context) -> Dict:
     value = hier_get(__m, path[:-1])
     if not isinstance(value, Sequence):

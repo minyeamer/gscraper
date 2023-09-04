@@ -9,7 +9,7 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
                         responseType=None, returnType=None, logName=str(), logLevel="WARN", logFile=str(), \
                         logJson=False, logger=None, debug=False, errors=None, rename=dict(), \
                         root=None, schemaInfo=None, delay=1., numTasks=100, maxLimit=None, redirectLimit=None, \
-                        progress=True, message=str(), apiRedirect=False, reidrectUnit=1, redirectErrors=False, \
+                        progress=True, message=str(), apiRedirect=False, redirectUnit=1, redirectErrors=False, \
                         queryKey=None, querySheet=None, queryFields=None, queryString=None, queryArray=None, \
                         authType=None, idKey=None, pwKey=None, extraKeys=None, decryptedKey=None, dependencies=None, \
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: \
@@ -30,16 +30,17 @@ CONFIG_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
         progress = progress,
         message = message,
         apiRedirect = apiRedirect,
-        reidrectUnit = reidrectUnit,
+        redirectUnit = redirectUnit,
         redirectErrors = redirectErrors,
         ), **context)
 
 
 FIXED_CONTEXT = lambda operation=None, where=None, which=None, initTime=None, contextFields=None, \
-                        iterateArgs=None, iterateQuery=None, redirectQuery=None, redirectUnit=None, \
-                        responseType=None, logger=None, logJson=None, errors=None, maxLimit=None, redirectLimit=None, \
-                        rename=None, authClass=None, idKey=None, pwKey=None, decryptedKey=None, \
-                        dependencies=None, **context: context
+                        iterateArgs=None, iterateQuery=None, iterateUnit=None, responseType=None, \
+                        logger=None, logJson=None, errors=None, rename=None, \
+                        redirectArgs=None, redirectQuery=None, redirectUnit=None, \
+                        maxLimit=None, redirectLimit=None, authClass=None, idKey=None, pwKey=None, \
+                        decryptedKey=None, dependencies=None, **context: context
 
 
 ENC_CONTEXT = lambda encryptedKey=str(), decryptedKey=None, cookies=str(), userid=None, passwd=None, \

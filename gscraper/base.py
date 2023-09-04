@@ -1,17 +1,18 @@
 from __future__ import annotations
 from .context import FIXED_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT, GCP_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
-from .types import RenameDict, IndexLabel, Keyword, Unit, DateFormat, DateUnitAuto, DateQuery, Timedelta, Timezone
+from .types import RenameDict, IndexLabel, Keyword, Status, Unit, DateFormat, DateUnitAuto, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, SchemaSequence
-from .types import is_array, is_records, init_origin
+from .types import is_array, allin_instance, is_records, init_origin
 
 from .cast import cast_list, cast_tuple, cast_int, cast_date, cast_datetime_format
 from .date import now, get_date, get_date_range
 from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from .logs import CustomLogger, log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from .map import exists, is_empty, unique, get_scala, fill_array, is_same_length, unit_array, align_array, diff
+from .map import exists, is_empty, unique, to_array, diff
+from .map import iloc, get_scala, fill_array, is_same_length, unit_array, concat_array, align_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, cloc, apply_df, merge_drop
 from .map import exists_one, convert_data, filter_data, chain_exists, set_data, data_empty
 from .parse import parse_cookies, parse_origin, validate_schema, parse_schema
@@ -25,11 +26,11 @@ import requests
 import time
 
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
-from collections import defaultdict
 import datetime as dt
 import json
 import logging
 import pandas as pd
+import rsa
 
 from tqdm.auto import tqdm
 from itertools import product
@@ -65,6 +66,8 @@ LOGIN_REQUIRED_MSG = lambda where=str(): f"{where} login information is required
 INVALID_STATUS_MSG = lambda where=str(): f"{where} login information is not valid.".strip()
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
+WHERE, WHICH = "urls", "data"
+
 
 encrypt = lambda s=str(), count=0, *args: encrypt(
     base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
@@ -88,7 +91,7 @@ def get_content_type(content_type=str(), utf8=False, form=False) -> str:
 
 
 def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
-                origin: Optional[Union[bool,str]]=False, secure=False,
+                origin: Union[bool,str]=False, secure=False,
                 content_type=str(), utf8=False, form=False, **kwargs) -> Dict:
     headers = HEADERS.copy()
     if authority: headers["Authority"] = urlparse(authority).hostname
@@ -115,8 +118,7 @@ class CustomDict(dict):
 
     def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="drop",
             reorder=True, values_only=False) -> Union[Any,Dict,List,str]:
-        return kloc(self.__dict__, __key, default=default, if_null=if_null,
-                    reorder=reorder, values_only=values_only)
+        return kloc(self.__dict__, __key, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
 
     def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,Dict]:
         if not inplace: self = self.copy()
@@ -139,6 +141,8 @@ class CustomDict(dict):
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
+    where = WHERE
+    which = WHICH
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
@@ -152,43 +156,26 @@ class BaseSession(CustomDict):
     rename = dict()
     schemaInfo = list()
 
-    def __init__(self, operation: _PASS=None, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
-                iterateArgs: _PASS=None, iterateQuery: _PASS=None, iterateUnit: Unit=1, interval: Timedelta=str(),
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None, iterateUnit: Unit=1,
+                interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, responseType: _PASS=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile=str(), logJson: _PASS=None, debug=False,
-                errors: _PASS=None, rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(), **context):
+                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False,
+                rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(), **context):
         super().__init__()
         self.operation = self.operation
         self.fields = fields if fields else self.fields
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
+        self.set_date(startDate=startDate, endDate=endDate, interval=interval, **context)
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
+        self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.rename = rename if rename else self.rename
-        self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, debug)
-        self.set_schema(schemaInfo)
-        self.set_date(startDate=startDate, endDate=endDate, interval=interval)
+        self.set_logger(logName, logLevel, logFile, debug, **context)
+        self.set_schema(schemaInfo, **context)
         self.set_context(contextFields=contextFields, **context)
-
-    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False):
-        logName = logName if logName else self.operation
-        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
-        self.logFile = logFile
-        self.logJson = bool(logFile)
-        self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
-        self.debug = debug
-        self.errors = {__key: list() for __key in self.iterateArgs+self.iterateQuery}
-
-    def set_schema(self, schemaInfo: SchemaInfo=list()):
-        schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
-        if schemaInfo:
-            for __i, schemaContext in enumerate(schemaInfo):
-                schemaInfo[__i]["schema"] = validate_schema(schemaContext["schema"])
-            self.schemaInfo = schemaInfo
 
     def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 interval: Timedelta=str(), **context):
@@ -197,8 +184,23 @@ class BaseSession(CustomDict):
             self.startDate = min(startDate, endDate) if startDate and endDate else startDate
             self.endDate = max(startDate, endDate) if startDate and endDate else endDate
 
+    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False, **context):
+        logName = logName if logName else self.operation
+        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
+        self.logFile = logFile
+        self.logJson = bool(logFile)
+        self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
+        self.debug = debug
+
+    def set_schema(self, schemaInfo: SchemaInfo=list(), **context):
+        schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
+        if schemaInfo:
+            for __i, schemaContext in enumerate(schemaInfo):
+                schemaInfo[__i]["schema"] = validate_schema(schemaContext["schema"])
+            self.schemaInfo = schemaInfo
+
     def set_context(self, contextFields: Optional[IndexLabel]=None, **context):
-        self.update(kloc(context, contextFields, if_null="pass") if is_array(contextFields) else context)
+        self.update(kloc(context, contextFields, if_null="pass") if contextFields else context)
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, droptz=True) -> dt.datetime:
@@ -273,9 +275,20 @@ class BaseSession(CustomDict):
         return iterator, context
 
     def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: int=1) -> List[Context]:
+        tuple_args = tuple(map(lambda x: allin_instance(x, Tuple, empty=False), args))
+        if True in tuple_args:
+            args = self.product_args(*args, index=tuple_args)
         if iterateUnit > 1:
             args = tuple(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
         return [dict(zip(iterateArgs,values)) for values in zip(*args)]
+
+    def product_args(self, *args, index: Sequence[bool]) -> Tuple:
+        base = list()
+        for __arg in zip(*args):
+            tuples, others = iloc(__arg, index), iloc(__arg, list(map(lambda x: (not x), index)))
+            __product = list(product((others,), *tuples))
+            base += [concat_array(__s[1:], __s[0], index) for __s in __product]
+        return (tuple(map(lambda x: x[__i], base)) for __i in range(len(args)))
 
     def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
@@ -320,8 +333,8 @@ class Spider(BaseSession):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "spider"
-    where = "urls"
-    which = "data"
+    where = WHERE
+    which = WHICH
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
@@ -330,36 +343,25 @@ class Spider(BaseSession):
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
+    rename = dict()
     maxLimit = MIN_ASYNC_TASK_LIMIT
     message = str()
-    rename = dict()
 
-    def __init__(self, operation: _PASS=None, where: _PASS=None, which: _PASS=None, fields: IndexLabel=list(),
-                contextFields: Optional[ContextMapper]=None, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
-                iterateUnit: Unit=1, interval: Timedelta=str(),
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None, iterateUnit: Unit=1,
+                interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, responseType: _PASS=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), logJson: _PASS=None, debug=False,
-                errors: _PASS=None, rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(),
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, maxLimit: _PASS=None, redirectLimit=10,
-                progress=True, message=str(),  apiRedirect=False, redirectQuery: List[_KT]=list(),
-                reidrectUnit: Unit=1, redirectErrors=False, dependencies: _PASS=None, self_var: _PASS=None, **context):
+                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(), delay: Union[float,int,Tuple[int]]=1.,
+                numTasks=100, progress=True, message=str(), **context):
         super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
-                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, logName=logName, logLevel=logLevel, logFile=logFile,
-                        debug=debug, schemaInfo=schemaInfo)
-        self.returnType = returnType if returnType else self.returnType
+                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
+                        logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, rename=rename, schemaInfo=schemaInfo)
         self.delay = delay
         self.numTasks = cast_int(numTasks, MIN_ASYNC_TASK_LIMIT)
-        self.redirectLimit = cast_int(redirectLimit, MIN_ASYNC_TASK_LIMIT)
         self.progress = progress
         self.message = message if message else self.message
-        self.rename = rename if rename else self.rename
-        self.apiRedirect = apiRedirect
-        self.redirectQuery = redirectQuery
-        self.reidrectUnit = reidrectUnit
-        self.redirectErrors = redirectErrors
-        self.set_context(contextFields=contextFields, **context)
+        self.set_context(contextFields=contextFields, **FIXED_CONTEXT(**context))
         self.set_query(**context)
 
     ###################################################################
@@ -406,14 +408,18 @@ class Spider(BaseSession):
     @abstractmethod
     @requests_session
     def crawl(self, *args, **context) -> Data:
-        args, context = self.map_context(*args, **context)
-        return self.gather(*args, **context)
+        return self.gather(*self.map_args(*args), **self.map_context(**context))
 
-    def map_context(self, *args, __unique=True, **context) -> Tuple[Tuple,Context]:
-        args = (unique(*value) if is_array(value) and __unique else cast_list(value) for value in args)
-        context = {key: (unique(*value) if is_array(value) and __unique else cast_list(value))
-                    if key in self.iterateQuery else value for key, value in context.items()}
-        return args, context
+    def map_args(self, *args, how: Literal["min","max","first"]="min", default=None,
+                dropna=False, strict=False, unique=True) -> Tuple[List]:
+        if len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
+        elif len(args) > 1: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
+        else: return args
+
+    def map_context(self, sequence: List[_KT]=list(), default=None, dropna=False, strict=False,
+                    unique=True, **context) -> Context:
+        return {key: (to_array(value, default=default, dropna=dropna, strict=strict, unique=unique)
+                if key in self.iterateQuery+sequence else value) for key, value in context.items()}
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
                 fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -422,7 +428,7 @@ class Spider(BaseSession):
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
-    def map_reduce(self, data: List, fields: IndexLabel=list(),
+    def map_reduce(self, data: List[Data], fields: IndexLabel=list(),
                     returnType: Optional[TypeHint]=None, **context) -> Data:
         return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
 
@@ -437,44 +443,59 @@ class Spider(BaseSession):
         ...
 
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, **context) -> bytes:
+                        params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                        validate=False, exception: Literal["error","interupt"]="interupt",
+                        valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.content
 
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, **context) -> str:
+                    params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.text
 
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None,
-                    allow_redirects=True, **context) -> JsonData:
+                    params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.json()
 
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None,
-                        allow_redirects=True, **context) -> Dict:
+                        params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                        validate=False, exception: Literal["error","interupt"]="interupt",
+                        valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else requests
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
+
+    def validate_status(self, response: requests.Response, how: Literal["error","interupt"]="interupt",
+                        valid: Optional[Status]=200, invalid: Optional[Status]=None):
+        status = response.status_code
+        if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
+            if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            else: raise requests.ConnectionError(INVALID_STATUS_MSG(self.where))
 
     ###################################################################
     ############################ Google API ###########################
@@ -490,8 +511,7 @@ class Spider(BaseSession):
         return wrapper
 
     def set_query(self, queryKey: Keyword=str(), querySheet: Keyword=str(), queryFields: IndexLabel=list(),
-                    queryString: NumericiseIgnore=list(), queryArray: IndexLabel=list(),
-                    account: Account=dict(), **context):
+                    queryString: NumericiseIgnore=list(), queryArray: IndexLabel=list(), account: Account=dict(), **context):
         if not (queryKey and querySheet and queryFields): return
         elif is_same_length(queryKey, querySheet, queryFields):
             queryString = fill_array(queryString, count=len(queryKey), value=list())
@@ -512,12 +532,12 @@ class Spider(BaseSession):
         data = convert_data(data, return_type="dataframe")
         if gsKey and gsSheet and (isinstance(gsKey, str) and isinstance(gsSheet, str)) or is_same_length(gsKey, gsSheet):
             gs_args = tuple(map(cast_tuple, [gsKey, gsSheet, gsMode, gsBaseSheet, gsRange]))
-            for key, sheet, mode, base_sheet, cell in zip(*align_array(gs_args, how="first", default=str())):
+            for key, sheet, mode, base_sheet, cell in zip(*align_array(*gs_args, how="first", default=str())):
                 self.upload_gspread(key, sheet, data.copy(), (mode if mode else "append"),
                                     base_sheet, cell, account=account, **context)
         if gbqPid and gbqTable and (isinstance(gbqPid, str) and isinstance(gbqTable, str)) or is_same_length(gbqPid, gbqTable):
             gbq_args = tuple(map(cast_tuple, [gbqPid, gbqTable, gbqMode, gbqSchema, gbqPartition, gbqPartitionBy]))
-            for pid, table, mode, schema, partition, partition_by in zip(*align_array(gbq_args, how="first", default=str())):
+            for pid, table, mode, schema, partition, partition_by in zip(*align_array(*gbq_args, how="first", default=str())):
                 self.upload_gbq(table, pid, data.copy(), (mode if mode else "append"), schema, gbqProgress,
                                 partition, partition_by, reauth=gbqReauth, account=account, credentials=credentials, **context)
 
@@ -526,12 +546,12 @@ class Spider(BaseSession):
     ###################################################################
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: IndexLabel=list(), account: Account=dict()):
+                    arr_cols: Sequence[IndexLabel]=list(), account: Account=dict()):
         data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
                             numericise_ignore=str_cols, rename=self.rename, return_type="dataframe")
         self.logger.info(log_table(data, logJson=self.logJson))
         for field in cast_tuple(fields):
-            values = data[field].tolist() if field in data else None
+            values = list(data[field]) if field in data else None
             if (len(values) == 1) and (field not in arr_cols): values = values[0]
             self.update(field=values)
 
@@ -564,7 +584,7 @@ class Spider(BaseSession):
     @BaseSession.log_errors
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["fail","replace","append"]="append",
                     schema: Optional[BigQuerySchema]=None, progress=True,
-                    partition=str(), partition_by: Union[DateUnitAuto, Literal["auto","date"]]="auto",
+                    partition=str(), partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
                     reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
         data = self.map_gbq_data(data, schema=schema, **context)
@@ -601,22 +621,40 @@ class AsyncSpider(Spider):
     __metaclass__ = ABCMeta
     asyncio = True
     operation = "spider"
-    where = "urls"
-    which = "data"
+    where = WHERE
+    which = WHICH
     fields = list()
     iterateArgs = list()
+    redirectArgs = None
     iterateQuery = list()
-    redirectQuery = list()
+    redirectQuery = None
     iterateUnit = 1
-    redirectUnit = 1
+    redirectUnit = None
     interval = str()
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
+    rename = dict()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
-    rename = dict()
+
+    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None, iterateUnit: Unit=1,
+                interval: Timedelta=str(), startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
+                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                rename: RenameDict=dict(), schemaInfo: SchemaInfo=list(), delay: Union[float,int,Tuple[int]]=1.,
+                numTasks=100, progress=True, message=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None, **context):
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
+                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
+                        logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, rename=rename, schemaInfo=schemaInfo,
+                        delay=delay, numTasks=numTasks, progress=progress, message=message)
+        self.apiRedirect = apiRedirect
+        if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
+        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=True)
+        self.set_context(contextFields=contextFields, **FIXED_CONTEXT(**context))
+        self.set_query(**context)
 
     ###################################################################
     ########################## Async Managers #########################
@@ -706,44 +744,59 @@ class AsyncSpider(Spider):
         ...
 
     async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                                params=None, data=None, json=None, headers=None, cookies=None,
-                                allow_redirects=True, **context) -> bytes:
+                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.read()
 
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None,
-                            allow_redirects=True, **context) -> str:
+                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.text()
 
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None,
-                            allow_redirects=True, **context) -> JsonData:
+                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.json()
 
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                                params=None, data=None, json=None, headers=None, cookies=None,
-                                allow_redirects=True, **context) -> Dict:
+                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else aiohttp
         messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
+
+    def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interupt"]="interupt",
+                        valid: Optional[Status]=200, invalid: Optional[Status]=None):
+        status = response.status
+        if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
+            if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            else: raise aiohttp.ServerConnectionError(INVALID_STATUS_MSG(self.where))
 
     ###################################################################
     ########################## Async Redirect #########################
@@ -759,11 +812,11 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
-                        redirectQuery: _PASS=None, iterateUnit: _PASS=None, redirectUnit: Unit=1, fields: IndexLabel=list(),
-                        returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, redirectArgs: _PASS=None,
+                        iterateQuery: _PASS=None, redirectQuery: _PASS=None, iterateUnit: _PASS=None, redirectUnit: Unit=1,
+                        fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else GATHER_MSG(self.which, self.where)
-        redirect_context = dict(iterateArgs=self.iterateArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
+        redirect_context = dict(iterateArgs=self.redirectArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
@@ -778,18 +831,15 @@ class AsyncSpider(Spider):
         response = self.request_text("POST", redirectUrl, session, json=data, headers=dict(Authorization=authorization))
         return self.parse_redirect(json.loads(response), **context)
 
-    def filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(),
-                            redirectFilter: Optional[ContextMapper]=None, **context) -> Context:
-        redirectFilter = redirectFilter if redirectFilter else (lambda **context: context)
+    def filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(
             redirectUrl=redirectUrl,
             authorization=authorization,
             account=account,
-            **REDIRECT_CONTEXT(**redirectFilter(**context)))
+            **REDIRECT_CONTEXT(**context))
 
     def parse_redirect(self, data: RedirectData, **context) -> Records:
-        if self.redirectErrors:
-            data = self.log_redirect_errors(data)
+        data = self.log_redirect_errors(data)
         results = self.map_redirect(data, **context)
         self.logger.debug(log_data(results))
         return results
@@ -848,13 +898,17 @@ class LoginSpider(requests.Session, Spider):
     def get_cookies(self) -> str:
         return parse_cookies(self.cookies)
 
+    def rsa_encrypt(self, data: str, n: str, e: str):
+        pubKey = rsa.PublicKey(int(n,16), int(e,16))
+        return rsa.encrypt(data.encode(), pubKey).hex()
+
 
 class EncryptedSpider(Spider):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "spider"
-    where = "urls"
-    which = "data"
+    where = WHERE
+    which = WHICH
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
@@ -863,9 +917,9 @@ class EncryptedSpider(Spider):
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
+    rename = dict()
     maxLimit = MIN_ASYNC_TASK_LIMIT
     message = str()
-    rename = dict()
     authClass = LoginSpider
     idKey = "userid"
     pwKey = "passwd"
@@ -907,31 +961,28 @@ class EncryptedSpider(Spider):
         self.update(cookies=cookies)
         return dict(cookies=cookies)
 
-    def validate_status(self, response: requests.Response, invalid_status: Sequence[int]=(401,)):
-        if response.status_code in invalid_status:
-            raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
-
 
 class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     __metaclass__ = ABCMeta
     asyncio = True
-    operation = "encryptedAsyncSpider"
-    where = "urls"
-    which = "data"
+    operation = "spider"
+    where = WHERE
+    which = WHICH
     fields = list()
     iterateArgs = list()
+    redirectArgs = None
     iterateQuery = list()
-    redirectQuery = list()
+    redirectQuery = None
     iterateUnit = 1
-    redirectUnit = 1
+    redirectUnit = None
     interval = str()
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
+    rename = dict()
     maxLimit = MIN_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
-    rename = dict()
     authClass = LoginSpider
     idKey = "userid"
     pwKey = "passwd"
@@ -943,10 +994,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             context = self.get_user_info(**kwargs)
             return await func(self, *args, **kwargs, **context)
         return wrapper
-
-    def validate_status(self, response: aiohttp.ClientResponse, invalid_status: Sequence[int]=(401,)):
-        if response.status in invalid_status:
-            raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
 
 
 ###################################################################
@@ -1031,14 +1078,13 @@ class Pipeline(Spider):
         self.extra_save(data, prefix=prefix, extraSave=extraSave, **context)
         return merge_drop(data, appendix, drop=drop, how=how, on=on)
 
-    @abstractmethod
     def map_reduce(self, *data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **kwargs) -> Data:
-        return filter_data(chain_exists(data), fields=fields, return_type=returnType)
+        return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
 
 
 class AsyncPipeline(AsyncSpider, Pipeline):
     __metaclass__ = ABCMeta
-    operation = "asyncPipeline"
+    operation = "pipeline"
     dependencies = (AsyncSpider, AsyncSpider)
     fields = list()
     datetimeUnit = "second"

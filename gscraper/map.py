@@ -81,9 +81,9 @@ def between(__object: Comparable, left=None, right=None,
 
 def map_index(__indices: Index) -> Index:
     if isinstance(__indices, int): return __indices
-    elif is_int_array(__indices, how="all", empty=False): return __indices
     elif is_bool_array(__indices, how="all", empty=False):
         return [__i for __i, __match in enumerate(__indices) if __match]
+    elif is_int_array(__indices, how="all", empty=False): return __indices
     else: return
 
 
@@ -154,12 +154,25 @@ def flatten(*args, iter_type: _TYPE=(List,Set,Tuple)) -> List:
             __object if isinstance(__object, iter_type) else cast_tuple(__object))]
 
 
-def unique(*elements, strict=True) -> List:
+def unique(*elements, strict=True, unroll=False) -> List:
     array = list()
-    for __e in elements:
+    for __e in (flatten(*elements) if unroll else elements):
         if not exists(__e, strict=strict): continue
         if __e not in array: array.append(__e)
     return array
+
+
+def _unique(*elements, strict=True, unroll=False) -> List:
+    return unique(*elements, strict=strict, unroll=unroll)
+
+
+def to_array(__object, default=None, dropna=False, strict=True, unique=False) -> List:
+    __s = cast_list(__object)
+    if unique: return _unique(*__s, strict=strict)
+    elif dropna: return [__e for __e in __s if exists(__e, strict=strict)]
+    elif not_na(default, strict=True):
+        return [__e if exists(__e, strict=strict) else default for __e in __s]
+    else: return __s
 
 
 def apply_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __applyFunc: Optional[ApplyFunction]=list(),
@@ -206,7 +219,12 @@ def unit_array(__s: Sequence, unit=1) -> List[Sequence]:
     return [__s[__i:__i+unit] for __i in range(0,len(__s),unit)]
 
 
-def get_exists_index(__s: Sequence, strict=False) -> List[int]:
+def concat_array(left: Sequence, right: Sequence, left_index: Sequence[int]) -> List:
+    left, right = cast_list(left).copy(), cast_list(right).copy()
+    return [left.pop(0) if is_left else right.pop(0) for is_left in left_index]
+
+
+def get_exists_index(__s: Sequence, strict=True) -> List[int]:
     return [__i for __i, __e in enumerate(__s) if exists(__e, strict=strict)]
 
 
@@ -220,7 +238,7 @@ def get_unique_index(__s: Sequence) -> List[int]:
 
 
 def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
-                strict=False, dropna=False, unique=False) -> List[int]:
+                dropna=False, strict=True, unique=False) -> List[int]:
     count = len(args[0]) if how == "first" else (max(map(len, args)) if how == "max" else min(map(len, args)))
     indices = set(range(0, count))
     if dropna: indices = __and(indices, *map(set, map(lambda __s: get_exists_index(__s, strict=strict), args)))
@@ -229,8 +247,8 @@ def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
 
 
 def align_array(*args: Sequence, how: Literal["min","max","first"]="min", default=None,
-                strict=False, dropna=False, unique=False) -> Tuple[List]:
-    indices = align_index(*args, how=how, strict=strict, dropna=dropna, unique=unique)
+                dropna=False, strict=True, unique=False) -> Tuple[List]:
+    indices = align_index(*args, how=how, dropna=dropna, strict=strict, unique=unique)
     if dropna or unique:
         return tuple([__s[__i] for __i in indices if __i < len(__s)] for __s in args)
     else: return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
@@ -640,9 +658,9 @@ def safe_apply_df(__object: Union[pd.DataFrame,pd.Series], __applyFunc: ApplyFun
 ############################ Multitype ############################
 ###################################################################
 
-def exists_one(*args) -> Any:
+def exists_one(*args, strict=False) -> Any:
     for arg in args:
-        if arg: return arg
+        if exists(arg, strict=strict): return arg
     if args: return args[-1]
 
 
@@ -702,10 +720,10 @@ def filter_data(data: Data, fields: Optional[Union[_KT,Index]]=list(), default=N
                 if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
                 rename: RenameDict=dict(), convert_first=False, rename_first=False) -> Data:
     if not fields: return data if if_null != "drop" else list()
-    if is_records(data): return vloc(data, __keys=fields, default=default, if_null=if_null, reorder=reorder)
+    if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
     elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder)
-    elif isinstance(data, Dict): return kloc(data, __keys=fields, default=default, if_null=if_null, reorder=reorder)
-    elif isinstance(data, List): return iloc(data, index=fields, default=default, if_null=if_null)
+    elif isinstance(data, Dict): return kloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
+    elif isinstance(data, List): return iloc(data, indices=fields, default=default, if_null=if_null)
     else: return list()
 
 

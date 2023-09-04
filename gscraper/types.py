@@ -65,7 +65,7 @@ MappingData = Union[Records, DataFrame, Dict]
 Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
 
 JsonData = Union[Dict, List]
-RedirectData = Union[Records, Dict[str,Records], JsonData]
+RedirectData = Union[Dict[str,Records], JsonData]
 
 
 ###################################################################
@@ -78,8 +78,10 @@ IndexLabel = Union[Hashable, Sequence[Hashable]]
 Column = Union[str, Sequence[str]]
 Keyword = Union[str, Sequence[str]]
 Id = Union[str, Sequence[str]]
+Url = Union[str, Sequence[str]]
 Token = Union[str, Sequence[str]]
 EncryptedKey = Union[str, Sequence[str]]
+Status = Union[int, Sequence[int]]
 Shape = Union[int, Sequence[int]]
 Unit = Union[int, Sequence[int]]
 

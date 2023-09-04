@@ -6,7 +6,6 @@ from .map import re_get, drop_dict
 
 from typing import List, Literal, Optional, Union
 from pandas.tseries.offsets import BDay
-from pytz import timezone
 import datetime as dt
 import numpy as np
 import pandas as pd
@@ -78,7 +77,7 @@ DATE_RANGE_MSG = "Of the four parameters: start, end, periods, and freq, exactly
 INVALID_INTERVAL_MSG = lambda interval: f"'{interval}' is not valid date interval for pandas date range."
 
 
-strptimekr = lambda date_string: cast_datetime(date_string, tzinfo=KST, droptz=True)
+strptimekr = lambda date_string: cast_datetime(date_string, astimezone=KST, droptz=True)
 strpdatekr = lambda date_string: cast_date(strptimekr(date_string))
 
 
