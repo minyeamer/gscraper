@@ -80,7 +80,7 @@ Keyword = Union[str, Sequence[str]]
 Id = Union[str, Sequence[str]]
 Url = Union[str, Sequence[str]]
 Token = Union[str, Sequence[str]]
-EncryptedKey = Union[str, Sequence[str]]
+EncryptedKey = str
 Status = Union[int, Sequence[int]]
 Shape = Union[int, Sequence[int]]
 Unit = Union[int, Sequence[int]]
@@ -95,7 +95,6 @@ Timestamp = Union[float, int]
 DateNumeric = Union[datetime, date, time, float, int]
 DateFormat = Union[datetime, date, time, float, int, str]
 DateUnit = Literal["second", "minute", "hour", "day", "month", "year"]
-DateUnitAuto = Literal["auto", "date", "second", "minute", "hour", "day", "month", "year"]
 
 DateQuery = Dict[str,datetime]
 Timedelta = Union[timedelta, str, int]
@@ -150,19 +149,56 @@ class SchemaContext(TypedDict):
 
 SchemaInfo = Sequence[SchemaContext]
 
+
+###################################################################
+######################## Google Cloud Types #######################
+###################################################################
+
+Account = Union[Dict[str,str], str]
+PostData = Union[Dict[str,Any],str]
+
+GspreadMode = Literal["replace", "append"]
+NumericiseIgnore = Union[bool, Sequence[int]]
+
+BigQueryMode = Literal["fail", "replace", "append", "upsert"]
+BigQuerySchema = List[Dict[str,str]]
+
+class GspreadReadContext(TypedDict):
+    key: str
+    sheet: str
+    fields: IndexLabel
+    str_cols: NumericiseIgnore
+    arr_cols: Sequence[IndexLabel]
+
+class GspreadUpdateContext(TypedDict):
+    key: str
+    sheet: str
+    mode: Literal["replace", "append"]
+    base_sheet: str
+    cell: str
+
+GspreadReadInfo = Sequence[GspreadReadContext]
+GspreadUpdateInfo = Sequence[GspreadUpdateContext]
+
+class BigQueryContext(TypedDict):
+    table: str
+    project_id: str
+    mode: Literal["fail", "replace", "append", "upsert"]
+    schema: BigQuerySchema
+    progress: bool
+    partition: str
+    partition_by: Literal["auto", "second", "minute", "hour", "day", "month", "year", "date"]
+
+BigQueryInfo = Sequence[BigQueryContext]
+UploadInfo = Sequence[Union[GspreadUpdateInfo, BigQueryInfo]]
+
+
 ###################################################################
 ########################## Special Types ##########################
 ###################################################################
 
 RegexFormat = str
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
-
-Account = Union[Dict[str,str], str]
-PostData = Union[Dict[str,Any],str]
-
-NumericiseIgnore = Union[bool, Sequence[int]]
-BigQuerySchema = List[Dict[str,str]]
-SchemaSequence = Union[BigQuerySchema, Sequence[BigQuerySchema]]
 
 CastError = (ValueError, TypeError)
 
