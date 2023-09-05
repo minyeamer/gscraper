@@ -1,6 +1,6 @@
 from .types import _KT, _VT, _PASS, not_na, get_type, init_origin, is_array, is_records, is_df, is_df_sequence
 from .types import is_array_type, is_dict_type, is_records_type, is_dataframe_type
-from .types import Context, TypeHint, IndexLabel, RenameDict, JsonData, Records, Data
+from .types import Context, TypeHint, IndexLabel, RenameMap, JsonData, Records, Data
 from .types import SchemaPath, PathType, ApplyFunction, MatchFunction, SchemaApply, SchemaMatch
 from .types import SchemaField, Schema, SchemaInfo
 
@@ -65,7 +65,7 @@ clean_tag = lambda source: re.sub("<[^>]*>", "", str(source))
 
 
 def parse_cookies(cookies: Union[RequestsCookieJar,SimpleCookie]) -> str:
-    return '; '.join([str(key)+"="+str(value) for key,value in cookies.items()])
+    return '; '.join([str(key)+"="+str(value) for key, value in cookies.items()])
 
 
 def parse_parth(url: str) -> str:
@@ -292,11 +292,11 @@ def validate_match(field: SchemaField) -> SchemaField:
 ###################################################################
 
 def parse_schema(data: Data, schema_info: SchemaInfo, data_type: TypeHint="records",
-                root: _KT=list(), rename: RenameDict=dict(), discard=False, **context) -> Data:
+                root: _KT=list(), rename: RenameMap=dict(), discard=False, **context) -> Data:
     results = init_origin(data_type)
     if not schema_info: return results
     context = drop_dict(context, SCHEMA_KEYS, inplace=False)
-    for schema_context in schema_info:
+    for schema_context in schema_info.values():
         base = parse_context(schema_context[SCHEMA], **context)
         schema_context = dict(schema_context, **exists_dict({ROOT:root, RENAME:rename, DISCARD:discard}))
         if is_records_type(data_type):
@@ -320,7 +320,7 @@ def parse_context(schema: Schema, **context) -> Context:
 
 def parse_records(__r: Union[Dict,Records], __base: Dict, schema: Schema,
                     root: _KT=list(), path: _KT=list(), strict=True, index=str(), start=1,
-                    match: Optional[MatchFunction]=None, rename: RenameDict=dict(),
+                    match: Optional[MatchFunction]=None, rename: RenameMap=dict(),
                     discard=False, **context) -> Records:
     __r = hier_get(__r, root, default=list()) if root else __r.copy()
     if not is_records(__r, how=("all" if strict else "any"), empty=True):
@@ -345,7 +345,7 @@ def parse_records(__r: Union[Dict,Records], __base: Dict, schema: Schema,
 ###################################################################
 
 def parse_dict(__m: Dict, __base: Dict, schema: Schema, root: _KT=list(),
-                rename: RenameDict=dict(), discard=False, **context) -> Dict:
+                rename: RenameMap=dict(), discard=False, **context) -> Dict:
     __m = hier_get(__m, root) if root else __m.copy()
     context = drop_dict(context, FIELD_KEYS+FUNC_KEYS, inplace=False)
     for field in schema:
@@ -475,7 +475,7 @@ def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
 ###################################################################
 
 def parse_dataframe(df: pd.DataFrame, __base: Dict, schema: Schema,
-                    rename: RenameDict=dict(), discard=False, **context) -> pd.DataFrame:
+                    rename: RenameMap=dict(), discard=False, **context) -> pd.DataFrame:
     df, base = df.copy(), pd.DataFrame([__base]*len(df))
     context = drop_dict(context, FIELD_KEYS+FUNC_KEYS, inplace=False)
     for field in schema:

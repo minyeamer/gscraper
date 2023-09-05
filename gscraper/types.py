@@ -5,6 +5,7 @@ from datetime import datetime, date, time, timedelta
 from pandas import DataFrame, Series, isna
 from pytz import BaseTzInfo
 
+
 INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
 
 
@@ -57,7 +58,7 @@ Records = List[Dict]
 ###################################################################
 
 NestedDict = Dict[_KT,Dict]
-RenameDict = Dict[str,str]
+RenameMap = Dict[str,str]
 
 NestedData = Union[NestedSequence, NestedDict]
 TabularData = Union[Records, DataFrame]
@@ -81,8 +82,10 @@ Id = Union[str, Sequence[str]]
 Url = Union[str, Sequence[str]]
 Token = Union[str, Sequence[str]]
 EncryptedKey = str
+
 Status = Union[int, Sequence[int]]
 Shape = Union[int, Sequence[int]]
+Pages = Union[Tuple[int], List[Tuple[int]]]
 Unit = Union[int, Sequence[int]]
 
 
@@ -144,10 +147,10 @@ class SchemaContext(TypedDict):
     index: _KT
     start: int
     match: MatchFunction
-    rename: RenameDict
+    rename: RenameMap
     discard: bool
 
-SchemaInfo = Sequence[SchemaContext]
+SchemaInfo = Dict[_KT, SchemaContext]
 
 
 ###################################################################
@@ -177,8 +180,8 @@ class GspreadUpdateContext(TypedDict):
     base_sheet: str
     cell: str
 
-GspreadReadInfo = Sequence[GspreadReadContext]
-GspreadUpdateInfo = Sequence[GspreadUpdateContext]
+GspreadReadInfo = Dict[_KT, GspreadReadContext]
+GspreadUpdateInfo = Dict[_KT, GspreadUpdateContext]
 
 class BigQueryContext(TypedDict):
     table: str
@@ -189,8 +192,8 @@ class BigQueryContext(TypedDict):
     partition: str
     partition_by: Literal["auto", "second", "minute", "hour", "day", "month", "year", "date"]
 
-BigQueryInfo = Sequence[BigQueryContext]
-UploadInfo = Sequence[Union[GspreadUpdateInfo, BigQueryInfo]]
+BigQueryInfo = Dict[_KT, BigQueryContext]
+UploadInfo = Dict[_KT, Union[GspreadUpdateContext, BigQueryContext]]
 
 
 ###################################################################

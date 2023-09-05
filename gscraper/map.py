@@ -1,6 +1,6 @@
 from .types import _KT, _VT, _BOOL, _TYPE, Comparable, Index, IndexLabel, Keyword, RegexFormat, TypeHint
 from .types import Context, IndexedSequence, Records, MappingData, TabularData, Data
-from .types import ApplyFunction, MatchFunction, BetweenRange, RenameDict
+from .types import ApplyFunction, MatchFunction, BetweenRange, RenameMap
 from .types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
 from .types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
@@ -254,6 +254,12 @@ def align_array(*args: Sequence, how: Literal["min","max","first"]="min", defaul
     else: return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
 
 
+def transpose_array(__s: Sequence[Sequence], count: Optional[int]=None) -> List[List]:
+    if not __s: return list()
+    count = count if isinstance(count, int) and count > 0 else len(__s[0])
+    return [list(map(lambda x: x[__i], __s)) for __i in range(count)]
+
+
 ###################################################################
 ############################### Map ###############################
 ###################################################################
@@ -276,7 +282,7 @@ def to_dict(__object: MappingData) -> Dict:
     else: return dict()
 
 
-def rename_dict(__m: Dict, rename: RenameDict) -> Dict:
+def rename_dict(__m: Dict, rename: RenameMap) -> Dict:
     return {rename.get(__key,__key): __value for __key, __value in __m.items()}
 
 
@@ -295,8 +301,8 @@ def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -
 def set_dict(__m: Dict, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
             empty=True, inplace=True, **context) -> Dict:
     if not inplace: __m = __m.copy()
-    for __key, value in dict(zip(cast_tuple(__keys), cast_tuple(__values)), **context).items():
-        if exists(value, strict=True) or empty: __m[__key] = value
+    for __key, __value in dict(zip(cast_tuple(__keys), cast_tuple(__values)), **context).items():
+        if exists(__value, strict=True) or empty: __m[__key] = __value
     if not inplace: return __m
 
 
@@ -422,7 +428,7 @@ def to_records(__object: MappingData) -> Records:
     else: return list()
 
 
-def rename_records(__r: Records, rename: RenameDict) -> Records:
+def rename_records(__r: Records, rename: RenameMap) -> Records:
     if not rename: return __r
     return [rename_dict(__m, rename=rename) for __m in __r]
 
@@ -538,8 +544,8 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
 def set_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __values: Optional[_VT]=list(),
             empty=True, **context) -> pd.DataFrame:
     df = df.copy()
-    for __column, value in dict(zip(cast_tuple(__columns), cast_tuple(__values)), **context).items():
-        if exists(value, strict=True) or empty: df[__column] = value
+    for __column, __value in dict(zip(cast_tuple(__columns), cast_tuple(__values)), **context).items():
+        if exists(__value, strict=True) or empty: df[__column] = __value
     return df
 
 
@@ -609,10 +615,10 @@ def merge_drop(left: pd.DataFrame, right: pd.DataFrame, drop: Literal["left","ri
 
 def unroll_df(df: pd.DataFrame, columns: IndexLabel, values: _VT) -> pd.DataFrame:
     columns, values = cast_tuple(columns), cast_tuple(values)
-    get_values = lambda row: [row[value] for value in values]
+    get_values = lambda row: [row[__value] for __value in values]
     len_values = lambda row: min(map(len, get_values(row)))
     unroll_row = lambda row: [[row[__column]]*len_values(row) for __column in columns]+get_values(row)
-    map_subrow = lambda subrow: {__key: value for __key, value in zip(columns+values,subrow)}
+    map_subrow = lambda subrow: {__key: __value for __key, __value in zip(columns+values,subrow)}
     map_row = lambda row: pd.DataFrame([map_subrow(subrow) for subrow in zip(*unroll_row(row))])
     return pd.concat([map_row(row) for _,row in df.iterrows()])
 
@@ -666,9 +672,9 @@ def exists_one(*args, strict=False) -> Any:
 
 def filter_exists(__object, strict=False) -> Any:
     if is_array(__object):
-        return type(__object)([value for value in __object if exists(value, strict=strict)])
+        return type(__object)([__value for __value in __object if exists(__value, strict=strict)])
     elif isinstance(__object, Dict):
-        return {key:value for key,value in __object.items() if exists(value, strict=strict)}
+        return {key: __value for key, __value in __object.items() if exists(__value, strict=strict)}
     elif isinstance(__object, pd.DataFrame):
         return __object.dropna(axis=1, how=("all" if strict else "any"))
     elif exists(__object, strict=strict): return __object
@@ -694,7 +700,7 @@ def multitype_allowed(func):
 
 
 @multitype_allowed
-def rename_data(data: MappingData, rename: RenameDict,
+def rename_data(data: MappingData, rename: RenameMap,
                 return_type: Optional[TypeHint]=None, convert_first=False) -> MappingData:
     if not rename: return data
     elif is_records(data): return rename_records(data, rename)
@@ -705,7 +711,7 @@ def rename_data(data: MappingData, rename: RenameDict,
 
 def multitype_rename(func):
     @functools.wraps(func)
-    def wrapper(data: Data, *args, rename: RenameDict=dict(), rename_first=False, **kwargs):
+    def wrapper(data: Data, *args, rename: RenameMap=dict(), rename_first=False, **kwargs):
         if not rename: return func(data, *args, **kwargs)
         if rename_first: data = rename_data(data, rename)
         data = func(data, *args, **kwargs)
@@ -718,7 +724,7 @@ def multitype_rename(func):
 @multitype_rename
 def filter_data(data: Data, fields: Optional[Union[_KT,Index]]=list(), default=None,
                 if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameDict=dict(), convert_first=False, rename_first=False) -> Data:
+                rename: RenameMap=dict(), convert_first=False, rename_first=False) -> Data:
     if not fields: return data if if_null != "drop" else list()
     if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
     elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder)
@@ -744,7 +750,7 @@ def multitype_filter(func):
 @multitype_filter
 def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first",
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(),
+                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False) -> Data:
     if is_dfarray(data): return concat_df(data)
     elif is_2darray(data): return list(chain.from_iterable(data))
@@ -777,7 +783,7 @@ def drop_data(data: MappingData, __keys: Optional[_KT]=list(),
 def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFunc: Optional[ApplyFunction]=list(),
                 all_keys=False, apply: Optional[ApplyFunction]=None, fields: Optional[Union[_KT,Index]]=list(),
                 default=None, if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameDict=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
     if is_records(data): return apply_records(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
     elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, all_cols=all_keys, apply=apply, **context)
     elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
@@ -791,7 +797,7 @@ def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFun
 def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFunc: Optional[MatchFunction]=list(),
                 all_keys=False, match: Optional[MatchFunction]=None, how: Literal["filter","all","indexer"]="filter",
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(),
+                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
     if is_records(data): return match_records(data, __keys, __matchFunc, all_keys=all_keys, match=match, how=how, **context)
     elif isinstance(data, pd.DataFrame): return match_df(data, __keys, __matchFunc, all_cols=all_keys, match=match, how=how, **context)
@@ -805,7 +811,7 @@ def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFun
 @multitype_filter
 def between_data(data: MappingData, inclusive: Literal["both","neither","left","right"]="both", null=False,
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(), convert_first=False,
+                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(), convert_first=False,
                 rename_first=False, filter_first=False, **context) -> MappingData:
     if is_records(data): return between_records(data, inclusive=inclusive, null=null, **context)
     elif isinstance(data, pd.DataFrame): return between_df(data, inclusive=inclusive, null=null)
@@ -818,7 +824,7 @@ def between_data(data: MappingData, inclusive: Literal["both","neither","left","
 @multitype_filter
 def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True, fields: Optional[Union[_KT,Index]]=list(),
                 default=None, if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameDict=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
     if is_records(data):
         ascending = bool(iloc(ascending, 0)) if isinstance(ascending, Sequence) else ascending
         return sort_records(data, by=by, ascending=ascending)

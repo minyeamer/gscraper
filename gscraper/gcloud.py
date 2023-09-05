@@ -1,4 +1,4 @@
-from .types import TypeHint, IndexLabel, RenameDict, TabularData, is_records
+from .types import TypeHint, IndexLabel, RenameMap, TabularData, is_records
 from .types import Account, PostData, Datetime, NumericiseIgnore, BigQuerySchema
 
 from .cast import cast_str, cast_float, cast_int, cast_datetime_format
@@ -115,7 +115,7 @@ def to_excel_date(date: Datetime, default) -> int:
 
 def validate_gs_format(data: TabularData, action: Literal["read","update"]="read",
                         fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                        reorder=True, return_type: Optional[TypeHint]=None, rename: RenameDict=dict(),
+                        reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                         convert_first=False, rename_first=False, filter_first=False) -> TabularData:
     if action == "read":
         cast_boolean = lambda x: {"TRUE":True, "FALSE":False}.get(x, x)
@@ -129,7 +129,7 @@ def validate_gs_format(data: TabularData, action: Literal["read","update"]="read
 def read_gspread(key: str, sheet: str, account: Account=dict(), gs: Optional[Worksheet]=None,
                 fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="drop",
                 head=1, headers=None, numericise_ignore: NumericiseIgnore=list(), reorder=True,
-                return_type: Optional[TypeHint]="dataframe", rename: RenameDict=dict(),
+                return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict(),
                 convert_first=True, rename_first=True, filter_first=True, **kwargs) -> TabularData:
     if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()
     data = gs.get_all_records(head=head, default_blank=default, numericise_ignore=numericise_ignore, expected_headers=headers)
