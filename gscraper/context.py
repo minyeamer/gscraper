@@ -10,19 +10,23 @@ def exists_context(**context):
 
 
 UNIQUE_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, which=None, initTime=None, \
-                        session=None, semaphore=None, contextFields=None, \
-                        iterateArgs=None, iterateQuery=None, iterateUnit=None, responseType=None, \
+                        contextFields=None, iterateArgs=None, iterateQuery=None, iterateUnit=None, responseType=None, \
                         logger=None, logJson=None, errors=None, rename=None, schemaInfo=None, \
                         redirectArgs=None, redirectQuery=None, redirectUnit=None, \
                         maxLimit=None, redirectLimit=None, authClass=None, dependencies=None, \
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: context
 
 
+REQUEST_CONTEXT = lambda session=None, semaphore=None, page=None, method=None, url=None, \
+                        params=None, data=None, json=None, headers=None, allow_redirects=None, close=None, \
+                        validate=None, exception=None, valid=None, invalid=None, **context: context
+
+
 PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, startDate=None, endDate=None, \
                         datetimeUnit="second", tzinfo=None, returnType=None, \
                         logName=str(), logLevel="WARN", logFile=str(), debug=False, rename=dict(), \
                         delay=1., numTasks=100, progress=True, message=str(), apiRedirect=False, \
-                        queryInfo=None, uploadInfo=None, encryptedKey=None, cookies=str(), **context: \
+                        queryInfo=None, uploadInfo=None, encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
     dict(exists_context(
         fields = fields,
         startDate = startDate,

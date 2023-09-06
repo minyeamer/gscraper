@@ -16,7 +16,6 @@ EST = "US/Eastern"
 KST = "Asia/Seoul"
 
 DATE_UNIT = ["second", "minute", "hour", "day", "month", "year"]
-WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
 
 DATETIME_FORMAT = {
     "date": "%Y-%m-%d",
@@ -75,10 +74,6 @@ PANDAS_FREQUENCY = {
 
 DATE_RANGE_MSG = "Of the four parameters: start, end, periods, and freq, exactly three must be specified."
 INVALID_INTERVAL_MSG = lambda interval: f"'{interval}' is not valid date interval for pandas date range."
-
-
-strptimekr = lambda date_string: cast_datetime(date_string, astimezone=KST, droptz=True)
-strpdatekr = lambda date_string: cast_date(strptimekr(date_string))
 
 
 def trunc_datetime(__datetime: dt.datetime,
@@ -185,27 +180,3 @@ def set_date(__date: dt.date, __type: TypeHint=str, __format="%Y-%m-%d") -> Unio
     elif is_str_type(__type): return str(__date)
     elif is_type(__type, INTEGER_TYPES+["ordinal"]): return __date.toordinal()
     else: return
-
-
-def relative_strptime(__date_string: str) -> dt.datetime:
-    str2int = lambda pattern, string: cast_int(re_get(pattern, string))
-    if re.search("(\d+)초 전", __date_string):
-        return now(seconds=str2int("(\d+)초 전", __date_string))
-    elif re.search("(\d+)분 전", __date_string):
-        return now(minutes=str2int("(\d+)분 전", __date_string))
-    elif re.search("(\d+)시간 전", __date_string):
-        return now(hours=str2int("(\d+)시간 전", __date_string))
-    elif re.search("(\d+)일 전", __date_string):
-        return today(days=str2int("(\d+)일 전", __date_string))
-    elif "어제" in __date_string:
-        return today(days=1)
-    else: return cast_datetime(__date_string)
-
-
-def strfweek(__date: dt.date) -> str:
-    cur_year, weeknum, _ = __date.isocalendar()
-    year, first_week, first_day = __date.replace(day=1).isocalendar()
-    if cur_year != year:
-        return f"{cur_year}년{__date.month}월{weeknum}주차"
-    monthly_week = weeknum - first_week + int(first_day < 4)
-    return f"{year}년{__date.month}월{monthly_week}주차"

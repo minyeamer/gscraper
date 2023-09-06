@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .context import UNIQUE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from .context import UNIQUE_CONTEXT, REQUEST_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
 from .types import RenameMap, IndexLabel, EncryptedKey, Status, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
@@ -26,6 +26,7 @@ import requests
 import time
 
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from json import JSONDecodeError
 import datetime as dt
 import json
 import logging
@@ -57,12 +58,15 @@ MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
-GATHER_MSG = lambda which, where: f"Collecting {which} from {where}."
-REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting."
+GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
+INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
+
+REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
 INVALID_REDIRECT_LOG_MSG = "Please verify that the both results and errors are in redierct returns."
+
 INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
 LOGIN_REQUIRED_MSG = lambda where=str(): f"{where} login information is required.".strip()
-INVALID_STATUS_MSG = lambda where=str(): f"{where} login information is not valid.".strip()
+
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
 WHERE, WHICH = "urls", "data"
@@ -267,9 +271,12 @@ class BaseSession(CustomDict):
     ############################# Iterator ############################
     ###################################################################
 
-    def get_iterator(self, values_only=False, **context) -> Union[Context,Sequence[_VT]]:
-        query = unique(*self.iterateArgs, *self.iterateQuery, "startDate", "endDate", "date")
-        return kloc(context, query, if_null="drop", values_only=values_only)
+    def get_iterator(self, keys_only=False, values_only=False, **context) -> Union[Context,Sequence[_VT]]:
+        iterateDate = ("startDate", "endDate", "date") if self.interval else tuple()
+        query = unique(*self.iterateArgs, *self.iterateQuery, *iterateDate)
+        if keys_only: return query
+        else: return kloc(context, query, if_null="drop", values_only=values_only)
+
     def set_iterator(self, *args, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
                     iterateUnit: Unit=1, interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator = list(), list(), list()
@@ -306,7 +313,7 @@ class BaseSession(CustomDict):
         startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
         endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
         date_range = get_date_range(startDate, endDate, interval=interval)
-        if (interval in ("D",1)) or (str(interval).startswith("1 day")):
+        if (interval in ("D","1D")) or (str(interval).startswith("1 day")):
             period = [dict(date=date) for date in date_range]
             context = drop_dict(context, "date", inplace=False)
         elif len(date_range) > 1:
@@ -390,7 +397,7 @@ class Spider(BaseSession):
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**dict(self.__dict__, **kwargs))
+            if self_var: kwargs = UNIQUE_CONTEXT(**REQUEST_CONTEXT(**dict(self.__dict__, **kwargs)))
             with requests.Session() as session:
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
@@ -441,10 +448,13 @@ class Spider(BaseSession):
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
                 fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = message if message else GATHER_MSG(self.which, self.where)
+        message = self.get_message(*args, message=message, **context)
         iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+
+    def get_message(self, *args, message=str(), **context) -> str:
+        return exists_one(message, self.message, GATHER_MSG(self.which, self.where))
 
     def map_reduce(self, data: List[Data], fields: IndexLabel=list(),
                     returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -460,12 +470,21 @@ class Spider(BaseSession):
     def fetch(self, *args, **context) -> Data:
         ...
 
+    def request(self, method: str, url: str, session: Optional[requests.Session]=None,
+                params=None, data=None, json=None, headers=None, allow_redirects=True,
+                close=False, **context) -> requests.Response:
+        session = session if session else requests
+        messages = dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**messages, logJson=self.logJson))
+        response = session.request(method, url, **messages, allow_redirects=allow_redirects)
+        return response.close() if close else response
+
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                        params=None, data=None, json=None, headers=None, allow_redirects=True,
                         validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else requests
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -473,11 +492,11 @@ class Spider(BaseSession):
             return response.content
 
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                    params=None, data=None, json=None, headers=None, allow_redirects=True,
                     validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else requests
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -485,11 +504,11 @@ class Spider(BaseSession):
             return response.text
 
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                    params=None, data=None, json=None, headers=None, allow_redirects=True,
                     validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else requests
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -497,11 +516,11 @@ class Spider(BaseSession):
             return response.json()
 
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                        params=None, data=None, json=None, headers=None, allow_redirects=True,
                         validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else requests
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -661,7 +680,7 @@ class AsyncSpider(Spider):
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
-        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=True)
+        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=False)
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
 
@@ -682,7 +701,7 @@ class AsyncSpider(Spider):
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**dict(self.__dict__, **kwargs))
+            if self_var: kwargs = UNIQUE_CONTEXT(**REQUEST_CONTEXT(**dict(self.__dict__, **kwargs)))
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
@@ -740,7 +759,7 @@ class AsyncSpider(Spider):
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
                     fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = message if message else GATHER_MSG(self.which, self.where)
+        message = self.get_message(*args, message=message, **context)
         iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
@@ -753,11 +772,11 @@ class AsyncSpider(Spider):
         ...
 
     async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            params=None, data=None, json=None, headers=None, allow_redirects=True,
                             validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else aiohttp
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
@@ -765,11 +784,11 @@ class AsyncSpider(Spider):
             return await response.read()
 
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            params=None, data=None, json=None, headers=None, allow_redirects=True,
                             validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else aiohttp
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
@@ -777,11 +796,11 @@ class AsyncSpider(Spider):
             return await response.text()
 
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            params=None, data=None, json=None, headers=None, allow_redirects=True,
                             validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else aiohttp
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
@@ -789,11 +808,11 @@ class AsyncSpider(Spider):
             return await response.json()
 
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, cookies=None, allow_redirects=True,
+                            params=None, data=None, json=None, headers=None, allow_redirects=True,
                             validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else aiohttp
-        messages = dict(params=params, data=data, json=json, headers=headers, cookies=cookies)
+        messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
@@ -824,12 +843,15 @@ class AsyncSpider(Spider):
     async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, redirectArgs: _PASS=None,
                         iterateQuery: _PASS=None, redirectQuery: _PASS=None, iterateUnit: _PASS=None, redirectUnit: Unit=1,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = message if message else GATHER_MSG(self.which, self.where)
+        message = self.get_redirect_message(*args, message=message, **context)
         redirect_context = dict(iterateArgs=self.redirectArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+
+    def get_redirect_message(self, *args, message=str(), **context) -> str:
+        return message if message else REDIRECT_MSG(self.operation)
 
     @asyncio_errors
     @asyncio_limit
@@ -939,15 +961,17 @@ class EncryptedSpider(Spider):
                         datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
                         logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
                         schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
+        self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
-        self.set_secrets(encryptedKey, decryptedKey, cookies)
+        if not self.cookies:
+            self.set_secrets(encryptedKey, decryptedKey)
 
-    def set_secrets(self, encryptedKey=str(), decryptedKey=str(), cookies=str()):
-        self.cookies = cookies
+    def set_secrets(self, encryptedKey=str(), decryptedKey=str()):
         self.encryptedKey = encryptedKey
-        self.decryptedKey = json.loads(exists_one(decrypt(encryptedKey,1), decryptedKey, self.get("decryptedKey")))
-        if not self.encryptedKey and self.decryptedKey:
+        try: self.decryptedKey = json.loads(exists_one(decryptedKey, self.get("decryptedKey"), decrypt(encryptedKey,1)))
+        except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        if not self.encryptedKey:
             self.encryptedKey = encrypt(json.dumps(self.decryptedKey, ensure_ascii=False, default=1),1)
         self.logger.info(log_encrypt(**self.decryptedKey, show=3))
 
@@ -970,7 +994,8 @@ class EncryptedSpider(Spider):
         if not cookies:
             self.login(update=True)
             cookies = self.cookies
-        if not cookies: raise KeyboardInterrupt(LOGIN_REQUIRED_MSG(self.where))
+        if not cookies:
+            raise KeyboardInterrupt(LOGIN_REQUIRED_MSG(self.where))
         self.update(cookies=cookies)
         return dict(cookies=cookies)
 
@@ -1013,9 +1038,11 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                         logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
                         schemaInfo=schemaInfo, delay=delay, numTasks=numTasks, progress=progress, message=message,
                         apiRedirect=apiRedirect, redirectUnit=redirectUnit)
+        self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
-        self.set_secrets(encryptedKey, decryptedKey, cookies)
+        if not self.cookies:
+            self.set_secrets(encryptedKey, decryptedKey)
 
     def login_required(func):
         @functools.wraps(func)
@@ -1042,7 +1069,7 @@ class Parser(BaseSession):
                 debug=False, responseType: _PASS=None, root: _KT=list(), renameMap: RenameMap=dict(),
                 schemaInfo: SchemaInfo=dict(), **context):
         super().__init__(fields=fields, logName=logName, logLevel=logLevel, logFile=logFile,
-                        debug=debug, renameMap=renameMap, schemaInfo=schemaInfo)
+                        debug=debug, renameMap=renameMap, schemaInfo=schemaInfo, **context)
         self.root = root if root else self.root
 
     @BaseSession.validate_response
@@ -1099,7 +1126,7 @@ class Pipeline(Spider):
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
                     how: Literal["left","right","outer","inner","cross"]="left", on=str(), **context) -> Data:
-        query = crawler.iterateArgs+crawler.iterateQuery
+        query = crawler.get_iterator(keys_only=True)
         if query and any(map(is_empty, kloc(context, query, if_null="pass", values_only=True))): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
@@ -1138,7 +1165,7 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     async def async_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                             appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
                             how: Literal["left","right","outer","inner","cross"]="left", on=str(), **context) -> Data:
-        query = crawler.iterateArgs+crawler.iterateQuery
+        query = crawler.get_iterator(keys_only=True)
         if query and any(map(is_empty, kloc(context, query, if_null="pass", values_only=True))): return pd.DataFrame()
         crawler = crawler(**context)
         data = pd.DataFrame(await crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))

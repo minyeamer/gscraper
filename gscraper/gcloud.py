@@ -32,7 +32,7 @@ GCLOUD_DATA = ENV_PATH+"data.json"
 INVALID_GS_ACTION_MSG = lambda action: f"'{action}' is not valid action for gspread task."
 INVALID_SCHEMA_MSG = "Please verify that the structure and data types in the DataFrame match the schema of the destination table."
 INVALID_UPSERT_KEY_MSG = "Please verify that a primary key exists and is in both DataFrame objects."
-BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery."
+BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery"
 
 
 ###################################################################

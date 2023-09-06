@@ -166,7 +166,7 @@ def _unique(*elements, strict=True, unroll=False) -> List:
     return unique(*elements, strict=strict, unroll=unroll)
 
 
-def to_array(__object, default=None, dropna=False, strict=True, unique=False) -> List:
+def to_array(__object, default=None, dropna=False, strict=False, unique=False) -> List:
     __s = cast_list(__object)
     if unique: return _unique(*__s, strict=strict)
     elif dropna: return [__e for __e in __s if exists(__e, strict=strict)]
@@ -224,7 +224,7 @@ def concat_array(left: Sequence, right: Sequence, left_index: Sequence[int]) -> 
     return [left.pop(0) if is_left else right.pop(0) for is_left in left_index]
 
 
-def get_exists_index(__s: Sequence, strict=True) -> List[int]:
+def get_exists_index(__s: Sequence, strict=False) -> List[int]:
     return [__i for __i, __e in enumerate(__s) if exists(__e, strict=strict)]
 
 
@@ -238,7 +238,7 @@ def get_unique_index(__s: Sequence) -> List[int]:
 
 
 def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
-                dropna=False, strict=True, unique=False) -> List[int]:
+                dropna=False, strict=False, unique=False) -> List[int]:
     count = len(args[0]) if how == "first" else (max(map(len, args)) if how == "max" else min(map(len, args)))
     indices = set(range(0, count))
     if dropna: indices = __and(indices, *map(set, map(lambda __s: get_exists_index(__s, strict=strict), args)))
@@ -247,7 +247,8 @@ def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
 
 
 def align_array(*args: Sequence, how: Literal["min","max","first"]="min", default=None,
-                dropna=False, strict=True, unique=False) -> Tuple[List]:
+                dropna=False, strict=False, unique=False) -> Tuple[List]:
+    args = [cast_list(__s) for __s in args]
     indices = align_index(*args, how=how, dropna=dropna, strict=strict, unique=unique)
     if dropna or unique:
         return tuple([__s[__i] for __i in indices if __i < len(__s)] for __s in args)
