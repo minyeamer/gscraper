@@ -88,9 +88,10 @@ def get_cookies(session, url=None) -> str:
         return "; ".join([str(key)+"="+str(value) for key,value in dict(session.cookies).items()])
 
 
-def get_content_type(content_type=str(), utf8=False, form=False) -> str:
-    if form: return "application/x-www-form-urlencoded"
-    if content_type == "json": __type = "application/json"
+def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
+    if urlencoded or content_type == "urlencoded":
+        __type = "application/x-www-form-urlencoded"
+    elif content_type == "json": __type = "application/json"
     elif content_type == "text": __type = "text/plain"
     else: return str()
     return __type+(("; charset=UTF-8") if utf8 else str())
@@ -98,7 +99,7 @@ def get_content_type(content_type=str(), utf8=False, form=False) -> str:
 
 def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
                 origin: Union[bool,str]=False, secure=False,
-                content_type=str(), utf8=False, form=False, **kwargs) -> Dict:
+                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict:
     headers = HEADERS.copy()
     if authority: headers["Authority"] = urlparse(authority).hostname
     if referer: headers["referer"] = referer
@@ -106,7 +107,9 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
     if origin: headers["Origin"] = parse_origin(origin if isinstance(origin, str) else (authority if authority else host))
     if cookies: headers["Cookie"] = cookies
     if secure: headers["Upgrade-Insecure-Requests"] = "1"
-    if content_type or form: headers["Content-Type"] = get_content_type(content_type, utf8, form)
+    if content_type or urlencoded:
+        headers["Content-Type"] = get_content_type(content_type, urlencoded, utf8)
+    if xml: headers["X-Requested-With"] = "XMLHttpRequest"
     return dict(headers, **kwargs)
 
 
