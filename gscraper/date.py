@@ -1,8 +1,8 @@
 from .types import TypeHint, DateFormat, Timedelta, Timezone, CastError
-from .types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
+from .types import is_type, is_str_type, is_timestamp_type, is_numeric_array, INTEGER_TYPES
 
-from .cast import cast_int, cast_datetime, cast_date, get_timezone
-from .map import re_get, drop_dict
+from .cast import cast_datetime, cast_date, get_timezone
+from .map import drop_dict
 
 from typing import List, Literal, Optional, Union
 from pandas.tseries.offsets import BDay
@@ -114,10 +114,14 @@ def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Literal[
     context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     __datetime = cast_datetime(__object, **context)
     if not isinstance(__datetime, dt.datetime):
-        __datetime = now(days=__object, **context) if if_null == "now" else None
-    if isinstance(__datetime, dt.datetime):
-        __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
+        __datetime = now(days=__object, **context)
+
+    timedelta_args = (days, seconds, microseconds, milliseconds, minutes, hours, weeks)
+    if not is_numeric_array(timedelta_args, how="all"): return __datetime
+    elif isinstance(__datetime, dt.datetime):
+        __datetime = __datetime - dt.timedelta(*timedelta_args)
         return trunc_datetime(__datetime, unit=unit) if unit else __datetime
+    elif if_null == "now": return now(str(), *timedelta_args)
 
 
 def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
@@ -141,9 +145,12 @@ def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Literal["tod
             days=0, weeks=0, tzinfo=None) -> dt.date:
     __date = cast_date(__object)
     if not isinstance(__date, dt.date):
-        __date = today(days=__object, tzinfo=tzinfo) if if_null == "today" else None
+        __date = today(days=__object, tzinfo=tzinfo)
+
+    if not is_numeric_array((days, weeks), how="all"): return __date
     if isinstance(__date, dt.date):
         return __date - dt.timedelta(days=days, weeks=weeks)
+    elif if_null == "today": return today(days=days, weeks=weeks)
 
 
 def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Literal["today"]]="today",

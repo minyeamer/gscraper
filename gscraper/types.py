@@ -363,6 +363,9 @@ def is_float_array(__object, how: Literal["any","all"]="any", empty=False) -> bo
 def is_int_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, int, how=how, empty=empty)
 
+def is_numeric_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
+    return is_nested_in(__object, (float,int), how=how, empty=empty)
+
 def is_datetime_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, datetime, how=how, empty=empty)
 
