@@ -535,6 +535,20 @@ class Spider(BaseSession):
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
 
+    def request_table(self, method: str, url: str, session: Optional[requests.Session]=None,
+                    params=None, data=None, json=None, headers=None, allow_redirects=True,
+                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    valid: Optional[Status]=200, invalid: Optional[Status]=None,
+                    bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+        session = session if session else requests
+        messages = dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**messages, logJson=self.logJson))
+        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            try: return pd.read_excel(response.content, engine=engine) if bytes else pd.read_html(response.text, header=0)[0]
+            except: return pd.read_html(response.text, header=0)[0] if bytes else pd.read_excel(response.content, engine=engine)
+
     def validate_status(self, response: requests.Response, how: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None):
         status = response.status_code
@@ -828,6 +842,20 @@ class AsyncSpider(Spider):
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
+
+    async def request_table(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
+                            params=None, data=None, json=None, headers=None, allow_redirects=True,
+                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            valid: Optional[Status]=200, invalid: Optional[Status]=None,
+                            bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+        session = session if session else requests
+        messages = dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**messages, logJson=self.logJson))
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            try: return pd.read_excel(await response.read(), engine=engine) if bytes else pd.read_html(await response.text(), header=0)[0]
+            except: return pd.read_html(await response.text(), header=0)[0] if bytes else pd.read_excel(await response.read(), engine=engine)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None):
