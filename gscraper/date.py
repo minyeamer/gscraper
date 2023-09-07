@@ -107,42 +107,47 @@ def today(__format=str(), days=0, weeks=0, tzinfo=None) -> Union[dt.date,str]:
     else: return now(days=days, weeks=weeks, tzinfo=tzinfo, droptime=True, unit="day")
 
 
-def get_datetime(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
-                minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, droptz=False,
+def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+                days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0,
+                tzinfo=None, astimezone=None, droptz=False,
                 unit: Literal["second","minute","hour","day","month","year"]="second") -> dt.datetime:
     context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     __datetime = cast_datetime(__object, **context)
-    __datetime = __datetime if isinstance(__datetime, dt.datetime) else now(days=__object, **context)
-
+    if not isinstance(__datetime, dt.datetime):
+        __datetime = now(days=__object, **context) if if_null == "now" else None
     if isinstance(__datetime, dt.datetime):
         __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
         return trunc_datetime(__datetime, unit=unit) if unit else __datetime
 
 
-def get_time(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
-            minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, unit="second") -> dt.time:
+def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+            seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, tzinfo=None, astimezone=None,
+            unit: Literal["second","minute","hour","day","month","year"]="second") -> dt.time:
     __datetime = get_datetime(**locals())
     if isinstance(__datetime, dt.datetime):
         return __datetime.time()
 
 
-def get_timestamp(__object: Optional[DateFormat]=None, days=0, seconds=0, microseconds=0, milliseconds=0,
-                minutes=0, hours=0, weeks=0, tzinfo=None, astimezone=None, droptz=False, tsUnit: Literal["ms","s"]="ms",
+def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+                days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0,
+                tzinfo=None, astimezone=None, droptz=False, tsUnit: Literal["ms","s"]="ms",
                 unit: Literal["second","minute","hour","day","month","year"]="second") -> int:
     __datetime = get_datetime(**drop_dict(locals(), "tsUnit", inplace=False))
     if isinstance(__datetime, dt.datetime):
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
 
 
-def get_date(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None) -> dt.date:
-    __date = cast_date(__object, tzinfo=tzinfo)
-    __date = __date if isinstance(__date, dt.date) else today(days=__object, tzinfo=tzinfo)
-
+def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Literal["today"]]="today",
+            days=0, weeks=0, tzinfo=None) -> dt.date:
+    __date = cast_date(__object)
+    if not isinstance(__date, dt.date):
+        __date = today(days=__object, tzinfo=tzinfo) if if_null == "today" else None
     if isinstance(__date, dt.date):
         return __date - dt.timedelta(days=days, weeks=weeks)
 
 
-def get_busdate(__object: Optional[DateFormat]=None, days=0, weeks=0, tzinfo=None) -> dt.date:
+def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Literal["today"]]="today",
+                days=0, weeks=0, tzinfo=None) -> dt.date:
     __date = get_date(**locals())
     if isinstance(__date, dt.date):
         return __date if np.is_busday(__date) else (__date-BDay(1)).date()

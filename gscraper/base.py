@@ -187,7 +187,7 @@ class BaseSession(CustomDict):
         self.fields = fields if fields else self.fields
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
-        self.set_date(startDate=startDate, endDate=endDate, interval=interval, **context)
+        self.set_date(startDate=startDate, endDate=endDate, **context)
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
@@ -197,10 +197,9 @@ class BaseSession(CustomDict):
         self.set_schema(schemaInfo, **context)
         self.set_context(contextFields=contextFields, **context)
 
-    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                interval: Timedelta=str(), **context):
-        if interval or (startDate != None) or (endDate != None):
-            startDate, endDate = get_date(startDate), get_date(endDate)
+    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
+        if self.interval or (startDate != None) or (endDate != None):
+            startDate, endDate = get_date(startDate, if_null=None), get_date(endDate, if_null=None)
             self.startDate = min(startDate, endDate) if startDate and endDate else startDate
             self.endDate = max(startDate, endDate) if startDate and endDate else endDate
 
