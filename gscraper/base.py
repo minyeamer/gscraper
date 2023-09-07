@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .context import UNIQUE_CONTEXT, REQUEST_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
 from .types import RenameMap, IndexLabel, EncryptedKey, Status, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
@@ -400,7 +400,7 @@ class Spider(BaseSession):
     def requests_task(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**dict(self.__dict__, **kwargs))
+            if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
             data = func(self, *args, **kwargs)
             self.upload_data(data, uploadInfo, **kwargs)
             return data
@@ -409,7 +409,7 @@ class Spider(BaseSession):
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**REQUEST_CONTEXT(**dict(self.__dict__, **kwargs)))
+            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             with requests.Session() as session:
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
@@ -445,9 +445,12 @@ class Spider(BaseSession):
         elif len(args) > 1: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
         else: return args
 
-    def map_context(self, sequence: List[_KT]=list(), rename: List[_KT]=list(),
-                    default=None, dropna=True, strict=False, unique=True, to=None, **context) -> Context:
+    def map_context(self, local: Dict=dict(), ignore: List[_KT]=list(), sequence: List[_KT]=list(), rename: List[_KT]=list(),
+                    default=None, dropna=True, strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Context:
         __m, sequence = dict(), self.iterateQuery+sequence
+        if local:
+            params = drop_dict(local, self.iterateArgs+["self","context"]+ignore, inplace=False)
+            context = dict(dict(local.get("context",dict()), **params), **context)
         for __key, __value in context.items():
             if __key in sequence:
                 __value = to_array(__value, default=default, dropna=dropna, strict=strict, unique=unique)
@@ -735,7 +738,7 @@ class AsyncSpider(Spider):
     def asyncio_task(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**dict(self.__dict__, **kwargs))
+            if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
             data = await func(self, *args, semaphore=semaphore, **kwargs)
             self.upload_data(data, uploadInfo, **kwargs)
@@ -745,7 +748,7 @@ class AsyncSpider(Spider):
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = UNIQUE_CONTEXT(**REQUEST_CONTEXT(**dict(self.__dict__, **kwargs)))
+            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)

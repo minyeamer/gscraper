@@ -17,9 +17,14 @@ UNIQUE_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: context
 
 
+TASK_CONTEXT = lambda default=None, dropna=None, strict=None, unique=None, how=None, to=None, \
+                        local=None, ignore=None, sequence=None, rename=None, **context: UNIQUE_CONTEXT(**context)
+
+
 REQUEST_CONTEXT = lambda session=None, semaphore=None, page=None, method=None, url=None, \
                         params=None, encode=None, data=None, json=None, headers=None, allow_redirects=None, close=None, \
-                        validate=None, exception=None, valid=None, invalid=None, bytes=None, engine=None, **context: context
+                        validate=None, exception=None, valid=None, invalid=None, bytes=None, engine=None, \
+                        how=None, default=None, dropna=None, strict=None, unique=None, to=None, **context: TASK_CONTEXT(**context)
 
 
 PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, startDate=None, endDate=None, \
@@ -48,4 +53,4 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, startDate
         ), **context)
 
 
-REDIRECT_CONTEXT = lambda apiRedirect=None, logFile=None, **context: PROXY_CONTEXT(**UNIQUE_CONTEXT(**context))
+REDIRECT_CONTEXT = lambda apiRedirect=None, logFile=None, **context: PROXY_CONTEXT(**REQUEST_CONTEXT(**context))
