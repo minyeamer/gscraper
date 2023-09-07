@@ -228,10 +228,14 @@ class BaseSession(CustomDict):
         unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
-    def extra_save(self, data: Data, prefix=str(), extraSave=False, **kwargs):
+    def get_rename_map(self, to=None, **kwargs) -> RenameMap:
+        return self.renameMap
+
+    def extra_save(self, data: Data, prefix=str(), extraSave=False, to=None, **kwargs):
         if not extraSave: return
         file = prefix+'_' if prefix else str()+self.now("%Y%m%d%H%M%S")+".xlsx"
-        convert_data(data, return_type="dataframe").rename(columns=self.renameMap).to_excel(file, index=False)
+        renameMap = self.get_rename_map(to=to, **kwargs)
+        convert_data(data, return_type="dataframe").rename(columns=renameMap).to_excel(file, index=False)
 
     ###################################################################
     ########################### Log Managers ##########################
@@ -434,15 +438,16 @@ class Spider(BaseSession):
         else: return args
 
     def map_context(self, sequence: List[_KT]=list(), rename: List[_KT]=list(),
-                    default=None, dropna=True, strict=False, unique=True, **context) -> Context:
+                    default=None, dropna=True, strict=False, unique=True, to=None, **context) -> Context:
         __m, sequence = dict(), self.iterateQuery+sequence
         for __key, __value in context.items():
             if __key in sequence:
                 __value = to_array(__value, default=default, dropna=dropna, strict=strict, unique=unique)
-            if self.renameMap and (__key in rename):
-                if isinstance(__value, str): self.renameMap.get(__value,__value)
-                elif isinstance(__value, List): __value = [self.renameMap.get(__v,__v) for __v in __value]
-                elif isinstance(__value, Tuple): __value = tuple([self.renameMap.get(__v,__v) for __v in __value])
+            if __key in rename:
+                renameMap = self.get_rename_map(to=to, **context)
+                if isinstance(__value, str): renameMap.get(__value,__value)
+                elif isinstance(__value, List): __value = [renameMap.get(__v,__v) for __v in __value]
+                elif isinstance(__value, Tuple): __value = tuple([renameMap.get(__v,__v) for __v in __value])
             __m[__key] = __value
         return __m
 
@@ -570,9 +575,10 @@ class Spider(BaseSession):
     ###################################################################
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: Sequence[IndexLabel]=list(), account: Account=dict(), **context):
+                    arr_cols: Sequence[IndexLabel]=list(), to=None, account: Account=dict(), **context):
+        renameMap = self.get_rename_map(to=to, **context)
         data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
-                            numericise_ignore=str_cols, return_type="dataframe", rename=self.renameMap)
+                            numericise_ignore=str_cols, return_type="dataframe", rename=renameMap)
         self.logger.info(log_table(data, logJson=self.logJson))
         for field in cast_tuple(fields):
             values = list(data[field]) if field in data else None
@@ -593,8 +599,9 @@ class Spider(BaseSession):
         return data
 
     def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
-                    account: Account=dict(), **context) -> pd.DataFrame:
-        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=self.renameMap)
+                    to=None, account: Account=dict(), **context) -> pd.DataFrame:
+        renameMap = self.get_rename_map(to=to, **context)
+        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=renameMap)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         return data
 
@@ -1082,8 +1089,9 @@ class Parser(BaseSession):
         return json.loads(response)
 
     def parse_data(self, data: Data, schemaInfo: SchemaInfo=dict(), root: _KT=list(), discard=False,
-                    fields: IndexLabel=list(), updateTime=True, **context) -> Data:
-        data = parse_schema(data, schemaInfo, self.responseType, root, self.renameMap, discard, **context)
+                    fields: IndexLabel=list(), updateTime=True, to=None, **context) -> Data:
+        renameMap = self.get_rename_map(to=to, **context)
+        data = parse_schema(data, schemaInfo, self.responseType, root, renameMap, discard, **context)
         if updateTime:
             data = set_data(data, updateDate=self.today(), updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
@@ -1118,10 +1126,11 @@ class Pipeline(Spider):
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    def get_operation(self, crawler: Spider, **context) -> str:
+    def get_operation(self, crawler: Spider, to=None, **context) -> str:
         operation = crawler.__dict__.get("operation")
         if not operation: raise ValueError(DEPENDENCY_HAS_NO_NAME_MSG)
-        return self.renameMap.get(operation, default=operation)
+        renameMap = self.get_rename_map(to=to, **context)
+        return renameMap.get(operation, default=operation)
 
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
