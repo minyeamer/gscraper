@@ -11,7 +11,7 @@ def exists_context(**context):
 
 UNIQUE_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, which=None, initTime=None, \
                         contextFields=None, iterateArgs=None, iterateQuery=None, iterateUnit=None, fromNow=None, \
-                        responseType=None, logger=None, logJson=None, errors=None, rename=None, schemaInfo=None, \
+                        responseType=None, logger=None, logJson=None, errors=None, renameMap=None, schemaInfo=None, \
                         redirectArgs=None, redirectQuery=None, redirectUnit=None, \
                         maxLimit=None, redirectLimit=None, authClass=None, dependencies=None, \
                         data=None, results=None, crawler=None, prefix=None, self_var=True, **context: context
@@ -27,13 +27,14 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, page=None, method=None, u
                         how=None, default=None, dropna=None, strict=None, unique=None, to=None, **context: TASK_CONTEXT(**context)
 
 
-PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, startDate=None, endDate=None, \
-                        datetimeUnit="second", tzinfo=None, returnType=None, \
-                        logName=str(), logLevel="WARN", logFile=str(), debug=False, rename=dict(), \
-                        delay=1., numTasks=100, progress=True, message=str(), apiRedirect=False, \
+PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, fronNow=None, \
+                        startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
+                        logName=str(), logLevel="WARN", logFile=str(), debug=False, \
+                        delay=1., progress=True, message=str(), numTasks=100, apiRedirect=False, \
                         queryInfo=None, uploadInfo=None, encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
     dict(exists_context(
         fields = fields,
+        fronNow = fronNow,
         startDate = startDate,
         endDate = endDate,
         datetimeUnit = datetimeUnit,
@@ -42,7 +43,6 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=None, interval=None, startDate
         logLevel = logLevel,
         logFile = logFile,
         debug = debug,
-        rename = rename,
         delay = delay,
         numTasks = numTasks,
         progress = progress,

@@ -179,7 +179,7 @@ class BaseSession(CustomDict):
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None,
+                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -190,6 +190,7 @@ class BaseSession(CustomDict):
         self.fields = fields if fields else self.fields
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
+        self.fromNow = fromNow if isinstance(fromNow, int) else self.fromNow
         self.set_date(startDate=startDate, endDate=endDate, **context)
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
@@ -282,8 +283,10 @@ class BaseSession(CustomDict):
     ############################# Iterator ############################
     ###################################################################
 
-    def get_iterator(self, keys_only=False, values_only=False, **context) -> Union[Context,Sequence[_VT]]:
-        iterateDate = ("startDate", "endDate", "date") if self.interval else tuple()
+    def get_iterator(self, interval: Optional[Timedelta]=None, keys_only=False, values_only=False,
+                    **context) -> Union[Context,Sequence[_VT]]:
+        interval = interval if interval else self.interval
+        iterateDate = (("date",) if context.get("date") else ("startDate", "endDate")) if interval else tuple()
         query = unique(*self.iterateArgs, *self.iterateQuery, *iterateDate)
         if keys_only: return query
         else: return kloc(context, query, if_null="drop", values_only=values_only)
@@ -320,13 +323,12 @@ class BaseSession(CustomDict):
         return transpose_array(base, count=len(args))
 
     def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
-                    interval: Timedelta="D", **context) -> Tuple[List[DateQuery],Context]:
+                    interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
         startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
         endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
         date_range = get_date_range(startDate, endDate, interval=interval)
         if (interval in ("D","1D")) or (str(interval).startswith("1 day")):
-            period = [dict(date=date) for date in date_range]
-            context = drop_dict(context, "date", inplace=False)
+            period = [dict(startDate=date, endDate=date, date=date) for date in date_range]
         elif len(date_range) > 1:
             period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
                         for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
@@ -377,16 +379,17 @@ class Spider(BaseSession):
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None,
+                iterateUnit: Unit=1, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
-                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType, logName=logName, logLevel=logLevel,
-                        logFile=logFile, debug=debug, renameMap=renameMap, schemaInfo=schemaInfo)
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
+                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+                        renameMap=renameMap, schemaInfo=schemaInfo)
         self.delay = delay
         self.progress = progress
         self.message = message if message else self.message
@@ -712,18 +715,18 @@ class AsyncSpider(Spider):
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None,
+                iterateUnit: Unit=1, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                numTasks=100, progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
+                progress=True, message=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Optional[Unit]=None, **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
-                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
-                        logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
-                        schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
+                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
@@ -1016,7 +1019,7 @@ class EncryptedSpider(Spider):
     auth = LoginSpider
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None,
+                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -1024,10 +1027,10 @@ class EncryptedSpider(Spider):
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey=str(), cookies=str(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
-                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
-                        logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
-                        schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
+                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
         self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
@@ -1095,20 +1098,20 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     auth = LoginSpider
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None,
+                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                numTasks=100, progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
+                progress=True, message=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 encryptedKey: EncryptedKey=str(), decryptedKey=str(), cookies=str(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, startDate=startDate, endDate=endDate,
-                        datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
-                        logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
-                        schemaInfo=schemaInfo, delay=delay, numTasks=numTasks, progress=progress, message=message,
-                        apiRedirect=apiRedirect, redirectUnit=redirectUnit)
+        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
+                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message,
+                        numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit)
         self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
