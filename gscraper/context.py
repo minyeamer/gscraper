@@ -18,7 +18,7 @@ UNIQUE_CONTEXT = lambda asyncio=False, operation=None, host=None, where=None, wh
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, page=None, method=None, url=None, \
-                        params=None, data=None, json=None, headers=None, allow_redirects=None, close=None, \
+                        params=None, encode=None, data=None, json=None, headers=None, allow_redirects=None, close=None, \
                         validate=None, exception=None, valid=None, invalid=None, bytes=None, engine=None, **context: context
 
 

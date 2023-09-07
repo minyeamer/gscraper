@@ -15,7 +15,7 @@ from .map import exists, is_empty, unique, to_array, diff
 from .map import iloc, get_scala, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, cloc, apply_df, merge_drop
 from .map import exists_one, convert_data, filter_data, chain_exists, set_data, data_empty
-from .parse import parse_cookies, parse_origin, validate_schema, parse_schema
+from .parse import parse_cookies, parse_origin, encode_cookies, encode_params, validate_schema, parse_schema
 
 from abc import ABCMeta, abstractmethod
 from urllib.parse import urlparse
@@ -484,19 +484,24 @@ class Spider(BaseSession):
         ...
 
     def request(self, method: str, url: str, session: Optional[requests.Session]=None,
-                params=None, data=None, json=None, headers=None, allow_redirects=True,
-                close=False, **context) -> requests.Response:
+                params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                valid: Optional[Status]=200, invalid: Optional[Status]=None, close=False, **context) -> requests.Response:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         response = session.request(method, url, **messages, allow_redirects=allow_redirects)
+        self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+        if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
 
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, allow_redirects=True,
-                        validate=False, exception: Literal["error","interupt"]="interupt",
+                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -505,10 +510,11 @@ class Spider(BaseSession):
             return response.content
 
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, allow_redirects=True,
-                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -517,10 +523,11 @@ class Spider(BaseSession):
             return response.text
 
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, allow_redirects=True,
-                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -529,10 +536,11 @@ class Spider(BaseSession):
             return response.json()
 
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
-                        params=None, data=None, json=None, headers=None, allow_redirects=True,
-                        validate=False, exception: Literal["error","interupt"]="interupt",
+                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -541,11 +549,12 @@ class Spider(BaseSession):
             return response.headers
 
     def request_table(self, method: str, url: str, session: Optional[requests.Session]=None,
-                    params=None, data=None, json=None, headers=None, allow_redirects=True,
-                    validate=False, exception: Literal["error","interupt"]="interupt",
+                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=200, invalid: Optional[Status]=None,
                     bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -553,6 +562,11 @@ class Spider(BaseSession):
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             try: return pd.read_excel(response.content, engine=engine) if bytes else pd.read_html(response.text, header=0)[0]
             except: return pd.read_html(response.text, header=0)[0] if bytes else pd.read_excel(response.content, engine=engine)
+
+    def set_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
+        if not params: return url, None
+        elif not isinstance(encode, bool): return url, params
+        else: return encode_params(url, params, encode=encode), None
 
     def validate_status(self, response: requests.Response, how: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=200, invalid: Optional[Status]=None):
@@ -802,10 +816,11 @@ class AsyncSpider(Spider):
         ...
 
     async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, allow_redirects=True,
-                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else aiohttp
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -814,10 +829,11 @@ class AsyncSpider(Spider):
             return await response.read()
 
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, allow_redirects=True,
-                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else aiohttp
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -826,10 +842,11 @@ class AsyncSpider(Spider):
             return await response.text()
 
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, allow_redirects=True,
-                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else aiohttp
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -838,10 +855,11 @@ class AsyncSpider(Spider):
             return await response.json()
 
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, allow_redirects=True,
-                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else aiohttp
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -850,11 +868,12 @@ class AsyncSpider(Spider):
             return response.headers
 
     async def request_table(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                            params=None, data=None, json=None, headers=None, allow_redirects=True,
-                            validate=False, exception: Literal["error","interupt"]="interupt",
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
                             valid: Optional[Status]=200, invalid: Optional[Status]=None,
                             bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         session = session if session else requests
+        url, params = self.set_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -962,7 +981,7 @@ class LoginSpider(requests.Session, Spider):
             return func(self, *args, **kwargs, **context)
         return wrapper
 
-    def get_user_info(self, cookies=str(), **kwargs) -> Context:
+    def get_user_info(self, cookies=str(), **context) -> Context:
         cookies = cookies if cookies else self.get_cookies()
         if not cookies:
             self.login()
@@ -1034,7 +1053,7 @@ class EncryptedSpider(Spider):
             return func(self, *args, **kwargs, **context)
         return wrapper
 
-    def get_user_info(self, cookies=str(), **kwargs) -> Context:
+    def get_user_info(self, cookies=str(), **context) -> Context:
         cookies = cookies if cookies else self.cookies
         if not cookies:
             self.login(update=True)
@@ -1043,6 +1062,9 @@ class EncryptedSpider(Spider):
             raise KeyboardInterrupt(LOGIN_REQUIRED_MSG(self.where))
         self.update(cookies=cookies)
         return dict(cookies=cookies)
+
+    def get_cookies(self, **context) -> str:
+        return encode_cookies(self.cookies, **context) if context else self.cookies
 
 
 class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
