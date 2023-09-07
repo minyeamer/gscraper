@@ -54,6 +54,8 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
 }
 
+DEFAULT_DAYS = 1
+
 MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
@@ -167,6 +169,7 @@ class BaseSession(CustomDict):
     iterateQuery = list()
     iterateUnit = 1
     interval = str()
+    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     responseType = None
@@ -198,10 +201,12 @@ class BaseSession(CustomDict):
         self.set_context(contextFields=contextFields, **context)
 
     def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
-        if self.interval or (startDate != None) or (endDate != None):
-            startDate, endDate = get_date(startDate, if_null=None), get_date(endDate, if_null=None)
-            self.startDate = min(startDate, endDate) if startDate and endDate else startDate
-            self.endDate = max(startDate, endDate) if startDate and endDate else endDate
+        fromNow = self.fromNow if isinstance(self.fromNow, int) else (DEFAULT_DAYS if self.interval else None)
+        if_null = "today" if isinstance(fromNow, int) else None
+        startDate = get_date(startDate, if_null=if_null, days=fromNow)
+        endDate = get_date(endDate, if_null=if_null, days=fromNow)
+        if startDate: self.startDate = min(startDate, endDate) if endDate else startDate
+        if endDate: self.endDate = max(startDate, endDate) if endDate else endDate
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False, **context):
         logName = logName if logName else self.operation
@@ -364,6 +369,7 @@ class Spider(BaseSession):
     iterateQuery = list()
     iterateUnit = 1
     interval = str()
+    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
@@ -679,6 +685,7 @@ class AsyncSpider(Spider):
     iterateUnit = 1
     redirectUnit = None
     interval = str()
+    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
@@ -978,6 +985,7 @@ class EncryptedSpider(Spider):
     iterateQuery = list()
     iterateUnit = 1
     interval = str()
+    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
@@ -1051,6 +1059,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     iterateUnit = 1
     redirectUnit = None
     interval = str()
+    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     returnType = "records"
