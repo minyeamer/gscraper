@@ -598,7 +598,7 @@ class Spider(BaseSession, Iterator):
     @abstractmethod
     @requests_session
     def crawl(self, *args, **context) -> Data:
-        args, context = self.set_params(*args, **context)
+        args, context = self.set_params(locals=locals())
         return self.gather(*args, **context)
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
@@ -959,7 +959,8 @@ class AsyncSpider(Spider):
     @abstractmethod
     @asyncio_session
     async def crawl(self, *args, **context) -> Data:
-        return await self.gather(*self.map_args(*args), **self.map_context(**context))
+        args, context = self.set_params(locals=locals())
+        return await self.gather(*args, **context)
 
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
@@ -1364,7 +1365,8 @@ class Pipeline(Spider):
     @abstractmethod
     @Spider.requests_task
     def crawl(self, *args, **context) -> Data:
-        return self.gather(*self.map_args(*args), **self.map_context(**context))
+        args, context = self.set_params(locals=locals())
+        return self.gather(*args, **context)
 
     @abstractmethod
     def gather(self, **context) -> Data:
@@ -1409,7 +1411,8 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     @abstractmethod
     @AsyncSpider.asyncio_task
     async def crawl(self, *args, **context) -> Data:
-        return await self.gather(*self.map_args(*args), **self.map_context(**context))
+        args, context = self.set_params(locals=locals())
+        return await self.gather(*args, **context)
 
     @abstractmethod
     async def gather(self, **context) -> Data:
