@@ -1,22 +1,22 @@
 from __future__ import annotations
 from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
-from .types import _KT, _VT, _PASS, ClassInstance, Context, ContextMapper, TypeHint, LogLevel
-from .types import RenameMap, IndexLabel, EncryptedKey, Status, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from .types import _KT, _VT, _PASS, ClassInstance, Arugments, Context, ContextMapper, TypeHint, LogLevel
+from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
+from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
-from .types import is_array, allin_instance, is_int_array, is_records, init_origin
+from .types import is_array, allin_instance, is_records, init_origin, get_annotation, is_iterable_annotation
 
-from .cast import cast_list, cast_tuple, cast_int, cast_date, cast_datetime_format
-from .date import now, get_date, get_date_range
+from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_date, cast_datetime_format
+from .date import now, get_date, get_date_range, is_daily_frequency
 from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from .logs import CustomLogger, log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from .map import exists, is_empty, unique, to_array, diff
-from .map import iloc, get_scala, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
+from .map import exists, is_empty, unique, to_array, get_scala, diff
+from .map import iloc, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, cloc, apply_df, merge_drop
-from .map import exists_one, convert_data, filter_data, chain_exists, set_data, data_empty
+from .map import exists_one, convert_data, rename_data, filter_data, chain_exists, set_data, data_empty
 from .parse import parse_cookies, parse_origin, encode_cookies, encode_params, validate_schema, parse_schema
-
 from abc import ABCMeta, abstractmethod
 from urllib.parse import urlparse
 import asyncio
@@ -25,7 +25,7 @@ import functools
 import requests
 import time
 
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from json import JSONDecodeError
 import datetime as dt
 import json
@@ -35,6 +35,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 from itertools import product
 import base64
+import inspect
 import random
 
 
@@ -60,6 +61,9 @@ MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
+PAGE_ITERATOR = ["page", "start", "dataSize"]
+DATE_ITERATOR = ["startDate", "endDate", "date"]
+
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 
@@ -70,6 +74,8 @@ INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not va
 LOGIN_REQUIRED_MSG = lambda where=str(): f"{where} login information is required.".strip()
 
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
+
+INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 
 WHERE, WHICH = "urls", "data"
 
@@ -115,16 +121,6 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
     return dict(headers, **kwargs)
 
 
-def get_page_range(size: Union[int,Sequence[int]], pageSize: int, start=1, pageUnit=0, pageLimit=0) -> Pages:
-    if (pageUnit > 0) and (pageSize & pageUnit != 0):
-        pageSize = round(pageSize / pageUnit) * pageUnit
-    if pageLimit > 0:
-        pageSize = min(pageSize, pageLimit)
-    if isinstance(size, int): return tuple(range(start, (((size-1)//pageSize)+1)+1))
-    elif is_int_array(size, how="all"):
-        return [tuple(range(start, (((__size-1)//pageSize)+1)+1)) for __size in size]
-
-
 ###################################################################
 ############################### Base ##############################
 ###################################################################
@@ -138,7 +134,7 @@ class CustomDict(dict):
         else: return self.__class__(**self.__dict__)
 
     def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="drop",
-            reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
+            reorder=True, values_only=False) -> Union[Any,Dict,List,str]:
         return kloc(self.__dict__, __key, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
 
     def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,Dict]:
@@ -159,17 +155,16 @@ class CustomDict(dict):
         super().__setitem__(__key, __value)
 
 
+###################################################################
+############################# Session #############################
+###################################################################
+
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
     where = WHERE
     which = WHICH
     fields = list()
-    iterateArgs = list()
-    iterateQuery = list()
-    iterateUnit = 1
-    interval = str()
-    fromNow = None
     datetimeUnit = "second"
     tzinfo = None
     responseType = None
@@ -179,8 +174,6 @@ class BaseSession(CustomDict):
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False,
@@ -188,10 +181,6 @@ class BaseSession(CustomDict):
         super().__init__()
         self.operation = self.operation
         self.fields = fields if fields else self.fields
-        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
-        self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if isinstance(fromNow, int) else self.fromNow
-        self.set_date(startDate=startDate, endDate=endDate, **context)
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
@@ -200,14 +189,6 @@ class BaseSession(CustomDict):
         self.set_logger(logName, logLevel, logFile, debug, **context)
         self.set_schema(schemaInfo, **context)
         self.set_context(contextFields=contextFields, **context)
-
-    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
-        fromNow = self.fromNow if isinstance(self.fromNow, int) else (DEFAULT_DAYS if self.interval else None)
-        if_null = "today" if isinstance(fromNow, int) else None
-        startDate = get_date(startDate, if_null=if_null, days=fromNow)
-        endDate = get_date(endDate, if_null=if_null, days=fromNow)
-        if startDate: self.startDate = min(startDate, endDate) if endDate else startDate
-        if endDate: self.endDate = max(startDate, endDate) if endDate else endDate
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False, **context):
         logName = logName if logName else self.operation
@@ -225,6 +206,7 @@ class BaseSession(CustomDict):
             self.schemaInfo = schemaInfo
 
     def set_context(self, contextFields: Optional[IndexLabel]=None, **context):
+        context = UNIQUE_CONTEXT(**context)
         self.update(kloc(context, contextFields, if_null="pass") if contextFields else context)
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
@@ -236,13 +218,13 @@ class BaseSession(CustomDict):
         unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
-    def get_rename_map(self, to=None, **kwargs) -> RenameMap:
+    def get_rename_map(self, **kwargs) -> RenameMap:
         return self.renameMap
 
-    def extra_save(self, data: Data, prefix=str(), extraSave=False, to=None, **kwargs):
+    def extra_save(self, data: Data, prefix=str(), extraSave=False, **kwargs):
         if not extraSave: return
         file = prefix+'_' if prefix else str()+self.now("%Y%m%d%H%M%S")+".xlsx"
-        renameMap = self.get_rename_map(to=to, **kwargs)
+        renameMap = self.get_rename_map(**kwargs)
         convert_data(data, return_type="dataframe").rename(columns=renameMap).to_excel(file, index=False)
 
     ###################################################################
@@ -263,71 +245,161 @@ class BaseSession(CustomDict):
                 return init_origin(func)
         return wrapper
 
-    def log_context(self, **context: Context):
-        query = kloc(context, self.iterateArgs+self.iterateQuery, if_null="drop")
-        self.errors.append(query)
+    def log_context(self, **context):
+        self.errors.append(context)
 
     def validate_response(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, response: Any, *args, **kwargs):
             is_valid = self.is_valid_response(response)
-            results = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
-            self.logger.info(log_data(results, **self.get_iterator(**kwargs)))
-            return results
+            data = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
+            self.log_response(data, **kwargs)
+            return data
         return wrapper
+
+    def log_response(self, data: Data, **context):
+        self.logger.info(log_data(data, **context))
 
     def is_valid_response(self, response: Any) -> bool:
         return exists(response, strict=False)
 
+
+###################################################################
+############################# Iterator ############################
+###################################################################
+
+class Iterator(CustomDict):
+    iterateArgs = list()
+    iterateQuery = list()
+    iterateUnit = 0
+    pagination = False
+    pageUnit = 0
+    pageLimit = 0
+    interval = str()
+    fromNow = None
+
+    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
+                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
+        super().__init__()
+        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
+        self.interval = interval if interval else self.interval
+        self.fromNow = fromNow if isinstance(fromNow, int) else self.fromNow
+        self.set_date(startDate=startDate, endDate=endDate, **context)
+
+    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
+        fromNow = self.fromNow if isinstance(self.fromNow, int) else (DEFAULT_DAYS if self.interval else None)
+        if_null = "today" if isinstance(fromNow, int) else None
+        startDate = get_date(startDate, if_null=if_null, days=fromNow)
+        endDate = get_date(endDate, if_null=if_null, days=fromNow)
+        if startDate: self.startDate = min(startDate, endDate) if endDate else startDate
+        if endDate: self.endDate = max(startDate, endDate) if endDate else endDate
+
     ###################################################################
-    ############################# Iterator ############################
+    ########################### Set Iterator ##########################
     ###################################################################
 
-    def get_iterator(self, interval: Optional[Timedelta]=None, keys_only=False, values_only=False,
-                    **context) -> Union[Context,Sequence[_VT]]:
-        interval = interval if interval else self.interval
-        iterateDate = (("date",) if context.get("date") else ("startDate", "endDate")) if interval else tuple()
-        query = unique(*self.iterateArgs, *self.iterateQuery, *iterateDate)
+    def get_iterator(self, _args=True, _page=True, _date=True, _query=True,
+                    keys_only=False, values_only=False, **context) -> Union[Context,_KT,_VT]:
+        iterateArgs = self.iterateArgs * int(_args)
+        iteratePage = PAGE_ITERATOR * int(bool(self.pagination)) * int(_page)
+        iterateDate = DATE_ITERATOR * int(bool(self.interval)) * int(_date)
+        iterateQuery = self.iterateQuery * int(_query)
+        query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateQuery)
         if keys_only: return query
         else: return kloc(context, query, if_null="drop", values_only=values_only)
 
-    def set_iterator(self, *args, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
-                    iterateUnit: Unit=1, interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
+    def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
+                    iterateUnit: Unit=1, pagination: Pagination=False, size: Unit=0,
+                    interval: Timedelta=str(), **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator = list(), list(), list()
-        if is_same_length(args, iterateArgs, empty=False) and is_same_length(*args):
-            arguments = self.from_args(*args, iterateArgs=iterateArgs, iterateUnit=get_scala(iterateUnit))
-            iterateQuery = diff(iterateQuery, iterateArgs)
-            if is_array(iterateQuery) and len(iterateQuery) > 1: iterateUnit = iterateUnit[1:]
+        iterateUnit = cast_list(iterateUnit)
+        if (is_same_length(args, iterateArgs, empty=False) and is_same_length(*args)) or ((not args) and pagination):
+            if pagination:
+                if isinstance(pagination, str): size = args[iterateArgs.index(pagination)]
+                iterateArgs.append("pages")
+            args_context = dict(iterateArgs=iterateArgs, iterateUnit=iterateUnit, pagination=pagination, size=size)
+            arguments, context = self.from_args(*args, **args_context, **context)
+            iterateQuery = diff(iterateQuery, iterateArgs, PAGE_ITERATOR)
+            if len(iterateQuery) > 1: iterateUnit = iterateUnit[1:]
         if interval:
             periods, context = self.from_date(interval=interval, **context)
-            iterateQuery = diff(iterateQuery, ("startDate", "endDate", "date", "interval"))
+            iterateQuery = diff(iterateQuery, DATE_ITERATOR)
             context = dict(context, interval=interval)
         iterator, context = self.from_context(iterateQuery=iterateQuery, iterateUnit=iterateUnit, **context)
         iterator = self.product_iterator(arguments, periods, iterator)
         return iterator, context
 
-    def from_args(self, *args, iterateArgs: List[_KT]=list(), iterateUnit: int=1) -> List[Context]:
-        tuple_args = list(map(lambda x: allin_instance(x, Tuple, empty=False), args))
-        if True in tuple_args:
-            args = self.product_args(*args, index=tuple_args)
-        if iterateUnit > 1:
-            args = list(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
-        return [dict(zip(iterateArgs,values)) for values in zip(*args)]
+    ###################################################################
+    ########################## Set Arguments ##########################
+    ###################################################################
 
-    def product_args(self, *args, index: Sequence[bool]) -> List[List]:
+    def from_args(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1,
+                pagination: Pagination=False, **context) -> Tuple[List[DateQuery],Context]:
+        if pagination:
+            pages, context = self.from_pages(*args, **context)
+            args = args + (pages,)
+        tuple_idx = list(map(lambda x: allin_instance(x, Tuple, empty=False), args))
+        if True in tuple_idx:
+            args = self.product_args(*args, tuple_idx=tuple_idx)
+        if iterateUnit[0] > 1:
+            args = list(map(lambda __s: unit_array(__s, unit=iterateUnit), args))
+        args = [dict(zip(iterateArgs,values)) for values in zip(*args)]
+        return (self.map_pages(*args) if pagination else args), context
+
+    def product_args(self, *args: Sequence, tuple_idx: Sequence[bool]) -> List[List]:
         base = list()
         for __arg in zip(*args):
-            tuples, others = iloc(__arg, index), iloc(__arg, list(map(lambda x: (not x), index)))
+            tuples, others = iloc(__arg, tuple_idx), iloc(__arg, list(map(lambda x: (not x), tuple_idx)))
             __product = list(product((others,), *tuples))
-            base += [concat_array(__s[1:], __s[0], index) for __s in __product]
+            base += [concat_array(__s[1:], __s[0], tuple_idx) for __s in __product]
         return transpose_array(base, count=len(args))
+
+    ###################################################################
+    ############################ Set Pages ############################
+    ###################################################################
+
+    def from_pages(self, *args, size: Unit, pageSize=0, pageStart=1, start=1, **context) -> Tuple[Pages,Context]:
+        pageSize = self.validate_page_size(pageSize, self.pageUnit, self.pageLimit)
+        pages = self.get_pages(size, pageSize, pageStart, start)
+        if isinstance(size, int): pages = [pages] * len(get_scala(args, default=[0]))
+        pages = list(map(lambda __s: tuple(map(tuple, __s)), map(transpose_array, pages)))
+        return pages, dict(context, pageSize=pageSize)
+
+    def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
+        if (pageUnit > 0) and (pageSize & pageUnit != 0):
+            pageSize = round(pageSize / pageUnit) * pageUnit
+        if pageLimit > 0:
+            pageSize = min(pageSize, pageLimit)
+        return pageSize
+
+    def get_pages(self, size: Unit, pageSize: int, pageStart=1, start=1,
+                    pageUnit=0, pageLimit=0) -> Union[Pages,List[Pages]]:
+        pageSize = self.validate_page_size(pageSize, pageUnit, pageLimit)
+        calc_pages = lambda __sz: tuple(range(pageStart, (((__sz-1)//pageSize)+1)+pageStart))
+        calc_starts = lambda __sz: tuple(range(start, __sz+start, pageSize))
+        calc_size = lambda __sz: [min(__sz-__st+1, pageSize) for __st in calc_starts(__sz)]
+        calc = lambda __sz: (calc_pages(__sz), calc_starts(__sz), calc_size(__sz))
+        if isinstance(size, int): return calc(cast_int1(size))
+        elif is_array(size): return [calc(cast_int1(__sz)) for __sz in size]
+        else: return tuple()
+
+    def map_pages(self, *args: Context) -> List[Context]:
+        base = list()
+        for __i in range(len(args)):
+            pages = args[__i].pop("pages")
+            base.append(dict(args[__i], **dict(zip(PAGE_ITERATOR, pages))))
+        return base
+
+    ###################################################################
+    ############################# Set Data ############################
+    ###################################################################
 
     def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
         startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
         endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
         date_range = get_date_range(startDate, endDate, interval=interval)
-        if (interval in ("D","1D")) or (str(interval).startswith("1 day")):
+        if is_daily_frequency(interval):
             period = [dict(startDate=date, endDate=date, date=date) for date in date_range]
         elif len(date_range) > 1:
             period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
@@ -335,10 +407,13 @@ class BaseSession(CustomDict):
         else: period = [dict(startDate=startDate, endDate=endDate)]
         return period, context
 
+    ###################################################################
+    ########################### Set Context ###########################
+    ###################################################################
+
     def from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
         if not iterateQuery: return list(), context
         query, context = kloc(context, iterateQuery, if_null="drop"), drop_dict(context, iterateQuery, inplace=False)
-        iterateUnit = cast_list(iterateUnit)
         if any(map(lambda x: x>1, iterateUnit)): query = self.group_context(iterateQuery, iterateUnit, **query)
         else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
         return query, context
@@ -357,10 +432,10 @@ class BaseSession(CustomDict):
 
 
 ###################################################################
-############################# Spiders #############################
+############################## Spider #############################
 ###################################################################
 
-class Spider(BaseSession):
+class Spider(BaseSession, Iterator):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "spider"
@@ -369,32 +444,69 @@ class Spider(BaseSession):
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
-    iterateUnit = 1
+    iterateUnit = 0
+    pagination = False
+    pageUnit = 0
+    pageLimit = 0
     interval = str()
     fromNow = None
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "records"
     renameMap = dict()
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Unit=1, interval: Timedelta=str(), fromNow: Optional[int]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
-                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-                        renameMap=renameMap, schemaInfo=schemaInfo)
+        BaseSession.__init__(
+            self, fields=fields, datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
+            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            renameMap=renameMap, schemaInfo=schemaInfo)
+        Iterator.__init__(
+            self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, **context)
         self.delay = delay
         self.progress = progress
         self.message = message if message else self.message
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
+
+    def inspect(self, __key: Optional[Literal["crawl","required","iterable","literal","return"]]=None) -> Dict[_KT,Union[Dict,str]]:
+        info = dict(parameter=list())
+        info["crawl"] = self.inspect_params(self.crawl)
+        info["required"] = {name: param for name, param in info["crawl"].items() if "default" not in param}
+        info["iterable"] = {name: param for name, param in info["crawl"].items() if "iterable" in param}
+        info["literal"] = {name: param for name, param in info["crawl"].items() if param.get("annotation") == "literal"}
+        info["return"] = get_annotation(inspect.signature(self.crawl).return_annotation)
+        return info[__key] if __key else info
+
+    def inspect_params(self, func: Callable) -> Dict[_KT,Dict]:
+        params = dict()
+        signature = inspect.signature(func)
+        for name, parameter in signature.parameters.items():
+            if name in ["self", "context", "kwargs"]: continue
+            annotation = parameter.annotation
+            params[name] = dict(annotation=get_annotation(annotation))
+            if parameter.default != inspect.Parameter.empty:
+                params[name]["default"] = parameter.default
+                if parameter.annotation == inspect.Parameter.empty:
+                    annotation = get_annotation(type(parameter.default))
+                    params[name]["annotation"] = annotation
+            if is_iterable_annotation(annotation):
+                params[name]["iterable"] = True
+        return params
+
+    def log_context(self, **context):
+        self.errors.append(self.get_iterator(**context))
+
+    def log_response(self, data: Data, **context):
+        self.logger.info(log_data(data, **self.get_iterator(**context)))
 
     ###################################################################
     ######################### Session Managers ########################
@@ -434,41 +546,68 @@ class Spider(BaseSession):
         else: return 0.
 
     ###################################################################
+    ######################## Parameter Managers #######################
+    ###################################################################
+
+    def get_params(self, locals: Dict=dict(), _all=False, _base=True, _args=True,
+                    _page=True, _date=True, _query=True, _crawl=True, **context) -> Context:
+        base, context = locals.pop("context", dict()), REQUEST_CONTEXT(**dict(locals, **context))
+        if _all or (_base and _args and _page and _date and _query and _crawl):
+            return dict(base, **context)
+        params = self.get_iterator(_args, _page, _date, _query, keys_only=True)
+        if _crawl:
+            params = params + diff(self.inspect("crawl").keys(), self.get_iterator(keys_only=True))
+        context = kloc(context, params, if_null="drop")
+        return dict(base, **context) if _base else context
+
+    def set_params(self, *args, locals: Dict=dict(), how: Literal["min","max","first"]="min",
+                    default=None, dropna=True, strict=False, unique=True, **context) -> Tuple[Arugments,Context]:
+        args, context = self.from_locals(*args, locals=locals)
+        args = self.map_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
+        context = self.map_context(default=default, dropna=dropna, strict=strict, unique=unique, **context)
+        return args, context
+
+    def from_locals(self, *args, locals: Dict=dict()) -> Tuple[Arugments,Context]:
+        if not args:
+            args = kloc(locals, self.iterateArgs, default=list(), if_null="pass", values_only=True)
+        context = self.get_params(locals, _args=False)
+        return args, context
+
+    def map_args(self, *args, how: Literal["min","max","first"]="min", default=None,
+                dropna=True, strict=False, unique=True, **context) -> Arugments:
+        if len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
+        elif len(args) > 1: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
+        else: return args
+
+    def map_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True, **context) -> Context:
+        if locals: context = self.get_params(locals, _args=False, **context)
+        signature = self.inspect()
+        sequence, rename = signature["iterable"].keys(), signature["literal"].keys()
+        renameMap = self.get_rename_map(**context)
+        for __key in list(context.keys()):
+            if __key in sequence:
+                context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
+            if __key in rename:
+                context[__key] = rename_data(context[__key], rename=renameMap)
+        return context
+
+    ###################################################################
     ######################### Gather Requests #########################
     ###################################################################
 
     @abstractmethod
     @requests_session
     def crawl(self, *args, **context) -> Data:
-        return self.gather(*self.map_args(*args), **self.map_context(**context))
-
-    def map_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                dropna=True, strict=False, unique=True) -> Tuple[List]:
-        if len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
-        elif len(args) > 1: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
-        else: return args
-
-    def map_context(self, local: Dict=dict(), ignore: List[_KT]=list(), sequence: List[_KT]=list(), rename: List[_KT]=list(),
-                    default=None, dropna=True, strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Context:
-        __m, sequence = dict(), self.iterateQuery+sequence
-        if local:
-            params = drop_dict(local, self.iterateArgs+["self","context"]+ignore, inplace=False)
-            context = dict(dict(local.get("context",dict()), **params), **context)
-        for __key, __value in context.items():
-            if __key in sequence:
-                __value = to_array(__value, default=default, dropna=dropna, strict=strict, unique=unique)
-            if __key in rename:
-                renameMap = self.get_rename_map(to=to, **context)
-                if isinstance(__value, str): renameMap.get(__value,__value)
-                elif isinstance(__value, List): __value = [renameMap.get(__v,__v) for __v in __value]
-                elif isinstance(__value, Tuple): __value = tuple([renameMap.get(__v,__v) for __v in __value])
-            __m[__key] = __value
-        return __m
+        args, context = self.set_params(*args, **context)
+        return self.gather(*args, **context)
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
-                fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+                pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_message(*args, message=message, **context)
-        iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
+        if self.debug: self.logger.warn({"args":args, "context":context})
+        iterate_params = dict(iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, pagination=self.pagination)
+        iterator, context = self.set_iterator(*args, **iterate_params, **context)
+        if self.debug: self.logger.warn({"iterator":iterator})
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
@@ -492,9 +631,9 @@ class Spider(BaseSession):
     def request(self, method: str, url: str, session: Optional[requests.Session]=None,
                 params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                 allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                valid: Optional[Status]=200, invalid: Optional[Status]=None, close=False, **context) -> requests.Response:
+                valid: Optional[Status]=None, invalid: Optional[Status]=None, close=False, **context) -> requests.Response:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         response = session.request(method, url, **messages, allow_redirects=allow_redirects)
@@ -502,12 +641,25 @@ class Spider(BaseSession):
         if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
 
+    def request_status(self, method: str, url: str, session: Optional[requests.Session]=None,
+                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
+        session = session if session else requests
+        url, params = self.encode_params(url, params, encode=encode)
+        messages = dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**messages, logJson=self.logJson))
+        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            return response.status_code
+
     def request_content(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                         allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                        valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -518,9 +670,9 @@ class Spider(BaseSession):
     def request_text(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                     allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                    valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
+                    valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -531,9 +683,9 @@ class Spider(BaseSession):
     def request_json(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                     allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                    valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
+                    valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -544,9 +696,9 @@ class Spider(BaseSession):
     def request_headers(self, method: str, url: str, session: Optional[requests.Session]=None,
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                         allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                        valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -557,25 +709,25 @@ class Spider(BaseSession):
     def request_table(self, method: str, url: str, session: Optional[requests.Session]=None,
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                     allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                    valid: Optional[Status]=200, invalid: Optional[Status]=None,
-                    bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+                    valid: Optional[Status]=None, invalid: Optional[Status]=None, html=True, table_header=0, table_idx=0,
+                    engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            try: return pd.read_excel(response.content, engine=engine) if bytes else pd.read_html(response.text, header=0)[0]
-            except: return pd.read_html(response.text, header=0)[0] if bytes else pd.read_excel(response.content, engine=engine)
+            if html: return pd.read_html(response.text, header=table_header)[table_idx]
+            else: return pd.read_excel(response.content, engine=engine)
 
-    def set_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
+    def encode_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
         if not params: return url, None
         elif not isinstance(encode, bool): return url, params
         else: return encode_params(url, params, encode=encode), None
 
     def validate_status(self, response: requests.Response, how: Literal["error","interupt"]="interupt",
-                        valid: Optional[Status]=200, invalid: Optional[Status]=None):
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status_code
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
             if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
@@ -617,8 +769,8 @@ class Spider(BaseSession):
     ###################################################################
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: Sequence[IndexLabel]=list(), to=None, account: Account=dict(), **context):
-        renameMap = self.get_rename_map(to=to, **context)
+                    arr_cols: Sequence[IndexLabel]=list(), account: Account=dict(), **context):
+        renameMap = self.get_rename_map(**context)
         data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
                             numericise_ignore=str_cols, return_type="dataframe", rename=renameMap)
         self.logger.info(log_table(data, logJson=self.logJson))
@@ -641,8 +793,8 @@ class Spider(BaseSession):
         return data
 
     def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
-                    to=None, account: Account=dict(), **context) -> pd.DataFrame:
-        renameMap = self.get_rename_map(to=to, **context)
+                    account: Account=dict(), **context) -> pd.DataFrame:
+        renameMap = self.get_rename_map(**context)
         data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=renameMap)
         self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
         return data
@@ -660,7 +812,7 @@ class Spider(BaseSession):
                     schema: Optional[BigQuerySchema]=None, progress=True, partition=str(),
                     partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
                     reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
-        schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, **context)
+        schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
         data = self.map_gbq_data(data, schema=schema, **context)
         context = dict(project_id=project_id, reauth=reauth, account=account, credentials=credentials)
         if mode == "upsert":
@@ -702,12 +854,15 @@ class AsyncSpider(Spider):
     redirectArgs = None
     iterateQuery = list()
     redirectQuery = None
-    iterateUnit = 1
-    redirectUnit = None
+    iterateUnit = 0
+    redirectUnit = 0
+    pagination = False
+    pageUnit = 0
+    pageLimit = 0
     interval = str()
     fromNow = None
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "records"
     renameMap = dict()
     maxLimit = MAX_ASYNC_TASK_LIMIT
@@ -715,18 +870,19 @@ class AsyncSpider(Spider):
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Unit=1, interval: Timedelta=str(), fromNow: Optional[int]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
-                apiRedirect=False, redirectUnit: Optional[Unit]=None, **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
-                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
+                apiRedirect=False, redirectUnit: Unit=0, **context):
+        Spider.__init__(
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
@@ -802,15 +958,17 @@ class AsyncSpider(Spider):
 
     @abstractmethod
     @asyncio_session
-    async def crawl(self, **context) -> Data:
-        args, context = self.map_context(*args, **context)
-        return await self.gather(*args, **context)
+    async def crawl(self, *args, **context) -> Data:
+        return await self.gather(*self.map_args(*args), **self.map_context(**context))
 
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
-                    fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+                    pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_message(*args, message=message, **context)
-        iterator, context = self.set_iterator(*args, iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, **context)
+        if self.debug: self.logger.warn({"args":args, "context":context})
+        iterate_params = dict(iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, pagination=self.pagination)
+        iterator, context = self.set_iterator(*args, **iterate_params, **context)
+        if self.debug: self.logger.warn({"iterator":iterator})
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
@@ -821,12 +979,25 @@ class AsyncSpider(Spider):
     async def fetch(self, *args, **context) -> Data:
         ...
 
-    async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
+    async def request_status(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                             allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> bytes:
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
         session = session if session else aiohttp
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
+        messages = dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**messages, logJson=self.logJson))
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            return response.status
+
+    async def request_content(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
+                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt", 
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
+        session = session if session else aiohttp
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -837,9 +1008,9 @@ class AsyncSpider(Spider):
     async def request_text(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                             allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> str:
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
         session = session if session else aiohttp
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -850,9 +1021,9 @@ class AsyncSpider(Spider):
     async def request_json(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                             allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> JsonData:
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
         session = session if session else aiohttp
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -863,9 +1034,9 @@ class AsyncSpider(Spider):
     async def request_headers(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                             allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=200, invalid: Optional[Status]=None, **context) -> Dict:
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
         session = session if session else aiohttp
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
@@ -876,20 +1047,20 @@ class AsyncSpider(Spider):
     async def request_table(self, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None,
                             allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=200, invalid: Optional[Status]=None,
-                            bytes=True, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, html=False, table_header=0, table_idx=0,
+                            engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         session = session if session else requests
-        url, params = self.set_params(url, params, encode=encode)
+        url, params = self.encode_params(url, params, encode=encode)
         messages = dict(params=params, data=data, json=json, headers=headers)
         self.logger.debug(log_messages(**messages, logJson=self.logJson))
         async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            try: return pd.read_excel(await response.read(), engine=engine) if bytes else pd.read_html(await response.text(), header=0)[0]
-            except: return pd.read_html(await response.text(), header=0)[0] if bytes else pd.read_excel(await response.read(), engine=engine)
+            if html: return pd.read_html(await response.text(), header=table_header)[table_idx]
+            else: return pd.read_excel(await response.read(), engine=engine)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interupt"]="interupt",
-                        valid: Optional[Status]=200, invalid: Optional[Status]=None):
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
             if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
@@ -911,10 +1082,12 @@ class AsyncSpider(Spider):
     @gcloud_authorized
     async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, redirectArgs: _PASS=None,
                         iterateQuery: _PASS=None, redirectQuery: _PASS=None, iterateUnit: _PASS=None, redirectUnit: Unit=1,
-                        fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+                        pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(*args, message=message, **context)
+        if self.debug: self.logger.warn({"args":args, "context":context})
         redirect_context = dict(iterateArgs=self.redirectArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
+        if self.debug: self.logger.warn({"iterator":iterator})
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
@@ -1008,18 +1181,21 @@ class EncryptedSpider(Spider):
     fields = list()
     iterateArgs = list()
     iterateQuery = list()
-    iterateUnit = 1
+    iterateUnit = 0
+    pagination = False
+    pageUnit = 0
+    pageLimit = 0
     interval = str()
     fromNow = None
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "records"
     renameMap = dict()
     message = str()
     auth = LoginSpider
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
+                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -1027,10 +1203,11 @@ class EncryptedSpider(Spider):
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey=str(), cookies=str(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
-                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
+        Spider.__init__(
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
+            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message)
         self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
@@ -1084,34 +1261,38 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     redirectArgs = None
     iterateQuery = list()
     redirectQuery = None
-    iterateUnit = 1
-    redirectUnit = None
+    iterateUnit = 0
+    redirectUnit = 0
+    pagination = False
+    pageUnit = 0
+    pageLimit = 0
     interval = str()
     fromNow = None
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "records"
-    renameMap = dict()
+    rename = dict()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
     auth = LoginSpider
 
     def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
-                iterateUnit: Optional[Unit]=None, interval: Optional[Timedelta]=None, fromNow: Optional[int]=None,
+                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
-                apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                apiRedirect=False, redirectUnit: Unit=0,
                 encryptedKey: EncryptedKey=str(), decryptedKey=str(), cookies=str(), **context):
-        super().__init__(fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-                        startDate=startDate, endDate=endDate, datetimeUnit=datetimeUnit, tzinfo=tzinfo,
-                        returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-                        renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message,
-                        numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit)
+        AsyncSpider.__init__(
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
+            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message,
+            numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit)
         self.cookies = cookies
         self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, **context)
@@ -1140,10 +1321,10 @@ class Parser(BaseSession):
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug=False, responseType: _PASS=None, root: _KT=list(), renameMap: RenameMap=dict(),
-                schemaInfo: SchemaInfo=dict(), **context):
-        super().__init__(fields=fields, logName=logName, logLevel=logLevel, logFile=logFile,
-                        debug=debug, renameMap=renameMap, schemaInfo=schemaInfo, **context)
+                debug=False, root: _KT=list(), renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
+        BaseSession.__init__(
+            self, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            renameMap=renameMap, schemaInfo=schemaInfo, **context)
         self.root = root if root else self.root
 
     @BaseSession.validate_response
@@ -1174,6 +1355,7 @@ class Pipeline(Spider):
     operation = "pipeline"
     dependencies = (Spider, Spider)
     fields = list()
+    iterateUnit = 0
     datetimeUnit = "second"
     tzinfo = None
     returnType = "dataframe"
@@ -1181,8 +1363,8 @@ class Pipeline(Spider):
 
     @abstractmethod
     @Spider.requests_task
-    def crawl(self, **context) -> Data:
-        return self.gather(**context)
+    def crawl(self, *args, **context) -> Data:
+        return self.gather(*self.map_args(*args), **self.map_context(**context))
 
     @abstractmethod
     def gather(self, **context) -> Data:
@@ -1193,11 +1375,11 @@ class Pipeline(Spider):
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    def get_operation(self, crawler: Spider, to=None, **context) -> str:
+    def get_operation(self, crawler: Spider, **context) -> str:
         operation = crawler.__dict__.get("operation")
         if not operation: raise ValueError(DEPENDENCY_HAS_NO_NAME_MSG)
-        renameMap = self.get_rename_map(to=to, **context)
-        return renameMap.get(operation, default=operation)
+        renameMap = self.get_rename_map(**context)
+        return renameMap.get(operation, operation)
 
     def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
                     appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
@@ -1218,6 +1400,7 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     operation = "pipeline"
     dependencies = (AsyncSpider, AsyncSpider)
     fields = list()
+    iterateUnit = 0
     datetimeUnit = "second"
     tzinfo = None
     returnType = "dataframe"
@@ -1225,8 +1408,8 @@ class AsyncPipeline(AsyncSpider, Pipeline):
 
     @abstractmethod
     @AsyncSpider.asyncio_task
-    async def crawl(self, **context) -> Data:
-        return await self.gather(**context)
+    async def crawl(self, *args, **context) -> Data:
+        return await self.gather(*self.map_args(*args), **self.map_context(**context))
 
     @abstractmethod
     async def gather(self, **context) -> Data:

@@ -38,6 +38,10 @@ def cast_int(__object, default=0, strict=False) -> int:
     except CastError: return default
 
 
+def cast_int1(__object, default=1, strict=False) -> int:
+    return cast_int(__object, default, strict)
+
+
 def cast_numeric(__object, __type: TypeHint="auto", default=0, strict=False, trunc=None) -> Union[float,int]:
     if __type == "auto": pass
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)

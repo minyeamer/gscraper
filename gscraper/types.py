@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 from datetime import datetime, date, time, timedelta
 from pandas import DataFrame, Series, isna
 from pytz import BaseTzInfo
+from re import search
 
 
 INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
@@ -13,11 +14,11 @@ INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
 ########################## General Types ##########################
 ###################################################################
 
-_BOOL = TypeVar("_BOOL", bool, Sequence[bool])
-_TYPE = TypeVar("_TYPE", Type, Sequence[Type])
+_BOOL = TypeVar("_BOOL", Sequence[bool], bool)
+_TYPE = TypeVar("_TYPE", Sequence[Type], Type)
 
-_KT = TypeVar("_KT", Hashable, Sequence[Hashable])
-_VT = TypeVar("_VT", Any, Sequence[Any])
+_KT = TypeVar("_KT", Sequence[Hashable], Hashable)
+_VT = TypeVar("_VT", Sequence[Any], Any)
 _PASS = None
 
 Comparable = TypeVar("Comparable")
@@ -34,6 +35,12 @@ LogMessage = Dict[str,str]
 
 TypeHint = Union[Type, str]
 TypeList = Sequence[TypeHint]
+
+GENERAL_TYPES = {
+    "_BOOL":_BOOL, "_TYPE":_TYPE, "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "Comparable":Comparable,
+    "ClassInstance":ClassInstance, "Arugments":Arugments, "ArgsMapper":ArgsMapper,
+    "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "LogMessage":LogMessage,
+    "TypeHint":TypeHint, "TypeList":TypeList}
 
 
 ###################################################################
@@ -52,6 +59,10 @@ SEQUENCE_SET = (List, Set, Tuple)
 NestedSequence = Sequence[Sequence]
 Records = List[Dict]
 
+SEQUENCE_TYPES = {
+    "ObjectSequence":ObjectSequence, "IndexedSequence":IndexedSequence,
+    "SequenceSet":SequenceSet, "NestedSequence":NestedSequence, "Records":Records}
+
 
 ###################################################################
 ############################ Data Types ###########################
@@ -66,27 +77,36 @@ MappingData = Union[Records, DataFrame, Dict]
 Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
 
 JsonData = Union[Dict, List]
-RedirectData = Union[Dict[str,Records], JsonData]
+RedirectData = Dict[str,Records]
+
+DATA_TYPES = {
+    "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
+    "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
+    "JsonData":JsonData, "RedirectData":RedirectData}
 
 
 ###################################################################
 ############################ Key Types ############################
 ###################################################################
 
-Index = Union[int, Sequence[int]]
-IndexLabel = Union[Hashable, Sequence[Hashable]]
+Index = Union[Sequence[int], int]
+IndexLabel = Union[Sequence[Hashable], Hashable]
 
-Column = Union[str, Sequence[str]]
-Keyword = Union[str, Sequence[str]]
-Id = Union[str, Sequence[str]]
-Url = Union[str, Sequence[str]]
-Token = Union[str, Sequence[str]]
+Column = Union[Sequence[str], str]
+Keyword = Union[Sequence[str], str]
+Id = Union[Sequence[str], str]
+Url = Union[Sequence[str], str]
+Token = Union[Sequence[str], str]
 EncryptedKey = str
 
-Status = Union[int, Sequence[int]]
-Shape = Union[int, Sequence[int]]
-Pages = Union[Tuple[int], List[Tuple[int]]]
-Unit = Union[int, Sequence[int]]
+Status = Union[Sequence[int], int]
+Shape = Union[Sequence[int], int]
+Unit = Union[Sequence[int], int]
+
+KEY_TYPES = {
+    "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
+    "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey,
+    "Status":Status, "Shape":Shape, "Unit":Unit}
 
 
 ###################################################################
@@ -100,8 +120,13 @@ DateFormat = Union[datetime, date, time, float, int, str]
 DateUnit = Literal["second", "minute", "hour", "day", "month", "year"]
 
 DateQuery = Dict[str,datetime]
-Timedelta = Union[timedelta, str, int]
+Timedelta = Union[str, int, timedelta]
 Timezone = Union[BaseTzInfo, str]
+
+DATETIME_TYPES = {
+    "Datetime":Datetime, "Timestamp":Timestamp, "DateNumeric":DateNumeric,
+    "DateFormat":DateFormat, "DateUnit":DateUnit, "DateQuery":DateQuery,
+    "Timedelta":Timedelta, "Timezone":Timezone}
 
 
 ###################################################################
@@ -145,12 +170,17 @@ class SchemaContext(TypedDict):
     path: _KT
     strict: bool
     index: _KT
-    start: int
     match: MatchFunction
     rename: RenameMap
     discard: bool
 
 SchemaInfo = Dict[_KT, SchemaContext]
+
+SCHEMA_TYPES = {
+    "SchemaPath":SchemaPath, "PathType":PathType, "ApplyFunction":ApplyFunction,
+    "MatchFunction":MatchFunction, "SpecialApply":SpecialApply,
+    "SchemaApply":SchemaApply, "SchemaMatch":SchemaMatch, "SchemaField":SchemaField,
+    "Schema":Schema, "SchemaContext":SchemaContext, "SchemaInfo":SchemaInfo}
 
 
 ###################################################################
@@ -161,7 +191,7 @@ Account = Union[Dict[str,str], str]
 PostData = Union[Dict[str,Any],str]
 
 GspreadMode = Literal["replace", "append"]
-NumericiseIgnore = Union[bool, Sequence[int]]
+NumericiseIgnore = Union[Sequence[int], bool]
 
 BigQueryMode = Literal["fail", "replace", "append", "upsert"]
 BigQuerySchema = List[Dict[str,str]]
@@ -195,15 +225,32 @@ class BigQueryContext(TypedDict):
 BigQueryInfo = Dict[_KT, BigQueryContext]
 UploadInfo = Dict[_KT, Union[GspreadUpdateContext, BigQueryContext]]
 
+GOOGLE_CLOUD_TYPES = {
+    "Account":Account, "PostData":PostData, "GspreadMode":GspreadMode,
+    "NumericiseIgnore":NumericiseIgnore, "BigQueryMode":BigQueryMode, "BigQuerySchema":BigQuerySchema,
+    "GspreadReadContext":GspreadReadContext, "GspreadUpdateContext":GspreadUpdateContext,
+    "GspreadReadInfo":GspreadReadInfo, "GspreadUpdateInfo":GspreadUpdateInfo,
+    "BigQueryContext":BigQueryContext, "BigQueryInfo":BigQueryInfo, "UploadInfo":UploadInfo}
+
 
 ###################################################################
 ########################## Special Types ##########################
 ###################################################################
 
+Pagination = Union[bool, str]
+Pages = Tuple[Tuple[int,int,int]]
+
 RegexFormat = str
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
 
 CastError = (ValueError, TypeError)
+
+ViewType = Literal["naverSearch", "naverView", "naverBlog", "naverCafe", "naverNews", "naverQnA"]
+ApiViewType = Literal["naverShopping", "naverBlog", "naverCafe", "naverNews", "naverQnA"]
+
+SPECIAL_TYPES = {
+    "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat,
+    "BetweenRange":BetweenRange, "ViewType":ViewType, "ApiViewType":ApiViewType}
 
 
 def is_na(__object, strict=True) -> bool:
@@ -220,6 +267,11 @@ def not_na(__object, strict=True) -> bool:
 ############################ Type Check ###########################
 ###################################################################
 
+CUSTOM_TYPES = dict(
+    **GENERAL_TYPES, **SEQUENCE_TYPES, **DATA_TYPES, **KEY_TYPES, **DATETIME_TYPES,
+    **SCHEMA_TYPES, **GOOGLE_CLOUD_TYPES, **SPECIAL_TYPES)
+
+BOOLEAN_TYPES = [bool, "bool", "boolean"]
 FLOAT_TYPES = [float, "float"]
 INTEGER_TYPES = [int, "int", "integer"]
 
@@ -228,7 +280,7 @@ TIME_TYPES = [time, "time"]
 TIMESTAMP_TYPES = ["timestamp"]
 DATE_TYPES = [date, "date"]
 
-STRING_TYPES = [str, "str", "string"]
+STRING_TYPES = [str, "str", "string", "literal"]
 LIST_TYPES = [list, List, "list"]
 TUPLE_TYPES = [tuple, Tuple, "tuple"]
 SET_TYPES = [set, Set, "set"]
@@ -238,6 +290,7 @@ RECORDS_TYPES = [Records, "records"]
 DATAFRAME_TYPES = [DataFrame, "dataframe", "df", "pandas", "pd"]
 
 TYPE_LIST = {
+    bool: BOOLEAN_TYPES,
     float: FLOAT_TYPES,
     int: INTEGER_TYPES,
     datetime: DATETIME_TYPES,
@@ -401,3 +454,35 @@ def is_df_sequence(__object) -> bool:
 
 def is_df_object(__object) -> bool:
     return isinstance(__object, (DataFrame, Series))
+
+
+###################################################################
+############################ Annotation ###########################
+###################################################################
+
+AVAILABLE_ANNOTATIONS = [
+    "bool", "int", "float", "datetime", "date", "str", "literal",
+    "sequence", "list", "tuple", "set", "dict", "dataframe", "callable"]
+
+
+def get_type_name(__object) -> str:
+    if isinstance(__object, str):
+        if "Optional" in __object:
+            __object = search("Optional\[([^]]*)\]", __object).groups()[0]
+        if __object in CUSTOM_TYPES:
+            __object = CUSTOM_TYPES[__object]
+    return __object.__name__ if isinstance(__object, Type) else str(__object)
+
+
+def get_annotation(__object) -> str:
+    name = get_type_name(__object).lower()
+    for annotation in AVAILABLE_ANNOTATIONS:
+        if annotation in name:
+            return annotation
+    return str()
+
+
+def is_iterable_annotation(__object) -> bool:
+    name = get_type_name(__object).lower()
+    iterable = ["sequence", "list", "tuple", "set"]
+    return any(map(lambda x: x in name, iterable))

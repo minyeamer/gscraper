@@ -69,7 +69,8 @@ PANDAS_FREQUENCY = {
     "ms": "milliseconds",
     "U": "microseconds",
     "us": "microseconds",
-    "N": "nanoseconds"
+    "N": "nanoseconds",
+    "W-SUN":'', "W-MON":'', "W-TUE":'', "W-WED":'', "W-THU":'', "W-FRI":'', "W-SAT":'',
 }
 
 DATE_RANGE_MSG = "Of the four parameters: start, end, periods, and freq, exactly three must be specified."
@@ -162,7 +163,14 @@ def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Literal["
 
 def is_pandas_frequency(interval: Timedelta) -> bool:
     if isinstance(interval, dt.timedelta): return True
-    elif isinstance(interval, str): return any(map(lambda freq: interval.endswith(freq), PANDAS_FREQUENCY.keys()))
+    elif isinstance(interval, str):
+        return any(map(lambda freq: interval.upper().endswith(freq.upper()), PANDAS_FREQUENCY.keys()))
+    else: return False
+
+
+def is_daily_frequency(interval: Timedelta) -> bool:
+    if isinstance(interval, dt.timedelta): return (interval.days == 1) and (interval.seconds == 0)
+    elif isinstance(interval, str): return bool(re.match(r"^(?=.*[Dd])(?!.*[02-9]).*$", interval))
     else: return False
 
 

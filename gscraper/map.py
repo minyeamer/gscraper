@@ -255,8 +255,9 @@ def align_array(*args: Sequence, how: Literal["min","max","first"]="min", defaul
     else: return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
 
 
-def transpose_array(__s: Sequence[Sequence], count: Optional[int]=None) -> List[List]:
+def transpose_array(__s: Sequence[Sequence], count: Optional[int]=None, unroll=False) -> List[List]:
     if not __s: return list()
+    if unroll: __s = list(map(lambda arr: flatten(*arr), __s))
     count = count if isinstance(count, int) and count > 0 else len(__s[0])
     return [list(map(lambda x: x[__i], __s)) for __i in range(count)]
 
@@ -487,18 +488,8 @@ def isin_records(__r: Records, keys: _KT, how: Literal["any","all"]="any") -> _B
 
 
 def filter_records(__r: List[Dict], __keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
-                    all_keys=False, match: Optional[MatchFunction]=None, __default=None, **context) -> Sequence[bool]:
+                    all_keys=False, match: Optional[MatchFunction]=None, __default=None, **context) -> Records:
     return [__m for __m in __r if match_dict(__m, __keys, __matchFunc, all_keys=all_keys, match=match, **context)]
-
-
-def set_records(__r: Records, keys: _KT, values: _VT, empty=True, inplace=True) -> Records:
-    __r = [set_dict(__m, keys, values, empty=empty, inplace=inplace) for __m in __r]
-    if not inplace: return __r
-
-
-def drop_records(__r: Records, keys: _KT, inplace=False) -> Records:
-    __r = [set_dict(__m, keys, inplace=inplace) for __m in __r]
-    if not inplace: return __r
 
 
 def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
@@ -707,7 +698,8 @@ def rename_data(data: MappingData, rename: RenameMap,
     elif is_records(data): return rename_records(data, rename)
     elif isinstance(data, pd.DataFrame): return data.rename(columns=rename)
     elif isinstance(data, Dict): return rename_dict(data, rename)
-    else: return data
+    elif is_array(data): return [rename.get(__value,__value) for __value in data]
+    else: return rename.get(data,data)
 
 
 def multitype_rename(func):
@@ -730,7 +722,7 @@ def filter_data(data: Data, fields: Optional[Union[_KT,Index]]=list(), default=N
     if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
     elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder)
     elif isinstance(data, Dict): return kloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
-    elif isinstance(data, List): return iloc(data, indices=fields, default=default, if_null=if_null)
+    elif is_array(data): return iloc(data, indices=fields, default=default, if_null=if_null)
     else: return list()
 
 
@@ -788,7 +780,7 @@ def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFun
     if is_records(data): return apply_records(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
     elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, all_cols=all_keys, apply=apply, **context)
     elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
-    elif isinstance(data, Sequence): return apply_array(data, __keys, __applyFunc, all_indices=all_keys, apply=apply, **context)
+    elif is_array(data): return apply_array(data, __keys, __applyFunc, all_indices=all_keys, apply=apply, **context)
     else: return data
 
 
@@ -803,7 +795,7 @@ def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFun
     if is_records(data): return match_records(data, __keys, __matchFunc, all_keys=all_keys, match=match, how=how, **context)
     elif isinstance(data, pd.DataFrame): return match_df(data, __keys, __matchFunc, all_cols=all_keys, match=match, how=how, **context)
     elif isinstance(data, Dict): return match_dict(data, __keys, __matchFunc, all_keys=all_keys, match=match, how=how, **context)
-    elif isinstance(data, List): return match_array(data, __keys, __matchFunc, all_indices=all_keys, match=match, how=how, **context)
+    elif is_array(data): return match_array(data, __keys, __matchFunc, all_indices=all_keys, match=match, how=how, **context)
     else: return data
 
 
@@ -831,5 +823,5 @@ def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True, fields: Optio
         return sort_records(data, by=by, ascending=ascending)
     elif isinstance(data, pd.DataFrame): return data.sort_values(by, ascending=ascending)
     elif isinstance(data, Dict): return {__key: data[__key] for __key in sorted(data.keys())}
-    elif isinstance(data, List): return sorted(data)
+    elif is_array(data): return sorted(data)
     else: return data
