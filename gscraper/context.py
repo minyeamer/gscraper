@@ -18,15 +18,20 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=False, operation=None, host=None, whe
                         prefix=None, self_var=True, **context: context
 
 
-TASK_CONTEXT = lambda params=None, locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        to=None, **context: UNIQUE_CONTEXT(**context)
+TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
+                        **context: UNIQUE_CONTEXT(**context)
 
 
-REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, \
+REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, allow_redirects=None, \
-                        close=None, validate=None, exception=None, valid=None, invalid=None, html=None, \
-                        table_header=None, table_idx=None, engine=None, how=None, default=None, \
+                        close=None, verify=None, validate=None, exception=None, valid=None, invalid=None, \
+                        html=None, table_header=None, table_idx=None, engine=None, how=None, default=None, \
                         dropna=None, strict=None, unique=None, to=None, **context: TASK_CONTEXT(**context)
+
+
+UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \
+                        table=None, project_id=None, schema=None, progress=None, \
+                        partition=None, prtition_by=None, base=None, **context: context
 
 
 PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fronNow=None, \

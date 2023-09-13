@@ -24,8 +24,8 @@ _PASS = None
 Comparable = TypeVar("Comparable")
 ClassInstance = TypeVar("ClassInstance")
 
-Arugments = Tuple[Any]
-ArgsMapper = Callable[[Arugments],Arugments]
+Arguments = Tuple[Any]
+ArgsMapper = Callable[[Arguments],Arguments]
 
 Context = Dict[Any,Any]
 ContextMapper = Callable[[Context],Context]
@@ -38,7 +38,7 @@ TypeList = Sequence[TypeHint]
 
 GENERAL_TYPES = {
     "_BOOL":_BOOL, "_TYPE":_TYPE, "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "Comparable":Comparable,
-    "ClassInstance":ClassInstance, "Arugments":Arugments, "ArgsMapper":ArgsMapper,
+    "ClassInstance":ClassInstance, "Arguments":Arguments, "ArgsMapper":ArgsMapper,
     "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "LogMessage":LogMessage,
     "TypeHint":TypeHint, "TypeList":TypeList}
 
@@ -238,7 +238,7 @@ GOOGLE_CLOUD_TYPES = {
 ###################################################################
 
 Pagination = Union[bool, str]
-Pages = Tuple[Tuple[int,int,int]]
+Pages = Union[Tuple[int], Tuple[Tuple[int,int,int]]]
 
 RegexFormat = str
 BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]

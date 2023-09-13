@@ -81,6 +81,10 @@ def encode_cookies(cookies: Union[Dict,str], **kwargs) -> str:
     [(parse_cookies(data) if isinstance(data, Dict) else str(data)) for data in [cookies,kwargs] if data])
 
 
+def decode_cookies(cookies: str, **kwargs) -> Dict:
+    return dict({__key: __value for cookie in cookies.split('; ') for __key, __value in (cookie.split('=')[:2],)}, **kwargs)
+
+
 def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
     if encode: params = urlencode(params)
     else: params = '&'.join([f"{key}={value}" for key, value in params.items()])
