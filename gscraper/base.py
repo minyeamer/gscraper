@@ -71,7 +71,6 @@ REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
 INVALID_REDIRECT_LOG_MSG = "Please verify that the both results and errors are in redierct returns."
 
 INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
-LOGIN_REQUIRED_MSG = lambda where=str(): f"{where} login information is required.".strip()
 
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
@@ -488,7 +487,7 @@ class Spider(BaseSession, Iterator):
         self.progress = progress
         self.message = message if message else self.message
         self.cookies = cookies
-        self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
+        self.set_context(contextFields=contextFields, **context)
         self.set_query(queryInfo, **context)
 
     def inspect(self, __key: Optional[Literal["crawl","required","iterable","literal","return"]]=None) -> Dict[_KT,Union[Dict,str]]:
@@ -887,7 +886,7 @@ class AsyncSpider(Spider):
         self.apiRedirect = apiRedirect
         if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=False)
-        self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
+        self.set_context(contextFields=contextFields, **context)
         self.set_query(queryInfo, **context)
 
     ###################################################################
@@ -1134,7 +1133,6 @@ class LoginSpider(requests.Session, Spider):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "login"
-    where = str()
 
     @abstractmethod
     def __init__(self, cookies=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), **context):
@@ -1226,6 +1224,18 @@ class LoginSpider(requests.Session, Spider):
             return response.headers
 
 
+class BaseLogin(LoginSpider):
+    operation = "login"
+
+    def __init__(self, cookies=str()):
+        super().__init__()
+        self.operation = self.operation
+        self.cookies.update(decode_cookies(cookies))
+
+    def login(self):
+        return
+
+
 ###################################################################
 ######################## Encrypted Spiders ########################
 ###################################################################
@@ -1266,7 +1276,7 @@ class EncryptedSpider(Spider):
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
             logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
-        self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
+        self.set_context(contextFields=contextFields, **context)
         self.set_query(queryInfo, **context)
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
@@ -1282,7 +1292,7 @@ class EncryptedSpider(Spider):
         def wrapper(self: EncryptedSpider, *args, self_var=True, cookies=str(),
                     uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            with (LoginSpider(cookies=cookies, **kwargs) if cookies else self.auth(**kwargs)) as session:
+            with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as session:
                 session.login()
                 cookies = self.update_cookies(cookies, **session.cookies)
                 data = func(self, *args, session=session, cookies=cookies, **kwargs)
@@ -1291,7 +1301,7 @@ class EncryptedSpider(Spider):
             return data
         return wrapper
 
-    def update_cookies(self, cookies=str(), **kwargs) -> str:
+    def update_cookies(self, cookies=str(), **login_info) -> str:
         return cookies if cookies else str()
 
 
@@ -1337,7 +1347,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
             renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message,
             cookies=cookies, numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit)
-        self.set_context(contextFields=contextFields, **UNIQUE_CONTEXT(**context))
+        self.set_context(contextFields=contextFields, **context)
         self.set_query(queryInfo, **context)
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
@@ -1348,17 +1358,17 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                             uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
-            with (LoginSpider(cookies=cookies, **kwargs) if cookies else self.auth(**kwargs)) as auth:
+            with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as auth:
                 auth.login()
                 async with aiohttp.ClientSession(cookies=self.update_cookies(cookies, **auth.cookies)) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
-            time.sleep(.25)
+            await asyncio.sleep(.25)
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
-    def update_cookies(self, cookies=str(), **kwargs) -> Dict:
-        return decode_cookies(cookies, **kwargs)
+    def update_cookies(self, cookies=str(), **login_info) -> Dict:
+        return decode_cookies(cookies, **login_info)
 
 
 ###################################################################
