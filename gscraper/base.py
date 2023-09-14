@@ -33,6 +33,7 @@ import logging
 import pandas as pd
 
 from tqdm.auto import tqdm
+from inspect import Parameter
 from itertools import product
 import base64
 import inspect
@@ -504,16 +505,51 @@ class Spider(BaseSession, Iterator):
         signature = inspect.signature(func)
         for name, parameter in signature.parameters.items():
             if name in ["self", "context", "kwargs"]: continue
-            annotation = parameter.annotation
-            params[name] = dict(annotation=get_annotation(annotation))
-            if parameter.default != inspect.Parameter.empty:
-                params[name]["default"] = parameter.default
-                if parameter.annotation == inspect.Parameter.empty:
-                    annotation = get_annotation(type(parameter.default))
-                    params[name]["annotation"] = annotation
-            if is_iterable_annotation(annotation):
-                params[name]["iterable"] = True
+            else: params[name] = self.inspect_annotation(parameter)
         return params
+
+    def inspect_annotation(self, parameter: Parameter) -> Dict:
+        annotation = parameter.annotation
+        info = dict(annotation=get_annotation(annotation))
+        if parameter.default != inspect.Parameter.empty:
+            info["default"] = parameter.default
+            if parameter.annotation == inspect.Parameter.empty:
+                annotation = get_annotation(type(parameter.default))
+                info["annotation"] = annotation
+        if is_iterable_annotation(annotation):
+            info["iterable"] = True
+        return info
+
+    def from_locals(self, locals: Dict=dict(), _how: Literal["all","crawl","fetch","parse","args","context","query"]="all",
+                    _base=True, _args=None, _page=None, _date=None, _query=None, _param=None, _request=None,
+                    values_only=False, **context) -> Union[Arguments,Context]:
+        base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
+        context = dict(base, **context) if _base else context
+        conditions = self.get_condition(_how, _args, _page, _date, _query, _param, _request)
+        if all(conditions): return list(context.values()) if values_only else context
+        else: return self.filter_locals(context, _how, *conditions, values_only=values_only)
+
+    def get_condition(self, how: str, args=None, page=None, date=None, query=None,
+                        param=None, request=None) -> Tuple[bool]:
+        t = lambda condition: condition if isinstance(condition, bool) else True
+        if how in ("all","crawl"): return (True,)*6
+        elif how == "fetch": return (True,)*4+(False,True)
+        elif how == "parse": return (True,)*4+(True,False)
+        elif how == "args": return (True,)+(False,)*5
+        elif how == "context": return (False,)+(True,)*5
+        elif how == "query": return (True,)*4+(False,False)
+        return t(args), t(page), t(date), t(query), t(param), t(request)
+
+    def filter_locals(self, context: Context, how: str, args=None, page=None, date=None, query=None,
+                        param=None, request=None, values_only=False) -> Union[Arguments,Context]:
+        iterators, params = self.get_iterator(keys_only=True), list(self.inspect("crawl").keys())
+        queries = self.get_iterator(args, page, date, query, keys_only=True)
+        if how in ("args","query"):
+            query = kloc(context, queries, if_null="drop", values_only=(how=="args"))
+            return tuple(query) if how == "args" else query
+        elif param: queries = queries + diff(params, iterators)
+        request = drop_dict((context if request else REQUEST_CONTEXT(**context)), iterators+params, inplace=False)
+        return dict(request, **kloc(context, queries, if_null="drop", values_only=values_only))
 
     def log_context(self, **context):
         self.errors.append(self.get_iterator(**context))
@@ -562,21 +598,9 @@ class Spider(BaseSession, Iterator):
     ######################## Parameter Managers #######################
     ###################################################################
 
-    def get_var(self, locals: Dict=dict(), _all=False, _base=True, _args=True,
-                    _page=True, _date=True, _query=True, _param=True, _request=True, **context) -> Context:
-        base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
-        context = dict(base, **context) if _base else context
-        if _all or (_args and _page and _date and _query and _param and _request):
-            return context
-        __keys = self.get_iterator(_args, _page, _date, _query, keys_only=True)
-        if _param:
-            __keys = __keys + diff(self.inspect("crawl").keys(), self.get_iterator(keys_only=True))
-        if not _request: context = REQUEST_CONTEXT(**context)
-        return kloc(context, __keys, if_null="drop")
-
     def set_var(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
                 strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Tuple[Arguments,Context]:
-        args, context = self.get_var(locals, **context)
+        args, context = [self.from_locals(locals, by, **context) for by in ["args","context"]]
         args = self.map_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
         context = self.map_context(default=default, dropna=dropna, strict=strict, unique=unique, to=to, **context)
         return args, context
@@ -589,7 +613,7 @@ class Spider(BaseSession, Iterator):
 
     def map_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                     to: Literal["en","ko"]="en", **context) -> Context:
-        if locals: context = self.get_var(locals, _args=False, **context)
+        if locals: context = self.from_locals(locals, "context", **context)
         signature = self.inspect()
         sequence_keys, rename_keys = signature["iterable"].keys(), signature["literal"].keys()
         renameMap = self.get_rename_map(to=to, **context)
