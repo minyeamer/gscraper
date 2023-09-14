@@ -311,41 +311,41 @@ class Iterator(CustomDict):
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
                     **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
-        args_context = self.validate_args(*args, iterateArgs, pagination)
+        args_context = self._validate_args(*args, iterateArgs, pagination)
         if args_context:
-            arguments, context = self.from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
+            arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
             iterateQuery = diff(iterateQuery, iterateArgs, PAGE_ITERATOR)
             if len(iterateQuery) > 1: iterateUnit = iterateUnit[1:]
         if interval:
-            periods, context = self.from_date(interval=interval, **context)
+            periods, context = self._from_date(interval=interval, **context)
             iterateQuery = diff(iterateQuery, DATE_ITERATOR)
-        iterator, context = self.from_context(iterateQuery=iterateQuery, iterateUnit=iterateUnit, **context)
-        iterator = self.product_iterator(arguments, periods, iterator)
+        iterator, context = self._from_context(iterateQuery=iterateQuery, iterateUnit=iterateUnit, **context)
+        iterator = self._product_iterator(arguments, periods, iterator)
         return iterator, context
 
     ###################################################################
     ########################## From Arguments #########################
     ###################################################################
 
-    def validate_args(self, *args, iterateArgs: List[_KT]=list(), pagination: Pagination=False) -> Context:
+    def _validate_args(self, *args, iterateArgs: List[_KT]=list(), pagination: Pagination=False) -> Context:
         match_query = is_same_length(args, iterateArgs)
         match_args = is_same_length(*args)
         valid = (match_query and match_args) or ((not iterateArgs) and pagination)
         if valid and pagination: iterateArgs.append("pages") 
         return dict(iterateArgs=iterateArgs, pagination=pagination) if valid else dict()
 
-    def from_args(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1,
+    def _from_args(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1,
                 pagination: Pagination=False, **context) -> Tuple[List[Context],Context]:
         if not is_same_length(*args): return list(), context
         if pagination:
-            args, context = self.from_pages(*args, pagination=pagination, iterateArgs=iterateArgs, **context)
-        args = self.product_args(*args)
+            args, context = self._from_pages(*args, pagination=pagination, iterateArgs=iterateArgs, **context)
+        args = self._product_args(*args)
         if get_scala(iterateUnit) > 1:
             args = list(map(lambda __s: unit_array(__s, unit=get_scala(iterateUnit)), args))
         args = [dict(zip(iterateArgs, values)) for values in zip(*args)]
-        return (self.map_pages(*args) if pagination else args), context
+        return (self._map_pages(*args) if pagination else args), context
 
-    def product_args(self, *args: Sequence) -> List[List]:
+    def _product_args(self, *args: Sequence) -> List[List]:
         tuple_idx = list(map(lambda x: allin_instance(x, Tuple, empty=False), args))
         if not any(tuple_idx): return args
         __args = list()
@@ -359,7 +359,7 @@ class Iterator(CustomDict):
     ############################ From Pages ###########################
     ###################################################################
 
-    def from_pages(self, *args, size: Unit, pageSize: int, pagination: Pagination, pageStart=1, start=1,
+    def _from_pages(self, *args, size: Unit, pageSize: int, pagination: Pagination, pageStart=1, start=1,
                     iterateArgs: List[_KT]=list(), **context) -> Tuple[List[List],Context]:
         if isinstance(pagination, str):
             size = args[iterateArgs.index(pagination)]
@@ -395,7 +395,7 @@ class Iterator(CustomDict):
         dataSize = [min(size-__start+1, pageSize) for __start in starts]
         return (pages, starts, dataSize)
 
-    def map_pages(self, *args: Context) -> List[Context]:
+    def _map_pages(self, *args: Context) -> List[Context]:
         base = list()
         for __i in range(len(args)):
             pages = args[__i].pop("pages")
@@ -406,7 +406,7 @@ class Iterator(CustomDict):
     ############################ From Date ############################
     ###################################################################
 
-    def from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
+    def _from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
         startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
         endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
@@ -423,21 +423,21 @@ class Iterator(CustomDict):
     ########################### From Context ##########################
     ###################################################################
 
-    def from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
+    def _from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
         if not iterateQuery: return list(), context
         query, context = kloc(context, iterateQuery, if_null="drop"), drop_dict(context, iterateQuery, inplace=False)
-        if any(map(lambda x: x>1, iterateUnit)): query = self.group_context(iterateQuery, iterateUnit, **query)
+        if any(map(lambda x: x>1, iterateUnit)): query = self._group_context(iterateQuery, iterateUnit, **query)
         else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
         return query, context
 
-    def group_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> List[Context]:
+    def _group_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> List[Context]:
         query = apply_dict(context, apply=cast_list, all_keys=True)
         keys, unit = query.keys(), fill_array(iterateUnit, count=len(iterateQuery), value=1)
         combinations = product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
 
-    def product_iterator(self, *iterator: Sequence[Context]) -> List[Context]:
+    def _product_iterator(self, *iterator: Sequence[Context]) -> List[Context]:
         if sum(map(len, iterator)) == 0: return list()
         iterator_array = map((lambda x: x if x else [{}]), iterator)
         return list(map(chain_dict, product(*iterator_array)))
@@ -505,10 +505,10 @@ class Spider(BaseSession, Iterator):
         signature = inspect.signature(func)
         for name, parameter in signature.parameters.items():
             if name in ["self", "context", "kwargs"]: continue
-            else: params[name] = self.inspect_annotation(parameter)
+            else: params[name] = self._inspect_annotation(parameter)
         return params
 
-    def inspect_annotation(self, parameter: Parameter) -> Dict:
+    def _inspect_annotation(self, parameter: Parameter) -> Dict:
         annotation = parameter.annotation
         info = dict(annotation=get_annotation(annotation))
         if parameter.default != inspect.Parameter.empty:
@@ -525,11 +525,11 @@ class Spider(BaseSession, Iterator):
                     values_only=False, **context) -> Union[Arguments,Context]:
         base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
         context = dict(base, **context) if _base else context
-        conditions = self.get_condition(_how, _args, _page, _date, _query, _param, _request)
+        conditions = self._get_condition(_how, _args, _page, _date, _query, _param, _request)
         if all(conditions): return list(context.values()) if values_only else context
-        else: return self.filter_locals(context, _how, *conditions, values_only=values_only)
+        else: return self._filter_locals(context, _how, *conditions, values_only=values_only)
 
-    def get_condition(self, how: str, args=None, page=None, date=None, query=None,
+    def _get_condition(self, how: str, args=None, page=None, date=None, query=None,
                         param=None, request=None) -> Tuple[bool]:
         t = lambda condition: condition if isinstance(condition, bool) else True
         if how in ("all","crawl"): return (True,)*6
@@ -540,7 +540,7 @@ class Spider(BaseSession, Iterator):
         elif how == "query": return (True,)*4+(False,False)
         return t(args), t(page), t(date), t(query), t(param), t(request)
 
-    def filter_locals(self, context: Context, how: str, args=None, page=None, date=None, query=None,
+    def _filter_locals(self, context: Context, how: str, args=None, page=None, date=None, query=None,
                         param=None, request=None, values_only=False) -> Union[Arguments,Context]:
         iterators, params = self.get_iterator(keys_only=True), list(self.inspect("crawl").keys())
         queries = self.get_iterator(args, page, date, query, keys_only=True)
@@ -1119,31 +1119,31 @@ class AsyncSpider(Spider):
     @gcloud_authorized
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
-        data = self.filter_redirect_data(redirectUrl, authorization, account, **context)
+        data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
         response = self.request_text("POST", redirectUrl, session, json=data, headers=dict(Authorization=authorization))
-        return self.parse_redirect(json.loads(response), **context)
+        return self._parse_redirect(json.loads(response), **context)
 
-    def filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
+    def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(
             redirectUrl=redirectUrl,
             authorization=authorization,
             account=account,
             **REDIRECT_CONTEXT(**context))
 
-    def parse_redirect(self, data: RedirectData, **context) -> Records:
-        data = self.log_redirect_errors(data)
-        results = self.map_redirect(data, **context)
+    def _parse_redirect(self, data: RedirectData, **context) -> Records:
+        data = self._log_redirect_errors(data)
+        results = self._map_redirect(data, **context)
         self.logger.debug(log_data(results))
         return results
 
-    def log_redirect_errors(self, data: RedirectData, **context) -> Records:
+    def _log_redirect_errors(self, data: RedirectData, **context) -> Records:
         if not isinstance(data, Dict): raise ValueError(INVALID_REDIRECT_LOG_MSG)
         errors = data.get("errors", default=dict())
         for key, values in (errors if isinstance(errors, Dict) else dict()).items():
             self.errors[key] += values
         return data.get("data", default=list())
 
-    def map_redirect(self, data: Records, **context) -> Records:
+    def _map_redirect(self, data: Records, **context) -> Records:
         if not isinstance(data, List): return list()
         cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
         return [apply_df(__m, apply=cast_datetime_or_keep, all_cols=True) for __m in data]
@@ -1177,6 +1177,12 @@ class LoginSpider(requests.Session, Spider):
         if returnType == "str": return parse_cookies(self.cookies)
         elif returnType == "dict": return dict(self.cookies.items())
         else: return self.cookies
+
+    def update_cookies(self, cookies=str(), if_exists: Literal["ignore","replace"]="ignore", **kwargs):
+        cookies = decode_cookies(cookies, **kwargs) if isinstance(cookies, str) else dict(cookies, **kwargs)
+        for __key, __value in cookies.items():
+            if (if_exists == "replace") or (__key not in self.cookies):
+                self.cookies.set(__key, __value)
 
     ###################################################################
     ########################## Fetch Request ##########################
@@ -1254,7 +1260,7 @@ class BaseLogin(LoginSpider):
     def __init__(self, cookies=str()):
         super().__init__()
         self.operation = self.operation
-        self.cookies.update(decode_cookies(cookies))
+        self.update_cookies(cookies)
 
     def login(self):
         return
@@ -1318,15 +1324,15 @@ class EncryptedSpider(Spider):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as session:
                 session.login()
-                cookies = self.update_cookies(cookies, **session.cookies)
+                session.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
                 data = func(self, *args, session=session, cookies=cookies, **kwargs)
             time.sleep(.25)
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
-    def update_cookies(self, cookies=str(), **login_info) -> str:
-        return cookies if cookies else str()
+    def set_cookies(self, **context) -> Dict:
+        return dict()
 
 
 class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
@@ -1384,15 +1390,13 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             semaphore = self.asyncio_semaphore(**kwargs)
             with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as auth:
                 auth.login()
-                async with aiohttp.ClientSession(cookies=self.update_cookies(cookies, **auth.cookies)) as session:
+                auth.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
+                async with aiohttp.ClientSession(cookies=auth.cookies) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
-
-    def update_cookies(self, cookies=str(), **login_info) -> Dict:
-        return decode_cookies(cookies, **login_info)
 
 
 ###################################################################

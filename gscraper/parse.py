@@ -82,6 +82,7 @@ def encode_cookies(cookies: Union[Dict,str], **kwargs) -> str:
 
 
 def decode_cookies(cookies: str, **kwargs) -> Dict:
+    if not cookies: return kwargs
     return dict({__key: __value for cookie in cookies.split('; ') for __key, __value in (cookie.split('=')[:2],)}, **kwargs)
 
 
