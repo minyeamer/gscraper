@@ -267,7 +267,7 @@ class BaseSession(CustomDict):
 
 class Iterator(CustomDict):
     iterateArgs = list()
-    iterateQuery = list()
+    iterateProduct = list()
     iterateUnit = 0
     pagination = False
     pageUnit = 0
@@ -294,29 +294,29 @@ class Iterator(CustomDict):
     ########################### Set Iterator ##########################
     ###################################################################
 
-    def get_iterator(self, _args=True, _page=True, _date=True, _query=True,
+    def get_iterator(self, _args=True, _page=True, _date=True, _product=True,
                     keys_only=False, values_only=False, **context) -> Union[Context,_KT,_VT]:
         iterateArgs = self.iterateArgs * int(_args)
         iteratePage = PAGE_ITERATOR * int(bool(self.pagination)) * int(_page)
         iterateDate = DATE_ITERATOR * int(bool(self.interval)) * int(_date)
-        iterateQuery = self.iterateQuery * int(_query)
-        query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateQuery)
+        iterateProduct = self.iterateProduct * int(_product)
+        query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateProduct)
         if keys_only: return query
         else: return kloc(context, query, if_null="drop", values_only=values_only)
 
-    def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateQuery: List[_KT]=list(),
+    def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
                     **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
         args_context = self._validate_args(*args, iterateArgs=iterateArgs, pagination=pagination)
         if args_context:
             arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
-            iterateQuery = diff(iterateQuery, iterateArgs, PAGE_ITERATOR)
-            if len(iterateQuery) > 1: iterateUnit = iterateUnit[1:]
+            iterateProduct = diff(iterateProduct, iterateArgs, PAGE_ITERATOR)
+            if len(iterateProduct) > 1: iterateUnit = iterateUnit[1:]
         if interval:
             periods, context = self._from_date(interval=interval, **context)
-            iterateQuery = diff(iterateQuery, DATE_ITERATOR)
-        iterator, context = self._from_context(iterateQuery=iterateQuery, iterateUnit=iterateUnit, **context)
+            iterateProduct = diff(iterateProduct, DATE_ITERATOR)
+        iterator, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
         iterator = self._product_iterator(arguments, periods, iterator)
         return iterator, context
 
@@ -464,16 +464,16 @@ class Iterator(CustomDict):
     ########################### From Context ##########################
     ###################################################################
 
-    def _from_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
-        if not iterateQuery: return list(), context
-        query, context = kloc(context, iterateQuery, if_null="drop"), drop_dict(context, iterateQuery, inplace=False)
-        if any(map(lambda x: x>1, iterateUnit)): query = self._group_context(iterateQuery, iterateUnit, **query)
+    def _from_context(self, iterateProduct: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
+        if not iterateProduct: return list(), context
+        query, context = kloc(context, iterateProduct, if_null="drop"), drop_dict(context, iterateProduct, inplace=False)
+        if any(map(lambda x: x>1, iterateUnit)): query = self._group_context(iterateProduct, iterateUnit, **query)
         else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
         return query, context
 
-    def _group_context(self, iterateQuery: List[_KT], iterateUnit: Unit=1, **context) -> List[Context]:
+    def _group_context(self, iterateProduct: List[_KT], iterateUnit: Unit=1, **context) -> List[Context]:
         query = apply_dict(context, apply=cast_list, all_keys=True)
-        keys, unit = query.keys(), fill_array(iterateUnit, count=len(iterateQuery), value=1)
+        keys, unit = query.keys(), fill_array(iterateUnit, count=len(iterateProduct), value=1)
         combinations = product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
@@ -497,7 +497,7 @@ class Spider(BaseSession, Iterator):
     which = WHICH
     fields = list()
     iterateArgs = list()
-    iterateQuery = list()
+    iterateProduct = list()
     iterateUnit = 0
     pagination = False
     pageUnit = 0
@@ -562,16 +562,16 @@ class Spider(BaseSession, Iterator):
         return info
 
     def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","request","parse","query"]="all",
-                    _base=True, _args=None, _page=None, _date=None, _query=None, _param=None, _request=None,
+                    _base=True, _args=None, _page=None, _date=None, _product=None, _param=None, _request=None,
                     values_only=False, **context) -> Union[Arguments,Context,Tuple]:
         base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
         context = dict(base, **context) if _base else context
         if is_array(_how): return tuple(self.from_locals(context, how) for how in _how)
-        conditions = self._get_conditions(_how, _args, _page, _date, _query, _param, _request)
+        conditions = self._get_conditions(_how, _args, _page, _date, _product, _param, _request)
         if all(conditions): return list(context.values()) if values_only else context
         else: return self._filter_locals(context, _how, *conditions, values_only=values_only)
 
-    def _get_conditions(self, how: str, args=None, page=None, date=None, query=None,
+    def _get_conditions(self, how: str, args=None, page=None, date=None, product=None,
                         param=None, request=None) -> Tuple[bool]:
         t = lambda condition: condition if isinstance(condition, bool) else True
         if how == "all": return (True,)*6
@@ -580,12 +580,12 @@ class Spider(BaseSession, Iterator):
         elif how == "args": return (True,)+(False,)*5
         elif how == "context": return (False,)+(True,)*5
         elif how == "query": return (True,)*4+(False,False)
-        return t(args), t(page), t(date), t(query), t(param), t(request)
+        return t(args), t(page), t(date), t(product), t(param), t(request)
 
-    def _filter_locals(self, context: Context, how: str, args=None, page=None, date=None, query=None,
+    def _filter_locals(self, context: Context, how: str, args=None, page=None, date=None, product=None,
                         param=None, request=None, values_only=False) -> Union[Arguments,Context]:
         iterators, params = self.get_iterator(keys_only=True), list(self.inspect("crawl").keys())
-        queries = self.get_iterator(args, page, date, query, keys_only=True)
+        queries = self.get_iterator(args, page, date, product, keys_only=True)
         if how in ("args","query"):
             query = kloc(context, queries, if_null="drop", values_only=(how=="args"))
             return tuple(query) if how == "args" else query
@@ -676,11 +676,11 @@ class Spider(BaseSession, Iterator):
         args, context = self.set_var(locals())
         return self.gather(*args, **context)
 
-    def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+    def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                 pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_message(*args, message=message, **context)
         if self.debug: self.logger.warn({"args":args, "context":context})
-        iterate_params = dict(iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, pagination=self.pagination)
+        iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
         if self.debug: self.logger.warn({"iterator":iterator})
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
@@ -917,8 +917,8 @@ class AsyncSpider(Spider):
     fields = list()
     iterateArgs = list()
     redirectArgs = None
-    iterateQuery = list()
-    redirectQuery = None
+    iterateProduct = list()
+    redirectProduct = list()
     iterateUnit = 0
     redirectUnit = 0
     pagination = False
@@ -950,7 +950,7 @@ class AsyncSpider(Spider):
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
-        if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
+        if not is_array(self.redirectArgs): self.redirectArgs = self.iterateArgs
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=False)
         if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
@@ -1028,11 +1028,11 @@ class AsyncSpider(Spider):
         return await self.gather(*args, **context)
 
     @asyncio_redirect
-    async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+    async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                     pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_message(*args, message=message, **context)
         if self.debug: self.logger.warn({"args":args, "context":context})
-        iterate_params = dict(iterateArgs=self.iterateArgs, iterateQuery=self.iterateQuery, pagination=self.pagination)
+        iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
         if self.debug: self.logger.warn({"iterator":iterator})
         data = await tqdm.gather(*[
@@ -1141,12 +1141,12 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateQuery: _PASS=None,
+    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                         iterateUnit: _PASS=None, redirectUnit: Unit=1, pagination: _PASS=None,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(*args, message=message, **context)
         if self.debug: self.logger.warn({"args":args, "context":context})
-        redirect_context = dict(iterateArgs=self.redirectArgs, iterateQuery=self.redirectQuery, iterateUnit=redirectUnit)
+        redirect_context = dict(iterateArgs=self.redirectArgs, iterateProduct=self.redirectProduct, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
         if self.debug: self.logger.warn({"iterator":iterator})
         data = await tqdm.gather(*[
@@ -1320,7 +1320,7 @@ class EncryptedSpider(Spider):
     which = WHICH
     fields = list()
     iterateArgs = list()
-    iterateQuery = list()
+    iterateProduct = list()
     iterateUnit = 0
     pagination = False
     pageUnit = 0
@@ -1386,8 +1386,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     fields = list()
     iterateArgs = list()
     redirectArgs = None
-    iterateQuery = list()
-    redirectQuery = None
+    iterateProduct = list()
+    redirectProduct = None
     iterateUnit = 0
     redirectUnit = 0
     pagination = False

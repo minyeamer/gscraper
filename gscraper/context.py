@@ -10,10 +10,10 @@ def exists_context(**context):
 
 
 UNIQUE_CONTEXT = lambda self=None, asyncio=False, operation=None, host=None, where=None, which=None, \
-                        initTime=None, contextFields=None, iterateArgs=None, iterateQuery=None, \
+                        initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, responseType=None, \
                         logger=None, logJson=None, errors=None, schemaInfo=None, \
-                        redirectArgs=None, redirectQuery=None, maxLimit=None, redirectLimit=None, \
+                        redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
                         authClass=None, dependencies=None, data=None, results=None, crawler=None, \
                         prefix=None, self_var=True, **context: context
 
