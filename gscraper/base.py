@@ -515,11 +515,12 @@ class Spider(BaseSession, Iterator):
             info["iterable"] = True
         return info
 
-    def from_locals(self, locals: Dict=dict(), _how: Literal["all","crawl","fetch","parse","args","context","query"]="all",
+    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","request","parse","query"]="all",
                     _base=True, _args=None, _page=None, _date=None, _query=None, _param=None, _request=None,
-                    values_only=False, **context) -> Union[Arguments,Context]:
+                    values_only=False, **context) -> Union[Arguments,Context,Tuple]:
         base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
         context = dict(base, **context) if _base else context
+        if is_array(_how): return tuple(self.from_locals(context, how) for how in _how)
         conditions = self._get_conditions(_how, _args, _page, _date, _query, _param, _request)
         if all(conditions): return list(context.values()) if values_only else context
         else: return self._filter_locals(context, _how, *conditions, values_only=values_only)
@@ -527,8 +528,8 @@ class Spider(BaseSession, Iterator):
     def _get_conditions(self, how: str, args=None, page=None, date=None, query=None,
                         param=None, request=None) -> Tuple[bool]:
         t = lambda condition: condition if isinstance(condition, bool) else True
-        if how in ("all","crawl"): return (True,)*6
-        elif how == "fetch": return (True,)*4+(False,True)
+        if how == "all": return (True,)*6
+        elif how == "request": return (True,)*4+(False,True)
         elif how == "parse": return (True,)*4+(True,False)
         elif how == "args": return (True,)+(False,)*5
         elif how == "context": return (False,)+(True,)*5
@@ -595,7 +596,7 @@ class Spider(BaseSession, Iterator):
 
     def set_var(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
                 strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Tuple[Arguments,Context]:
-        args, context = [self.from_locals(locals, by, **context) for by in ["args","context"]]
+        args, context = self.from_locals(locals, ["args","context"], **context)
         args = self.set_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
         context = self.set_context(default=default, dropna=dropna, strict=strict, unique=unique, to=to, **context)
         return args, context
