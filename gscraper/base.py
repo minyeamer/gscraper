@@ -5,7 +5,7 @@ from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
-from .types import is_array, allin_instance, is_records, init_origin, get_annotation, is_iterable_annotation
+from .types import is_array, allin_instance, is_str_array, is_records, init_origin, get_annotation, is_iterable_annotation
 
 from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_date, cast_datetime_format
 from .date import now, get_date, get_date_range, is_daily_frequency
@@ -63,6 +63,7 @@ MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]
+PAGE_PARAMS = ["size", "pageSize", "pageStart", "start"]
 DATE_ITERATOR = ["startDate", "endDate", "date"]
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
@@ -79,6 +80,7 @@ INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 
 WHERE, WHICH = "urls", "data"
 
+ARGS, PAGES = 0, 1
 KEY, SHEET, FIELDS = "key", "sheet", "fields"
 TABLE, PID = "table", "project_id"
 
@@ -306,7 +308,7 @@ class Iterator(CustomDict):
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
                     **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
-        args_context = self._validate_args(*args, iterateArgs, pagination)
+        args_context = self._validate_args(*args, iterateArgs=iterateArgs, pagination=pagination)
         if args_context:
             arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
             iterateQuery = diff(iterateQuery, iterateArgs, PAGE_ITERATOR)
@@ -322,23 +324,34 @@ class Iterator(CustomDict):
     ########################## From Arguments #########################
     ###################################################################
 
-    def _validate_args(self, *args, iterateArgs: List[_KT]=list(), pagination: Pagination=False) -> Context:
+    def _validate_args(self, *args, iterateArgs: List[_KT], pagination: Pagination=False) -> Context:
         match_query = is_same_length(args, iterateArgs)
         match_args = is_same_length(*args)
-        valid = (match_query and match_args) or ((not iterateArgs) and pagination)
-        if valid and pagination: iterateArgs.append("pages") 
-        return dict(iterateArgs=iterateArgs, pagination=pagination) if valid else dict()
+        valid_args = (match_query and match_args) or ((not iterateArgs) and pagination)
+        valid_pages = isinstance(pagination, bool) or (isinstance(pagination, str) and (pagination in iterateArgs))
+        return dict(iterateArgs=iterateArgs, pagination=pagination) if valid_args and valid_pages else dict()
 
-    def _from_args(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateUnit: Unit=1,
+    def _from_args(self, *args: Sequence, iterateArgs: List[_KT], iterateUnit: Unit=1,
                 pagination: Pagination=False, **context) -> Tuple[List[Context],Context]:
         if not is_same_length(*args): return list(), context
+        argnames, pagenames = self._split_argnames(*args, iterateArgs=iterateArgs, pagination=pagination)
         if pagination:
-            args, context = self._from_pages(*args, pagination=pagination, iterateArgs=iterateArgs, **context)
+            how = "numeric" if pagenames == PAGE_ITERATOR else "categorical"
+            args, context = self._from_pages(*args, how=how, iterateArgs=iterateArgs, pagination=pagination, **context)
         args = self._product_args(*args)
         if get_scala(iterateUnit) > 1:
             args = list(map(lambda __s: unit_array(__s, unit=get_scala(iterateUnit)), args))
-        args = [dict(zip(iterateArgs, values)) for values in zip(*args)]
-        return (self._map_pages(*args) if pagination else args), context
+        args = [dict(zip(argnames, values)) for values in zip(*args)]
+        return (self._map_pages(*args, keys=pagenames) if pagenames else args), context
+
+    def _split_argnames(self, *args, iterateArgs: List[_KT], pagination: Pagination=False) -> Tuple[List[_KT],List[_KT]]:
+        argnames = iterateArgs.copy()
+        if isinstance(pagination, str) and is_str_array(args[iterateArgs.index(pagination)]):
+            argnames.pop(iterateArgs.index(pagination))
+            return argnames+["pages"], [pagination]+PAGE_ITERATOR+PAGE_PARAMS
+        elif pagination:
+            return argnames+["pages"], PAGE_ITERATOR
+        else: return argnames, list()
 
     def _product_args(self, *args: Sequence) -> List[List]:
         tuple_idx = list(map(lambda x: allin_instance(x, Tuple, empty=False), args))
@@ -354,16 +367,37 @@ class Iterator(CustomDict):
     ############################ From Pages ###########################
     ###################################################################
 
-    def _from_pages(self, *args, size: Unit, pageSize: int, pagination: Pagination, pageStart=1, start=1,
-                    iterateArgs: List[_KT]=list(), **context) -> Tuple[List[List],Context]:
-        if isinstance(pagination, str):
-            size = args[iterateArgs.index(pagination)]
+    def _from_pages(self, *args: Sequence, how: Literal["numeric","categorical"], iterateArgs: List[_KT],
+                    pagination: Pagination=False, size: Optional[Unit]=None, **context) -> Tuple[List[List],Context]:
+        if how == "numeric":
+            if isinstance(pagination, str):
+                size = args[iterateArgs.index(pagination)]
+            return self._from_numeric_pages(*args, size=size, **context)
+        base = list(args)
+        labels = cast_list(base.pop(iterateArgs.index(pagination)))
+        return self._from_categorical_pages(*base, labels=labels, pagination=pagination, size=size, **context)
+
+    def _from_numeric_pages(self, *args, size: Unit, pageSize=0, pageStart=1, start=1, **context) -> Tuple[List[List],Context]:
         pageSize = self.validate_page_size(pageSize, self.pageUnit, self.pageLimit)
-        pages = self.get_pages(size, pageSize, pageStart, start)
+        pages = self.get_pages(size, pageSize, pageStart, start, how="all")
         if isinstance(size, int):
             pages = [pages] * len(get_scala(args, default=[0]))
         pages = list(map(lambda __s: tuple(map(tuple, __s)), map(transpose_array, pages)))
         return args+(pages,), dict(context, pageSize=pageSize)
+
+    def _from_categorical_pages(self, *args, labels: List, pagination: str, size: Optional[int]=None,
+                                pageSize=0, pageStart=1, start=1, **context) -> Tuple[List[List],Context]:
+        pages = list()
+        for label in labels:
+            size = self.get_size_by_label(label, size=size, **context)
+            pageSize = self.get_page_size_by_label(label, pageSize=pageSize, **context)
+            pageStart = self.get_page_start_by_label(label, pageStart=pageStart, **context)
+            start = self.get_start_by_label(label, start=start, **context)
+            iterator = self.get_pages(size, pageSize, pageStart, start, how="all")
+            num_pages = len(iterator[0])
+            params = ((size,)*num_pages, (pageSize,)*num_pages, (pageStart,)*num_pages, (start,)*num_pages)
+            pages.append(tuple(map(tuple, transpose_array(((label,)*num_pages,)+iterator+params))))
+        return args+(pages,), context
 
     def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
         if (pageUnit > 0) and (pageSize & pageUnit != 0):
@@ -373,28 +407,40 @@ class Iterator(CustomDict):
         return pageSize
 
     def get_pages(self, size: Unit, pageSize: int, pageStart=1, start=1, pageUnit=0, pageLimit=0,
-                    how: Literal["context","page","start"]="context") -> Union[Pages,List[Pages]]:
+                    how: Literal["all","page","start"]="all") -> Union[Pages,List[Pages]]:
         pageSize = self.validate_page_size(pageSize, pageUnit, pageLimit)
         if isinstance(size, int):
-            return self.calc_pages(cast_int1(size, pageSize, pageStart, start, how))
+            return self.calc_pages(cast_int1(size), pageSize, pageStart, start, how)
         elif is_array(size):
-            return [self.calc_pages(cast_int1(__sz, pageSize, pageStart, start, how)) for __sz in size]
+            return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, start, how) for __sz in size]
         else: return tuple()
 
     def calc_pages(self, size: int, pageSize: int, pageStart=1, start=1,
-                    how: Literal["context","page","start"]="context") -> Pages:
+                    how: Literal["all","page","start"]="all") -> Pages:
         pages = tuple(range(pageStart, (((size-1)//pageSize)+1)+pageStart))
         if how == "page": return pages
         starts = tuple(range(start, size+start, pageSize))
         if how == "start": return starts
-        dataSize = [min(size-__start+1, pageSize) for __start in starts]
+        dataSize = tuple(min(size-__start+1, pageSize) for __start in starts)
         return (pages, starts, dataSize)
 
-    def _map_pages(self, *args: Context) -> List[Context]:
+    def get_size_by_label(self, label: Any, size: Optional[int]=None, **context) -> int:
+        return size
+
+    def get_page_size_by_label(self, label: Any, pageSize=0, **context) -> int:
+        return pageSize
+
+    def get_page_start_by_label(self, label: Any, pageStart=1, **context) -> int:
+        return pageStart
+
+    def get_start_by_label(self, label: Any, start=1, **context) -> int:
+        return start
+
+    def _map_pages(self, *args: Context, keys: List[_KT]) -> List[Context]:
         base = list()
         for __i in range(len(args)):
             pages = args[__i].pop("pages")
-            base.append(dict(args[__i], **dict(zip(PAGE_ITERATOR, pages))))
+            base.append(dict(args[__i], **dict(zip(keys, pages))))
         return base
 
     ###################################################################
