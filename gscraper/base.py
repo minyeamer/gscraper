@@ -236,7 +236,7 @@ class BaseSession(CustomDict):
                 self.log_context(**kwargs)
                 if self.debug: raise exception
                 func_name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(func_name, json=self.logJson, **kwargs))
+                self.logger.error(log_exception(func_name, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
                 return init_origin(func)
         return wrapper
 
@@ -949,7 +949,7 @@ class AsyncSpider(Spider):
                 self.log_context(**kwargs)
                 if self.debug: raise exception
                 name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(name, *args, json=self.logJson, **kwargs))
+                self.logger.error(log_exception(name, *args, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
                 return init_origin(func)
         return wrapper
 
