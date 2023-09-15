@@ -1,6 +1,6 @@
 from __future__ import annotations
 from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
-from .types import _KT, _VT, _PASS, ClassInstance, Arguments, Context, ContextMapper, TypeHint, LogLevel
+from .types import _KT, _VT, _PASS, ClassInstance, Arguments, Context, TypeHint, LogLevel
 from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
@@ -173,12 +173,12 @@ class BaseSession(CustomDict):
     renameMap = dict()
     schemaInfo = dict()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[IndexLabel]=None,
+    def __init__(self, fields: IndexLabel=list(),
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
-        super().__init__()
+                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **kwargs):
+        super().__init__(kwargs)
         self.operation = self.operation
         self.fields = fields if fields else self.fields
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
@@ -186,11 +186,10 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.renameMap = renameMap if renameMap else self.renameMap
-        self.set_logger(logName, logLevel, logFile, debug, **context)
-        self.set_schema(schemaInfo, **context)
-        self.set_context(contextFields=contextFields, **context)
+        self.set_logger(logName, logLevel, logFile, debug)
+        self.set_schema(schemaInfo)
 
-    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False, **context):
+    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
@@ -198,16 +197,12 @@ class BaseSession(CustomDict):
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
         self.debug = debug
 
-    def set_schema(self, schemaInfo: SchemaInfo=dict(), **context):
+    def set_schema(self, schemaInfo: SchemaInfo=dict()):
         schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
         if schemaInfo:
             for __key, schemaContext in schemaInfo.copy().items():
                 schemaInfo[__key]["schema"] = validate_schema(schemaContext["schema"])
             self.schemaInfo = schemaInfo
-
-    def set_context(self, contextFields: Optional[IndexLabel]=None, **context):
-        context = UNIQUE_CONTEXT(**context)
-        self.update(kloc(context, contextFields, if_null="pass") if contextFields else context)
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, droptz=True) -> dt.datetime:
@@ -469,7 +464,7 @@ class Spider(BaseSession, Iterator):
     renameMap = dict()
     message = str()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
@@ -488,7 +483,7 @@ class Spider(BaseSession, Iterator):
         self.progress = progress
         self.message = message if message else self.message
         self.cookies = cookies
-        self.set_context(contextFields=contextFields, **context)
+        if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
 
     def inspect(self, __key: Optional[Literal["crawl","required","iterable","literal","return"]]=None) -> Dict[_KT,Union[Dict,str]]:
@@ -525,11 +520,11 @@ class Spider(BaseSession, Iterator):
                     values_only=False, **context) -> Union[Arguments,Context]:
         base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
         context = dict(base, **context) if _base else context
-        conditions = self._get_condition(_how, _args, _page, _date, _query, _param, _request)
+        conditions = self._get_conditions(_how, _args, _page, _date, _query, _param, _request)
         if all(conditions): return list(context.values()) if values_only else context
         else: return self._filter_locals(context, _how, *conditions, values_only=values_only)
 
-    def _get_condition(self, how: str, args=None, page=None, date=None, query=None,
+    def _get_conditions(self, how: str, args=None, page=None, date=None, query=None,
                         param=None, request=None) -> Tuple[bool]:
         t = lambda condition: condition if isinstance(condition, bool) else True
         if how in ("all","crawl"): return (True,)*6
@@ -601,17 +596,17 @@ class Spider(BaseSession, Iterator):
     def set_var(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
                 strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Tuple[Arguments,Context]:
         args, context = [self.from_locals(locals, by, **context) for by in ["args","context"]]
-        args = self.map_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
-        context = self.map_context(default=default, dropna=dropna, strict=strict, unique=unique, to=to, **context)
+        args = self.set_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
+        context = self.set_context(default=default, dropna=dropna, strict=strict, unique=unique, to=to, **context)
         return args, context
 
-    def map_args(self, *args, how: Literal["min","max","first"]="min", default=None,
+    def set_args(self, *args, how: Literal["min","max","first"]="min", default=None,
                 dropna=True, strict=False, unique=True, **context) -> Arguments:
         if not args: return args
         elif len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
         else: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
 
-    def map_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
+    def set_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                     to: Literal["en","ko"]="en", **context) -> Context:
         if locals: context = self.from_locals(locals, "context", **context)
         signature = self.inspect()
@@ -668,7 +663,7 @@ class Spider(BaseSession, Iterator):
                     data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
             session = session if session else requests
             url, params = self.encode_params(url, params, encode=encode)
-            if cookies: headers["Cookie"] = str(cookies)
+            if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.logger.debug(log_messages(**messages, logJson=self.logJson))
             return func(self, method=method, url=url, session=session, messages=messages, **kwargs)
@@ -892,7 +887,7 @@ class AsyncSpider(Spider):
     redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
@@ -910,7 +905,7 @@ class AsyncSpider(Spider):
         self.apiRedirect = apiRedirect
         if is_empty(self.redirectArgs, strict=True): self.redirectArgs = self.iterateArgs
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=False)
-        self.set_context(contextFields=contextFields, **context)
+        if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
 
     ###################################################################
@@ -1010,7 +1005,7 @@ class AsyncSpider(Spider):
                         data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
             session = session if session else aiohttp
             url, params = self.encode_params(url, params, encode=encode)
-            if cookies: headers["Cookie"] = str(cookies)
+            if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.logger.debug(log_messages(**messages, logJson=self.logJson))
             return await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
@@ -1194,7 +1189,7 @@ class LoginSpider(requests.Session, Spider):
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
                     data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
             url, params = self.encode_params(url, params, encode=encode)
-            if cookies: headers["Cookie"] = str(cookies)
+            if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.logger.debug(log_messages(**messages, logJson=self.logJson))
             return func(self, method=method, url=url, messages=messages, **kwargs)
@@ -1291,8 +1286,9 @@ class EncryptedSpider(Spider):
     renameMap = dict()
     message = str()
     auth = LoginSpider
+    decryptedKey = dict()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
@@ -1300,21 +1296,20 @@ class EncryptedSpider(Spider):
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
-                encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
+                encryptedKey: EncryptedKey=str(), decryptedKey: Union[str,Dict]=str(), **context):
         Spider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            self, fields=fields, contextFields=contextFields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
-            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
-        self.set_context(contextFields=contextFields, **context)
-        self.set_query(queryInfo, **context)
-        if not self.cookies:
+            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap, schemaInfo=schemaInfo,
+            delay=delay, progress=progress, message=message, cookies=cookies, queryInfo=queryInfo, **context)
+        if not cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
     def set_secrets(self, encryptedKey=str(), decryptedKey=str()):
-        decryptedKey = decryptedKey if decryptedKey else self.get("decryptedKey")
-        try: self.decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
-        except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        if not self.decryptedKey and not isinstance(decryptedKey, Dict):
+            try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
+            except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        self.decryptedKey = decryptedKey if decryptedKey else self.decryptedKey
         self.logger.info(log_encrypt(**self.decryptedKey, show=3))
 
     def login_session(func):
@@ -1322,7 +1317,7 @@ class EncryptedSpider(Spider):
         def wrapper(self: EncryptedSpider, *args, self_var=True, cookies=str(),
                     uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as session:
+            with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
                 session.login()
                 session.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
                 data = func(self, *args, session=session, cookies=cookies, **kwargs)
@@ -1361,8 +1356,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     redirectLimit = MAX_REDIRECT_LIMIT
     message = str()
     auth = LoginSpider
+    decryptedKey = dict()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: Optional[ContextMapper]=None,
+    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
@@ -1372,14 +1368,12 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            self, fields=fields, contextFields=contextFields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
             logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message,
-            cookies=cookies, numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit)
-        self.set_context(contextFields=contextFields, **context)
-        self.set_query(queryInfo, **context)
-        if not self.cookies:
+            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
+            numTasks=numTasks, queryInfo=queryInfo, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
+        if not cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
     def login_session(func):
@@ -1388,7 +1382,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                             uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             semaphore = self.asyncio_semaphore(**kwargs)
-            with (BaseLogin(cookies) if cookies else self.auth(**kwargs)) as auth:
+            with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
                 auth.login()
                 auth.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
                 async with aiohttp.ClientSession(cookies=auth.cookies) as session:
