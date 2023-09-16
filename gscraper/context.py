@@ -9,24 +9,25 @@ def exists_context(**context):
     return {key: value for key, value in context.items() if value or isinstance(value, (bool,float,int))}
 
 
-UNIQUE_CONTEXT = lambda self=None, asyncio=False, operation=None, host=None, where=None, which=None, \
+UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, responseType=None, \
+                        debug=None, localSave=None, extraSave=None, interrupt=None, \
                         logger=None, logJson=None, errors=None, schemaInfo=None, \
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
-                        authClass=None, dependencies=None, data=None, results=None, crawler=None, \
-                        prefix=None, self_var=True, **context: context
+                        authClass=None, dependencies=None, response=None, data=None, results=None, \
+                        crawler=None, self_var=None, prefix=None, rename=None, **context: context
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
                         **context: UNIQUE_CONTEXT(**context)
 
 
-REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, messages=None, \
+REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, allow_redirects=None, \
                         close=None, verify=None, validate=None, exception=None, valid=None, invalid=None, \
                         html=None, table_header=None, table_idx=None, engine=None, how=None, default=None, \
-                        dropna=None, strict=None, unique=None, to=None, **context: TASK_CONTEXT(**context)
+                        dropna=None, strict=None, unique=None, **context: TASK_CONTEXT(**context)
 
 
 UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \
@@ -36,9 +37,10 @@ UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=N
 
 PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fronNow=None, \
                         startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
-                        logName=str(), logLevel="WARN", logFile=str(), debug=False, renameMap=dict(), \
-                        delay=1., progress=True, message=str(), numTasks=100, apiRedirect=False, redirectUnit=0, \
-                        queryInfo=None, uploadInfo=None, encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
+                        logName=str(), logLevel="WARN", logFile=str(), renameMap=dict(), \
+                        delay=1., progress=True, message=str(), numTasks=100, \
+                        apiRedirect=False, redirectUnit=0, queryInfo=None, uploadInfo=None, \
+                        encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
     dict(exists_context(
         fields = fields,
         iterateUnit = iterateUnit,
@@ -52,7 +54,6 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fronNow=None
         logName = logName,
         logLevel = logLevel,
         logFile = logFile,
-        debug = debug,
         renameMap = renameMap,
         delay = delay,
         numTasks = numTasks,

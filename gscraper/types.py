@@ -307,7 +307,7 @@ TYPE_LIST = {
 abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
 
 
-def get_type(__object: Any, argidx=0) -> Type:
+def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Type:
     if isinstance(__object, Type): return __object
     elif isinstance(__object, str):
         types = [__t for __t, __hint in TYPE_LIST.items() if __object.lower() in __hint]
@@ -321,7 +321,7 @@ def get_type(__object: Any, argidx=0) -> Type:
     else: return type(__object)
 
 
-def init_origin(__object, argidx=0, default=None) -> Any:
+def init_origin(__object: Union[Type,TypeHint,Any], argidx=0, default=None) -> Any:
     __type = get_type(__object, argidx)
     try: return __type()
     except TypeError:
@@ -376,6 +376,9 @@ def is_dict_type(__type: TypeHint) -> bool:
 
 def is_records_type(__type: TypeHint) -> bool:
     return is_type(__type, RECORDS_TYPES)
+
+def is_json_type(__type: TypeHint) -> bool:
+    return is_type(__type, STRING_TYPES+DICT_TYPES+RECORDS_TYPES+["json"])
 
 def is_dataframe_type(__type: TypeHint) -> bool:
     return is_type(__type, DATAFRAME_TYPES)

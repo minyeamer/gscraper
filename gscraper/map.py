@@ -145,7 +145,7 @@ def get_index(__s: IndexedSequence, values: _VT, default=None, if_null: Literal[
 def get_scala(__object, index: Optional[int]=0, default=None, random=False) -> _VT:
     if not is_array(__object): return __object if abs_idx(index) == 0 else default
     elif isinstance(__object, Set): return __object.copy().pop()
-    elif __object and random: return rand.choice(__object)
+    elif __object and random: return rand.choice(__object) if __object else default
     else: return iloc(__object, index, default=default)
 
 

@@ -5,19 +5,23 @@ from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
-from .types import is_array, allin_instance, is_str_array, is_records, init_origin, get_annotation, is_iterable_annotation
+from .types import is_dataframe_type, allin_instance, is_array, is_str_array, is_records
+from .types import init_origin, get_annotation, is_iterable_annotation
 
 from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_date, cast_datetime_format
 from .date import now, get_date, get_date_range, is_daily_frequency
 from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
-from .logs import CustomLogger, log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from .map import exists, is_empty, unique, to_array, get_scala, diff
+from .logs import CustomLogger, dumps_data
+from .logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
+from .map import exists, data_exists, unique, to_array, get_scala, diff
 from .map import iloc, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
-from .map import kloc, apply_dict, chain_dict, drop_dict, cloc, apply_df, merge_drop
+from .map import kloc, apply_dict, chain_dict, drop_dict, exists_dict, cloc, apply_df
 from .map import exists_one, convert_data, rename_data, filter_data, chain_exists, set_data, data_empty
 from .parse import parse_cookies, parse_origin, decode_cookies, encode_params, validate_schema, parse_schema
+
 from abc import ABCMeta, abstractmethod
+from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import asyncio
 import aiohttp
@@ -25,7 +29,7 @@ import functools
 import requests
 import time
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
 from json import JSONDecodeError
 import datetime as dt
 import json
@@ -37,6 +41,7 @@ from inspect import Parameter
 from itertools import product
 import base64
 import inspect
+import os
 import random
 
 
@@ -64,9 +69,15 @@ MAX_REDIRECT_LIMIT = 10
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]
 PAGE_PARAMS = ["size", "pageSize", "pageStart", "start"]
+
 DATE_ITERATOR = ["startDate", "endDate", "date"]
+DATE_PARAMS = ["startDate", "endDate", "interval"]
+
+CHECKPOINT = ["context", "crawl", "query", "iterator", "gather", "redirect", "request", "response", "parse", "login"]
+CHECKPOINT_PATH = "saved/"
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
+USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
@@ -130,6 +141,7 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
 class CustomDict(dict):
     def __init__(self, **kwargs):
         super().__init__(kwargs)
+        self.update(self.__dict__)
 
     def copy(self, __instance: Optional[ClassInstance]=None) -> Any:
         if __instance: return __instance.__class__(**self.__dict__)
@@ -178,7 +190,8 @@ class BaseSession(CustomDict):
     def __init__(self, fields: IndexLabel=list(),
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False,
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **kwargs):
         super().__init__(kwargs)
         self.operation = self.operation
@@ -188,16 +201,20 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.renameMap = renameMap if renameMap else self.renameMap
-        self.set_logger(logName, logLevel, logFile, debug)
+        self.set_logger(logName, logLevel, logFile, debug, localSave, extraSave, interrupt)
         self.set_schema(schemaInfo)
 
-    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(), debug=False):
+    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                    debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str()):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
         self.logJson = bool(logFile)
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
-        self.debug = debug
+        self.debug = cast_list(debug)
+        self.localSave = localSave
+        self.extraSave = cast_list(extraSave)
+        self.interrupt = interrupt
 
     def set_schema(self, schemaInfo: SchemaInfo=dict()):
         schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
@@ -218,43 +235,106 @@ class BaseSession(CustomDict):
     def get_rename_map(self, **kwargs) -> RenameMap:
         return self.renameMap
 
-    def extra_save(self, data: Data, prefix=str(), extraSave=False, **kwargs):
-        if not extraSave: return
-        file = prefix+'_' if prefix else str()+self.now("%Y%m%d%H%M%S")+".xlsx"
+    def rename(self, string: str, **kwargs) -> str:
         renameMap = self.get_rename_map(**kwargs)
-        convert_data(data, return_type="dataframe").rename(columns=renameMap).to_excel(file, index=False)
+        return renameMap[string] if renameMap and (string in renameMap) else string
+
+    ###################################################################
+    ############################ Checkpoint ###########################
+    ###################################################################
+
+    def checkpoint(self, point: str, where: str, msg: Dict,
+                    save: Optional[Data]=None, ext: Optional[TypeHint]=None):
+        if point in self.debug:
+            self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg)))
+        if (point in self.extraSave) and data_exists(save):
+            if (point == "response"): save, ext = self._check_response(save)
+            self._validate_dir(CHECKPOINT_PATH)
+            self.local_save(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
+        if self.interrupt == point:
+            raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
+
+    def local_save(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
+        prefix = self.rename(prefix if prefix else self.operation, to="ko")
+        file = prefix+'_'+self.now("%Y%m%d%H%M%S")
+        ext = ext if ext else type(data)
+        if is_dataframe_type(ext):
+            self.save_dataframe(data, file+".xlsx")
+        elif ext == "html" and isinstance(data, str):
+            self.save_source(data, file+".html")
+        else: self.save_json(data, file+".json")
+
+    def save_json(self, data: Data, file: str):
+        file = self._validate_file(file)
+        if isinstance(data, pd.DataFrame): data = data.to_dict("records")
+        with open(file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+
+    def save_dataframe(self, data: Data, file: str):
+        file = self._validate_file(file)
+        data = convert_data(data, return_type="dataframe")
+        data.rename(columns=self.get_rename_map(to="ko")).to_excel(file, index=False)
+
+    def save_source(self, data: str, file: str):
+        file = self._validate_file(file)
+        source = BeautifulSoup(data, "html.parser")
+        with open(file, "w", encoding="utf-8") as f:
+            f.write(str(source))
+
+    def _validate_dir(self, dir: str):
+        if not os.path.exists(dir):
+            os.mkdir(dir)
+
+    def _validate_file(self, file: str):
+        file, ext = os.path.splitext(file)
+        __i, suffix = 1, str()
+        while True:
+            if os.path.exists(file+suffix+ext):
+                suffix, __i = f"_{__i}", __i+1
+            else: break
+        return file+suffix+ext
+
+    def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
+        if isinstance(response, str) and response:
+            try: return json.loads(response), "json"
+            except: response, "html"
+        else: return response, "json"
 
     ###################################################################
     ########################### Log Managers ##########################
     ###################################################################
 
-    def log_errors(func):
+    def catch_exception(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, *args, **kwargs):
             try: return func(self, *args, **kwargs)
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                self.log_context(**kwargs)
-                if self.debug: raise exception
+                if "exception" in self.debug:
+                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "kwargs":kwargs})
+                    raise exception
+                self.log_errors(*args, **kwargs)
                 func_name = f"{func.__name__}({self.__class__.__name__})"
                 self.logger.error(log_exception(func_name, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
                 return init_origin(func)
         return wrapper
 
-    def log_context(self, **context):
-        self.errors.append(context)
+    def log_errors(self, *args, **kwargs):
+        self.errors.append(dict({"args":args}, **kwargs))
 
     def validate_response(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, response: Any, *args, **kwargs):
             is_valid = self.is_valid_response(response)
+            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response)
             data = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
-            self.log_response(data, **kwargs)
+            self.checkpoint("parse", where=func.__name__, msg={"data":data}, save=data)
+            self.log_results(data, **kwargs)
             return data
         return wrapper
 
-    def log_response(self, data: Data, **context):
+    def log_results(self, data: Data, **context):
         self.logger.info(log_data(data, **context))
 
     def is_valid_response(self, response: Any) -> bool:
@@ -294,15 +374,16 @@ class Iterator(CustomDict):
     ########################### Set Iterator ##########################
     ###################################################################
 
-    def get_iterator(self, _args=True, _page=True, _date=True, _product=True,
-                    keys_only=False, values_only=False, **context) -> Union[Context,_KT,_VT]:
+    def get_iterator(self, _args=True, _page=True, _date=True, _product=True, _params=False,
+                    keys_only=False, values_only=False, if_null: Literal["drop","pass"]="drop",
+                    **context) -> Union[Context,_KT,_VT]:
         iterateArgs = self.iterateArgs * int(_args)
-        iteratePage = PAGE_ITERATOR * int(bool(self.pagination)) * int(_page)
-        iterateDate = DATE_ITERATOR * int(bool(self.interval)) * int(_date)
+        iteratePage = (PAGE_PARAMS if _params else PAGE_ITERATOR) * int(bool(self.pagination)) * int(_page)
+        iterateDate = (DATE_PARAMS if _params else DATE_ITERATOR) * int(bool(self.interval)) * int(_date)
         iterateProduct = self.iterateProduct * int(_product)
         query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateProduct)
         if keys_only: return query
-        else: return kloc(context, query, if_null="drop", values_only=values_only)
+        else: return kloc(context, query, if_null=if_null, values_only=values_only)
 
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
@@ -515,13 +596,14 @@ class Spider(BaseSession, Iterator):
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(), **context):
         BaseSession.__init__(
             self, fields=fields, datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            renameMap=renameMap, schemaInfo=schemaInfo)
+            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, localSave=localSave,
+            extraSave=extraSave, interrupt=interrupt, renameMap=renameMap, schemaInfo=schemaInfo)
         Iterator.__init__(
             self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, **context)
@@ -531,6 +613,10 @@ class Spider(BaseSession, Iterator):
         self.cookies = cookies
         if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
+
+    ###################################################################
+    ####################### Parameter Inspector #######################
+    ###################################################################
 
     def inspect(self, __key: Optional[Literal["crawl","required","iterable","literal","return"]]=None) -> Dict[_KT,Union[Dict,str]]:
         info = dict(parameter=list())
@@ -561,43 +647,50 @@ class Spider(BaseSession, Iterator):
             info["iterable"] = True
         return info
 
-    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","request","parse","query"]="all",
-                    _base=True, _args=None, _page=None, _date=None, _product=None, _param=None, _request=None,
-                    values_only=False, **context) -> Union[Arguments,Context,Tuple]:
-        base, context = locals.pop("context", dict()), UNIQUE_CONTEXT(**dict(locals, **context))
-        context = dict(base, **context) if _base else context
-        if is_array(_how): return tuple(self.from_locals(context, how) for how in _how)
-        conditions = self._get_conditions(_how, _args, _page, _date, _product, _param, _request)
-        if all(conditions): return list(context.values()) if values_only else context
-        else: return self._filter_locals(context, _how, *conditions, values_only=values_only)
+    ###################################################################
+    ###################### Local Variable Looker ######################
+    ###################################################################
 
-    def _get_conditions(self, how: str, args=None, page=None, date=None, product=None,
-                        param=None, request=None) -> Tuple[bool]:
+    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","query","request","parse"]="all",
+                    **context) -> Union[Arguments,Context,Tuple]:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        if is_array(_how): return tuple(self.from_locals(_how=how, **context) for how in _how)
+        elif _how == "args": return self.get_args(locals, **context)
+        elif _how == "context": return self.get_context(locals, **context)
+        elif _how == "query": return self.get_query(locals, **context)
+        elif _how == "request": return self.get_request(locals, **context)
+        elif _how == "parse": return self.get_parse(locals, **context)
+        else: return context
+
+    def get_args(self, locals: Dict=dict(), **context) -> Arguments:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        return kloc(context, self.iterateArgs, if_null="drop", values_only=True)
+
+    def get_context(self, locals: Dict=dict(), **context) -> Context:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        return drop_dict(context, self.iterateArgs, inplace=False)
+
+    def get_query(self, locals: Dict=dict(), **context) -> Tuple[Arguments,Context]:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        return self.get_args(**context), self.get_context(**context)
+
+    def get_request(self, locals: Dict=dict(), **context) -> Context:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        keys = unique(*self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
+        return kloc(context, keys, if_null="drop")
+
+    def get_parse(self, locals: Dict=dict(), **context) -> Context:
+        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+        return REQUEST_CONTEXT(**context)
+
+    def _filter_locals(self, context: Context, args=None, page=None, date=None, product=None,
+                        param=None, request=None, if_null: Literal["drop","pass"]="drop") -> Context:
         t = lambda condition: condition if isinstance(condition, bool) else True
-        if how == "all": return (True,)*6
-        elif how == "request": return (True,)*4+(False,True)
-        elif how == "parse": return (True,)*4+(True,False)
-        elif how == "args": return (True,)+(False,)*5
-        elif how == "context": return (False,)+(True,)*5
-        elif how == "query": return (True,)*4+(False,False)
-        return t(args), t(page), t(date), t(product), t(param), t(request)
-
-    def _filter_locals(self, context: Context, how: str, args=None, page=None, date=None, product=None,
-                        param=None, request=None, values_only=False) -> Union[Arguments,Context]:
-        iterators, params = self.get_iterator(keys_only=True), list(self.inspect("crawl").keys())
-        queries = self.get_iterator(args, page, date, product, keys_only=True)
-        if how in ("args","query"):
-            query = kloc(context, queries, if_null="drop", values_only=(how=="args"))
-            return tuple(query) if how == "args" else query
-        elif param: queries = queries + diff(params, iterators)
-        request = drop_dict((context if request else REQUEST_CONTEXT(**context)), iterators+params, inplace=False)
-        return dict(request, **kloc(context, queries, if_null="drop", values_only=values_only))
-
-    def log_context(self, **context):
-        self.errors.append(self.get_iterator(**context))
-
-    def log_response(self, data: Data, **context):
-        self.logger.info(log_data(data, **self.get_iterator(**context)))
+        keys = self.get_iterator(t(args), t(page), t(date), t(product), keys_only=True)
+        if t(param): keys = keys + diff(list(context.keys()), self.get_iterator(keys_only=True))
+        context = kloc(context, keys, if_null=if_null)
+        if not t(request): context = REQUEST_CONTEXT(**context)
+        return context
 
     ###################################################################
     ######################### Session Managers ########################
@@ -607,7 +700,10 @@ class Spider(BaseSession, Iterator):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             data = func(self, *args, **kwargs)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -616,9 +712,12 @@ class Spider(BaseSession, Iterator):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             with requests.Session() as session:
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -636,34 +735,35 @@ class Spider(BaseSession, Iterator):
             random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
         else: return 0.
 
+    def log_results(self, data: Data, **context):
+        self.logger.info(log_data(data, **self.get_iterator(**context)))
+
     ###################################################################
-    ######################## Parameter Managers #######################
+    ######################## Parameter Checker ########################
     ###################################################################
 
-    def set_var(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
-                strict=False, unique=True, to: Literal["en","ko"]="en", **context) -> Tuple[Arguments,Context]:
-        args, context = self.from_locals(locals, ["args","context"], **context)
-        args = self.set_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
-        context = self.set_context(default=default, dropna=dropna, strict=strict, unique=unique, to=to, **context)
+    def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
+                        strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Tuple[Arguments,Context]:
+        args, context = self.get_query(locals, **context)
+        args = self.validate_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
+        context = self.validate_context(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename, **context)
         return args, context
 
-    def set_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                dropna=True, strict=False, unique=True, **context) -> Arguments:
+    def validate_args(self, *args, how: Literal["min","max","first"]="min", default=None,
+                    dropna=True, strict=False, unique=True, **context) -> Arguments:
         if not args: return args
         elif len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
         else: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
 
-    def set_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
-                    to: Literal["en","ko"]="en", **context) -> Context:
-        if locals: context = self.from_locals(locals, "context", **context)
-        signature = self.inspect()
-        sequence_keys, rename_keys = signature["iterable"].keys(), signature["literal"].keys()
-        renameMap = self.get_rename_map(to=to, **context)
+    def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
+                        rename: Dict[_KT,Dict]=dict(), **context) -> Context:
+        if locals: context = self.get_context(locals, **context)
+        sequence_keys = self.inspect("iterable").keys()
         for __key in list(context.keys()):
             if __key in sequence_keys:
                 context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
-            if __key in rename_keys:
-                context[__key] = rename_data(context[__key], rename=renameMap)
+            if __key in rename:
+                context[__key] = rename_data(context[__key], rename=rename[__key])
         return context
 
     ###################################################################
@@ -673,17 +773,18 @@ class Spider(BaseSession, Iterator):
     @abstractmethod
     @requests_session
     def crawl(self, *args, **context) -> Data:
-        args, context = self.set_var(locals())
+        args, context = self.validate_params(locals())
         return self.gather(*args, **context)
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                 pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = self.get_message(*args, message=message, **context)
-        if self.debug: self.logger.warn({"args":args, "context":context})
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
         iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
-        if self.debug: self.logger.warn({"iterator":iterator})
+        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
+        message = self.get_message(*args, message=message, **context)
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     def get_message(self, *args, message=str(), **context) -> str:
@@ -698,7 +799,7 @@ class Spider(BaseSession, Iterator):
     ###################################################################
 
     @abstractmethod
-    @BaseSession.log_errors
+    @BaseSession.catch_exception
     @requests_limit
     def fetch(self, *args, **context) -> Data:
         ...
@@ -712,7 +813,8 @@ class Spider(BaseSession, Iterator):
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.logger.debug(log_messages(**messages, logJson=self.logJson))
+            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.logger.debug(log_messages(**messages, dump=self.logJson))
             return func(self, method=method, url=url, session=session, messages=messages, **kwargs)
         return wrapper
 
@@ -835,22 +937,22 @@ class Spider(BaseSession, Iterator):
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
                     arr_cols: Sequence[IndexLabel]=list(), account: Account=dict(), **context):
-        renameMap = self.get_rename_map(**context)
         data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
-                            numericise_ignore=str_cols, return_type="dataframe", rename=renameMap)
-        self.logger.info(log_table(data, logJson=self.logJson))
+                            numericise_ignore=str_cols, return_type="dataframe", rename=self.get_rename_map(**context))
+        self.logger.info(log_table(data, dump=self.logJson))
         for field in cast_tuple(fields):
             values = list(data[field]) if field in data else None
             if (len(values) == 1) and (field not in arr_cols): values = values[0]
             self.update(field=values)
 
-    @BaseSession.log_errors
+    @BaseSession.catch_exception
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["fail","replace","append"]="append",
                         base_sheet=str(), cell=str(), account: Account=dict(), clear: _PASS=None, **context):
         data = self.map_gs_data(data, **context)
         if base_sheet:
             data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, account=account), **context)
-        self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
+        self.checkpoint(sheet, where="upload_gspread", msg={"key":key, "sheet":sheet, "mode":mode, "data":data}, save=data)
+        self.logger.info(log_table(data, key=key, sheet=sheet, dump=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
         update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
 
@@ -859,9 +961,8 @@ class Spider(BaseSession, Iterator):
 
     def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
                     account: Account=dict(), **context) -> pd.DataFrame:
-        renameMap = self.get_rename_map(**context)
-        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=renameMap)
-        self.logger.info(log_table(data, key=key, sheet=sheet, logJson=self.logJson))
+        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=self.get_rename_map(**context))
+        self.logger.info(log_table(data, key=key, sheet=sheet, dump=self.logJson))
         return data
 
     def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, **context) -> pd.DataFrame:
@@ -871,7 +972,7 @@ class Spider(BaseSession, Iterator):
     ######################### Google Bigquery #########################
     ###################################################################
 
-    @BaseSession.log_errors
+    @BaseSession.catch_exception
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame,
                     mode: Literal["fail","replace","append","upsert"]="append",
                     schema: Optional[BigQuerySchema]=None, progress=True, partition=str(),
@@ -882,7 +983,8 @@ class Spider(BaseSession, Iterator):
         context = dict(project_id=project_id, reauth=reauth, account=account, credentials=credentials)
         if mode == "upsert":
             data = self.map_gbq_base(data, self.read_gbq_base(query=table, **context), schema=schema, **context)
-        self.logger.info(log_table(data, table=table, pid=project_id, mode=mode, schema=schema, logJson=self.logJson))
+        self.checkpoint(table, where="upload_gbq", msg={"table":table, "pid":project_id, "mode":mode, "data":data}, save=data)
+        self.logger.info(log_table(data, table=table, pid=project_id, mode=mode, schema=schema, dump=self.logJson))
         to_gbq(table, project_id, data, if_exists=("replace" if mode == "upsert" else mode), schema=schema, progress=progress,
                 partition=partition, partition_by=partition_by, **context)
 
@@ -939,14 +1041,16 @@ class AsyncSpider(Spider):
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, **context):
         Spider.__init__(
             self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
@@ -963,8 +1067,11 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             semaphore = self.asyncio_semaphore(**kwargs)
             data = await func(self, *args, semaphore=semaphore, **kwargs)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -973,10 +1080,13 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             semaphore = self.asyncio_semaphore(**kwargs)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -985,15 +1095,17 @@ class AsyncSpider(Spider):
         numTasks = min(self.numTasks, (self.redirectLimit if apiRedirect else self.maxLimit), self.maxLimit)
         return asyncio.Semaphore(numTasks)
 
-    def asyncio_errors(func):
+    def asyncio_exception(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, **kwargs):
             try: return await func(self, *args, **kwargs)
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                self.log_context(**kwargs)
-                if self.debug: raise exception
+                if "exception" in self.debug:
+                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "kwargs":kwargs})
+                    raise exception
+                self.log_errors(*args, **kwargs)
                 name = f"{func.__name__}({self.__class__.__name__})"
                 self.logger.error(log_exception(name, *args, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
                 return init_origin(func)
@@ -1024,23 +1136,24 @@ class AsyncSpider(Spider):
     @abstractmethod
     @asyncio_session
     async def crawl(self, *args, **context) -> Data:
-        args, context = self.set_var(locals())
+        args, context = self.validate_params(locals())
         return await self.gather(*args, **context)
 
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                     pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = self.get_message(*args, message=message, **context)
-        if self.debug: self.logger.warn({"args":args, "context":context})
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
         iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
-        if self.debug: self.logger.warn({"iterator":iterator})
+        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
+        message = self.get_message(*args, message=message, **context)
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     @abstractmethod
-    @asyncio_errors
+    @asyncio_exception
     @asyncio_limit
     async def fetch(self, *args, **context) -> Data:
         ...
@@ -1054,7 +1167,8 @@ class AsyncSpider(Spider):
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.logger.debug(log_messages(**messages, logJson=self.logJson))
+            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.logger.debug(log_messages(**messages, dump=self.logJson))
             return await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
         return wrapper
 
@@ -1144,25 +1258,27 @@ class AsyncSpider(Spider):
     async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                         iterateUnit: _PASS=None, redirectUnit: Unit=1, pagination: _PASS=None,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        message = self.get_redirect_message(*args, message=message, **context)
-        if self.debug: self.logger.warn({"args":args, "context":context})
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
         redirect_context = dict(iterateArgs=self.redirectArgs, iterateProduct=self.redirectProduct, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
-        if self.debug: self.logger.warn({"iterator":iterator})
+        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
+        message = self.get_redirect_message(*args, message=message, **context)
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     def get_redirect_message(self, *args, message=str(), **context) -> str:
         return message if message else REDIRECT_MSG(self.operation)
 
-    @asyncio_errors
+    @asyncio_exception
     @asyncio_limit
     @gcloud_authorized
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
         data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
         response = self.request_text("POST", redirectUrl, session, json=data, headers=dict(Authorization=authorization))
+        self.checkpoint("redirect", where="fetch_redirect", msg={"response":response}, save=response, ext="json")
         return self._parse_redirect(json.loads(response), **context)
 
     def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
@@ -1201,15 +1317,11 @@ class LoginSpider(requests.Session, Spider):
     operation = "login"
 
     @abstractmethod
-    def __init__(self, cookies=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), **context):
-        super().__init__()
-        self.operation = self.operation
+    def __init__(self, cookies=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(), **context):
+        requests.Session.__init__(self)
         if cookies: self.cookies.update(decode_cookies(cookies))
-        self.logName = logName if logName else self.operation
-        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
-        self.logFile = logFile
-        self.logJson = bool(logFile)
-        self.logger = CustomLogger(name=self.logName, level=self.logLevel, file=self.logFile)
+        self.set_logger(logName, logLevel, logFile, debug, localSave, extraSave, interrupt)
 
     @abstractmethod
     def login(self):
@@ -1238,7 +1350,8 @@ class LoginSpider(requests.Session, Spider):
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.logger.debug(log_messages(**messages, logJson=self.logJson))
+            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.logger.debug(log_messages(**messages, dump=self.logJson))
             return func(self, method=method, url=url, messages=messages, **kwargs)
         return wrapper
 
@@ -1300,9 +1413,7 @@ class BaseLogin(LoginSpider):
     operation = "login"
 
     def __init__(self, cookies=str()):
-        super().__init__()
-        self.operation = self.operation
-        self.update_cookies(cookies)
+        super().__init__(cookies)
 
     def login(self):
         return
@@ -1340,15 +1451,18 @@ class EncryptedSpider(Spider):
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey: Union[str,Dict]=str(), **context):
         Spider.__init__(
-            self, fields=fields, contextFields=contextFields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, renameMap=renameMap, schemaInfo=schemaInfo,
-            delay=delay, progress=progress, message=message, cookies=cookies, queryInfo=queryInfo, **context)
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
+            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
+            contextFields=contextFields, queryInfo=queryInfo, **context)
         if not cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
@@ -1364,11 +1478,15 @@ class EncryptedSpider(Spider):
         def wrapper(self: EncryptedSpider, *args, self_var=True, cookies=str(),
                     uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
                 session.login()
                 session.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
+                self.checkpoint("login", where="login", msg={"cookies":dict(session.cookies)})
                 data = func(self, *args, session=session, cookies=cookies, **kwargs)
             time.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -1410,16 +1528,19 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(), debug=False,
+                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(
-            self, fields=fields, contextFields=contextFields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            renameMap=renameMap, schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
-            numTasks=numTasks, queryInfo=queryInfo, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
+            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
+            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
+            contextFields=contextFields, queryInfo=queryInfo,
+            numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
         if not cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
@@ -1428,13 +1549,17 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
         async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, cookies=str(),
                             uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             semaphore = self.asyncio_semaphore(**kwargs)
             with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
                 auth.login()
                 auth.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
+                self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
                 async with aiohttp.ClientSession(cookies=auth.cookies) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            if self.localSave: self.local_save(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -1454,7 +1579,7 @@ class Parser(BaseSession):
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug=False, root: _KT=list(), renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
+                debug: List[str]=list(), root: _KT=list(), renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
         BaseSession.__init__(
             self, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
             renameMap=renameMap, schemaInfo=schemaInfo, **context)
@@ -1470,9 +1595,8 @@ class Parser(BaseSession):
         return json.loads(response)
 
     def parse_data(self, data: Data, schemaInfo: SchemaInfo=dict(), root: _KT=list(), discard=False,
-                    fields: IndexLabel=list(), updateTime=True, to=None, **context) -> Data:
-        renameMap = self.get_rename_map(to=to, **context)
-        data = parse_schema(data, schemaInfo, self.responseType, root, renameMap, discard, **context)
+                    fields: IndexLabel=list(), updateTime=True, **context) -> Data:
+        data = parse_schema(data, schemaInfo, self.responseType, root, self.get_rename_map(**context), discard, **context)
         if updateTime:
             data = set_data(data, updateDate=self.today(), updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
@@ -1497,36 +1621,25 @@ class Pipeline(Spider):
     @abstractmethod
     @Spider.requests_task
     def crawl(self, *args, **context) -> Data:
-        args, context = self.set_var(locals())
+        args, context = self.validate_params(locals())
         return self.gather(*args, **context)
 
     @abstractmethod
     def gather(self, **context) -> Data:
         args = list()
         for cralwer in self.dependencies:
-            operation = self.get_operation(cralwer, **context)
-            data = self.crawl_proxy(cralwer, prefix=operation, **context)
+            data = self.crawl_proxy(cralwer, **context)
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    def get_operation(self, crawler: Spider, **context) -> str:
-        operation = crawler.__dict__.get("operation")
-        if not operation: raise ValueError(DEPENDENCY_HAS_NO_NAME_MSG)
-        renameMap = self.get_rename_map(**context)
-        return renameMap.get(operation, operation)
+    def crawl_proxy(self, init: Type[Spider], returnType: Optional[TypeHint]=None, **context) -> Data:
+        crawler = init(**PROXY_CONTEXT(**context), returnType=returnType)
+        data = crawler.crawl()
+        self.checkpoint(crawler.operation, where=crawler.operation, msg={"data":data}, save=data)
+        return data
 
-    def crawl_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
-                    appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
-                    how: Literal["left","right","outer","inner","cross"]="left", on=str(), **context) -> Data:
-        query = crawler.get_iterator(keys_only=True)
-        if query and any(map(is_empty, kloc(context, query, if_null="pass", values_only=True))): return pd.DataFrame()
-        crawler = crawler(**context)
-        data = pd.DataFrame(crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
-        self.extra_save(data, prefix=prefix, extraSave=extraSave, **context)
-        return merge_drop(data, appendix, drop=drop, how=how, on=on)
-
-    def map_reduce(self, *data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **kwargs) -> Data:
-        return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
+    def map_reduce(self, *data: Data, fields: IndexLabel=list(), **context) -> Data:
+        return filter_data(chain_exists(data), fields=fields, if_null="pass")
 
 
 class AsyncPipeline(AsyncSpider, Pipeline):
@@ -1543,25 +1656,20 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     @abstractmethod
     @AsyncSpider.asyncio_task
     async def crawl(self, *args, **context) -> Data:
-        args, context = self.set_var(locals())
+        args, context = self.validate_params(locals())
         return await self.gather(*args, **context)
 
     @abstractmethod
     async def gather(self, **context) -> Data:
         args = list()
         for cralwer in self.dependencies:
-            operation = self.get_operation(cralwer, **context)
-            if cralwer.asyncio: data = await self.async_proxy(cralwer, prefix=operation, **context)
-            else: data = self.crawl_proxy(cralwer, prefix=operation, **context)
+            if cralwer.asyncio: data = await self.async_proxy(cralwer, **context)
+            else: data = self.crawl_proxy(cralwer, **context)
             args.append(data)
         return self.map_reduce(*args, **context)
 
-    async def async_proxy(self, crawler: Spider, prefix=str(), extraSave=False,
-                            appendix: Optional[pd.DataFrame]=None, drop: Literal["left","right"]="right",
-                            how: Literal["left","right","outer","inner","cross"]="left", on=str(), **context) -> Data:
-        query = crawler.get_iterator(keys_only=True)
-        if query and any(map(is_empty, kloc(context, query, if_null="pass", values_only=True))): return pd.DataFrame()
-        crawler = crawler(**context)
-        data = pd.DataFrame(await crawler.crawl(**PROXY_CONTEXT(**crawler.__dict__)))
-        self.extra_save(data, prefix=prefix, extraSave=extraSave, **context)
-        return merge_drop(data, appendix, drop=drop, how=how, on=on)
+    async def async_proxy(self, init: Type[AsyncSpider], returnType: Optional[TypeHint]=None, **context) -> Data:
+        crawler = init(**PROXY_CONTEXT(**context), returnType=returnType)
+        data = await crawler.crawl()
+        self.checkpoint(crawler.operation, where=crawler.operation, msg={"data":data}, save=data)
+        return data
