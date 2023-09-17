@@ -74,7 +74,9 @@ PAGE_PARAMS = ["size", "pageSize", "pageStart", "start"]
 DATE_ITERATOR = ["startDate", "endDate", "date"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
-CHECKPOINT = ["context", "crawl", "query", "iterator", "gather", "redirect", "request", "response", "parse", "login", "exception"]
+CHECKPOINT = [
+    "all", "context", "crawl", "query", "iterator", "gather", "redirect", "request", "response",
+    "parse", "login", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
@@ -192,7 +194,7 @@ class BaseSession(CustomDict):
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **kwargs):
         super().__init__(kwargs)
         self.operation = self.operation
@@ -202,20 +204,20 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.renameMap = renameMap if renameMap else self.renameMap
-        self.set_logger(logName, logLevel, logFile, debug, localSave, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
         self.set_schema(schemaInfo)
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                    debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str()):
+                    debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
         self.logJson = bool(logFile)
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
         self.debug = cast_list(debug)
-        self.localSave = localSave
         self.extraSave = cast_list(extraSave)
         self.interrupt = interrupt
+        self.localSave = localSave
 
     def set_schema(self, schemaInfo: SchemaInfo=dict()):
         schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
@@ -246,10 +248,10 @@ class BaseSession(CustomDict):
 
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
-        if point in self.debug:
+        if (point in self.debug) or ("all" in self.debug):
             self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg)))
-        if (point in self.extraSave) and data_exists(save):
-            if (point == "response"): save, ext = self._check_response(save)
+        if ((point in self.extraSave) or ("all" in self.extraSave)) and data_exists(save):
+            if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
             self.local_save(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
         if self.interrupt == point:
@@ -299,6 +301,8 @@ class BaseSession(CustomDict):
         if isinstance(response, str) and response:
             try: return json.loads(response), "json"
             except: response, "html"
+        elif isinstance(response, pd.DataFrame):
+            return response, "dataframe"
         else: return response, "json"
 
     ###################################################################
@@ -328,7 +332,6 @@ class BaseSession(CustomDict):
         @functools.wraps(func)
         def wrapper(self: BaseSession, response: Any, *args, **kwargs):
             is_valid = self.is_valid_response(response)
-            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response)
             data = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
             self.checkpoint("parse", where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **kwargs)
@@ -598,13 +601,14 @@ class Spider(BaseSession, Iterator):
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(), **context):
         BaseSession.__init__(
             self, fields=fields, datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
-            logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, localSave=localSave,
-            extraSave=extraSave, interrupt=interrupt, renameMap=renameMap, schemaInfo=schemaInfo)
+            logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
+            renameMap=renameMap, schemaInfo=schemaInfo)
         Iterator.__init__(
             self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, **context)
@@ -816,7 +820,9 @@ class Spider(BaseSession, Iterator):
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            return func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            response = func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            return response
         return wrapper
 
     @encode_messages
@@ -1043,15 +1049,15 @@ class AsyncSpider(Spider):
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, **context):
         Spider.__init__(
             self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
@@ -1170,7 +1176,9 @@ class AsyncSpider(Spider):
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            return await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            response = await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            return response
         return wrapper
 
     @encode_messages
@@ -1318,11 +1326,11 @@ class LoginSpider(requests.Session, Spider):
     operation = "login"
 
     @abstractmethod
-    def __init__(self, cookies=str(), logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(), **context):
+    def __init__(self, logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), cookies=str(), **context):
         requests.Session.__init__(self)
         if cookies: self.cookies.update(decode_cookies(cookies))
-        self.set_logger(logName, logLevel, logFile, debug, localSave, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt)
 
     @abstractmethod
     def login(self):
@@ -1345,68 +1353,70 @@ class LoginSpider(requests.Session, Spider):
 
     def encode_messages(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, method: str, url: str,
+        def wrapper(self: LoginSpider, method: str, url: str, origin: str,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
                     data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.checkpoint(origin+"_request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            return func(self, method=method, url=url, messages=messages, **kwargs)
+            response = func(self, method=method, url=url, origin=origin, messages=messages, **kwargs)
+            self.checkpoint(origin+"_response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            return response
         return wrapper
 
     @encode_messages
-    def request_url(self, method: str, url: str, messages: Dict=dict(),
+    def request_url(self, method: str, url: str, origin=str(), messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), allow_redirects=True, verify=None, **context):
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
 
     @encode_messages
-    def request_status(self, method: str, url: str, messages: Dict=dict(),
+    def request_status(self, method: str, url: str, origin=str(), messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
                         headers=None, cookies=str(), allow_redirects=True, verify=None, **context) -> int:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             return response.status_code
 
     @encode_messages
-    def request_content(self, method: str, url: str, messages: Dict=dict(),
+    def request_content(self, method: str, url: str, origin=str(), messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
                         headers=None, cookies=str(), allow_redirects=True, verify=None, **context) -> bytes:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             return response.content
 
     @encode_messages
-    def request_text(self, method: str, url: str, messages: Dict=dict(),
+    def request_text(self, method: str, url: str, origin: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), allow_redirects=True, verify=None, **context) -> str:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             return response.text
 
     @encode_messages
-    def request_json(self, method: str, url: str, messages: Dict=dict(),
+    def request_json(self, method: str, url: str, origin: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), allow_redirects=True, verify=None, **context) -> JsonData:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             return response.json()
 
     @encode_messages
-    def request_headers(self, method: str, url: str, messages: Dict=dict(),
+    def request_headers(self, method: str, url: str, origin: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), allow_redirects=True, verify=None, **context) -> Dict:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
-            self.logger.debug(dict(cookies=self.get_cookies()))
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             return response.headers
 
 
@@ -1453,15 +1463,15 @@ class EncryptedSpider(Spider):
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey: Union[str,Dict]=str(), **context):
         Spider.__init__(
             self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo, **context)
         if not cookies:
@@ -1530,15 +1540,15 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
-                debug: List[str]=list(), localSave=False, extraSave: List[str]=list(), interrupt=str(),
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(
             self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
             startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            localSave=localSave, extraSave=extraSave, interrupt=interrupt, renameMap=renameMap,
+            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo,
             numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
