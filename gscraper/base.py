@@ -69,7 +69,7 @@ MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]
-PAGE_PARAMS = ["size", "pageSize", "pageStart", "start"]
+PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
 
 DATE_ITERATOR = ["startDate", "endDate", "date"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
@@ -393,7 +393,7 @@ class Iterator(CustomDict):
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
                     **context) -> Tuple[List[Context],Context]:
         arguments, periods, iterator, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
-        args_context = self._validate_args(*args, iterateArgs=iterateArgs, pagination=pagination)
+        args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
         if args_context:
             arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
             iterateProduct = diff(iterateProduct, iterateArgs, PAGE_ITERATOR)
@@ -409,7 +409,7 @@ class Iterator(CustomDict):
     ########################## From Arguments #########################
     ###################################################################
 
-    def _validate_args(self, *args, iterateArgs: List[_KT], pagination: Pagination=False) -> Context:
+    def _check_args(self, *args, iterateArgs: List[_KT], pagination: Pagination=False) -> Context:
         match_query = is_same_length(args, iterateArgs)
         match_args = is_same_length(*args)
         valid_args = (match_query and match_args) or ((not iterateArgs) and pagination)
@@ -462,25 +462,25 @@ class Iterator(CustomDict):
         labels = cast_list(base.pop(iterateArgs.index(pagination)))
         return self._from_categorical_pages(*base, labels=labels, pagination=pagination, size=size, **context)
 
-    def _from_numeric_pages(self, *args, size: Unit, pageSize=0, pageStart=1, start=1, **context) -> Tuple[List[List],Context]:
+    def _from_numeric_pages(self, *args, size: Unit, pageSize=0, pageStart=1, offset=1, **context) -> Tuple[List[List],Context]:
         pageSize = self.validate_page_size(pageSize, self.pageUnit, self.pageLimit)
-        pages = self.get_pages(size, pageSize, pageStart, start, how="all")
+        pages = self.get_pages(size, pageSize, pageStart, offset, how="all")
         if isinstance(size, int):
             pages = [pages] * len(get_scala(args, default=[0]))
         pages = list(map(lambda __s: tuple(map(tuple, __s)), map(transpose_array, pages)))
         return args+(pages,), dict(context, pageSize=pageSize)
 
     def _from_categorical_pages(self, *args, labels: List, pagination: str, size: Optional[int]=None,
-                                pageSize=0, pageStart=1, start=1, **context) -> Tuple[List[List],Context]:
+                                pageSize=0, pageStart=1, offset=1, **context) -> Tuple[List[List],Context]:
         pages = list()
         for label in labels:
             size = self.get_size_by_label(label, size=size, **context)
             pageSize = self.get_page_size_by_label(label, pageSize=pageSize, **context)
             pageStart = self.get_page_start_by_label(label, pageStart=pageStart, **context)
-            start = self.get_start_by_label(label, start=start, **context)
-            iterator = self.get_pages(size, pageSize, pageStart, start, how="all")
+            offset = self.get_offset_by_label(label, offset=offset, **context)
+            iterator = self.get_pages(size, pageSize, pageStart, offset, how="all")
             num_pages = len(iterator[0])
-            params = ((size,)*num_pages, (pageSize,)*num_pages, (pageStart,)*num_pages, (start,)*num_pages)
+            params = ((size,)*num_pages, (pageSize,)*num_pages, (pageStart,)*num_pages, (offset,)*num_pages)
             pages.append(tuple(map(tuple, transpose_array(((label,)*num_pages,)+iterator+params))))
         return args+(pages,), context
 
@@ -491,22 +491,22 @@ class Iterator(CustomDict):
             pageSize = min(pageSize, pageLimit)
         return pageSize
 
-    def get_pages(self, size: Unit, pageSize: int, pageStart=1, start=1, pageUnit=0, pageLimit=0,
+    def get_pages(self, size: Unit, pageSize: int, pageStart=1, offset=1, pageUnit=0, pageLimit=0,
                     how: Literal["all","page","start"]="all") -> Union[Pages,List[Pages]]:
         pageSize = self.validate_page_size(pageSize, pageUnit, pageLimit)
         if isinstance(size, int):
-            return self.calc_pages(cast_int1(size), pageSize, pageStart, start, how)
+            return self.calc_pages(cast_int1(size), pageSize, pageStart, offset, how)
         elif is_array(size):
-            return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, start, how) for __sz in size]
+            return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, offset, how) for __sz in size]
         else: return tuple()
 
-    def calc_pages(self, size: int, pageSize: int, pageStart=1, start=1,
+    def calc_pages(self, size: int, pageSize: int, pageStart=1, offset=1,
                     how: Literal["all","page","start"]="all") -> Pages:
         pages = tuple(range(pageStart, (((size-1)//pageSize)+1)+pageStart))
         if how == "page": return pages
-        starts = tuple(range(start, size+start, pageSize))
+        starts = tuple(range(offset, size+offset, pageSize))
         if how == "start": return starts
-        dataSize = tuple(min(size-__start+1, pageSize) for __start in starts)
+        dataSize = tuple(min(size-start+1, pageSize) for start in starts)
         return (pages, starts, dataSize)
 
     def get_size_by_label(self, label: Any, size: Optional[int]=None, **context) -> int:
@@ -518,8 +518,8 @@ class Iterator(CustomDict):
     def get_page_start_by_label(self, label: Any, pageStart=1, **context) -> int:
         return pageStart
 
-    def get_start_by_label(self, label: Any, start=1, **context) -> int:
-        return start
+    def get_offset_by_label(self, label: Any, offset=1, **context) -> int:
+        return offset
 
     def _map_pages(self, *args: Context, keys: List[_KT]) -> List[Context]:
         base = list()
