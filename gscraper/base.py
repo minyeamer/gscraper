@@ -1,5 +1,6 @@
 from __future__ import annotations
-from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
+from .context import UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Arguments, Context, TypeHint, LogLevel
 from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
@@ -73,7 +74,7 @@ PAGE_PARAMS = ["size", "pageSize", "pageStart", "start"]
 DATE_ITERATOR = ["startDate", "endDate", "date"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
-CHECKPOINT = ["context", "crawl", "query", "iterator", "gather", "redirect", "request", "response", "parse", "login"]
+CHECKPOINT = ["context", "crawl", "query", "iterator", "gather", "redirect", "request", "response", "parse", "login", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
@@ -651,37 +652,37 @@ class Spider(BaseSession, Iterator):
     ###################### Local Variable Looker ######################
     ###################################################################
 
-    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","query","request","parse"]="all",
+    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","query","request","response"]="all",
                     **context) -> Union[Arguments,Context,Tuple]:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
         if is_array(_how): return tuple(self.from_locals(_how=how, **context) for how in _how)
-        elif _how == "args": return self.get_args(locals, **context)
-        elif _how == "context": return self.get_context(locals, **context)
-        elif _how == "query": return self.get_query(locals, **context)
-        elif _how == "request": return self.get_request(locals, **context)
-        elif _how == "parse": return self.get_parse(locals, **context)
+        elif _how == "args": return self.local_args(locals, **context)
+        elif _how == "context": return self.local_context(locals, **context)
+        elif _how == "query": return self.local_query(locals, **context)
+        elif _how == "request": return self.local_request(locals, **context)
+        elif _how == "response": return self.local_response(locals, **context)
         else: return context
 
-    def get_args(self, locals: Dict=dict(), **context) -> Arguments:
+    def local_args(self, locals: Dict=dict(), **context) -> Arguments:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
         return kloc(context, self.iterateArgs, if_null="drop", values_only=True)
 
-    def get_context(self, locals: Dict=dict(), **context) -> Context:
+    def local_context(self, locals: Dict=dict(), **context) -> Context:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
         return drop_dict(context, self.iterateArgs, inplace=False)
 
-    def get_query(self, locals: Dict=dict(), **context) -> Tuple[Arguments,Context]:
+    def local_query(self, locals: Dict=dict(), **context) -> Tuple[Arguments,Context]:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
-        return self.get_args(**context), self.get_context(**context)
+        return self.local_args(**context), self.local_context(**context)
 
-    def get_request(self, locals: Dict=dict(), **context) -> Context:
+    def local_request(self, locals: Dict=dict(), **context) -> Context:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
         keys = unique(*self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
         return kloc(context, keys, if_null="drop")
 
-    def get_parse(self, locals: Dict=dict(), **context) -> Context:
+    def local_response(self, locals: Dict=dict(), **context) -> Context:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
-        return REQUEST_CONTEXT(**context)
+        return RESPONSE_CONTEXT(**context)
 
     def _filter_locals(self, context: Context, args=None, page=None, date=None, product=None,
                         param=None, request=None, if_null: Literal["drop","pass"]="drop") -> Context:
@@ -744,7 +745,7 @@ class Spider(BaseSession, Iterator):
 
     def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
                         strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Tuple[Arguments,Context]:
-        args, context = self.get_query(locals, **context)
+        args, context = self.local_query(locals, **context)
         args = self.validate_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
         context = self.validate_context(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename, **context)
         return args, context
@@ -757,7 +758,7 @@ class Spider(BaseSession, Iterator):
 
     def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                         rename: Dict[_KT,Dict]=dict(), **context) -> Context:
-        if locals: context = self.get_context(locals, **context)
+        if locals: context = self.local_context(locals, **context)
         sequence_keys = self.inspect("iterable").keys()
         for __key in list(context.keys()):
             if __key in sequence_keys:
@@ -778,7 +779,7 @@ class Spider(BaseSession, Iterator):
 
     def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                 pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
         iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
         self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
@@ -1142,7 +1143,7 @@ class AsyncSpider(Spider):
     @asyncio_redirect
     async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                     pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
         iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
         iterator, context = self.set_iterator(*args, **iterate_params, **context)
         self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
@@ -1258,7 +1259,7 @@ class AsyncSpider(Spider):
     async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
                         iterateUnit: _PASS=None, redirectUnit: Unit=1, pagination: _PASS=None,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.get_query(locals()))))
+        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
         redirect_context = dict(iterateArgs=self.redirectArgs, iterateProduct=self.redirectProduct, iterateUnit=redirectUnit)
         iterator, context = self.set_iterator(*args, **redirect_context, **context)
         self.checkpoint("iterator", where="gather", msg={"iterator":iterator})

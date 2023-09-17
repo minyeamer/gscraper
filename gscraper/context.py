@@ -13,10 +13,10 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, wher
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, responseType=None, \
                         debug=None, localSave=None, extraSave=None, interrupt=None, \
-                        logger=None, logJson=None, errors=None, schemaInfo=None, \
+                        logger=None, logJson=None, errors=None, renameMap=None, schemaInfo=None, \
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
-                        authClass=None, dependencies=None, response=None, data=None, results=None, \
-                        crawler=None, self_var=None, prefix=None, rename=None, **context: context
+                        crawler=None, authClass=None, dependencies=None, \
+                        self_var=None, prefix=None, rename=None, **context: context
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
@@ -30,22 +30,28 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         dropna=None, strict=None, unique=None, **context: TASK_CONTEXT(**context)
 
 
+RESPONSE_CONTEXT = lambda iterateUnit=None, fromNow=None, logName=None, logLevel=None, logFile=None, \
+                        delay=None, progress=None, message=None, numTasks=None, \
+                        apiRedirect=None, redirectUnit=None, encryptedKey=None, \
+                        cookies=None, **context: REQUEST_CONTEXT(**context)
+
+
 UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \
                         table=None, project_id=None, schema=None, progress=None, \
                         partition=None, prtition_by=None, base=None, **context: context
 
 
-PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fronNow=None, \
-                        startDate=None, endDate=None, datetimeUnit="second", tzinfo=None, returnType=None, \
-                        logName=str(), logLevel="WARN", logFile=str(), renameMap=dict(), \
-                        delay=1., progress=True, message=str(), numTasks=100, \
+PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fromNow=None, \
+                        startDate=None, endDate=None, datetimeUnit=str(), tzinfo=None, returnType=None, \
+                        logName=str(), logLevel=str(), logFile=str(), \
+                        delay=0., progress=True, message=str(), numTasks=0, \
                         apiRedirect=False, redirectUnit=0, queryInfo=None, uploadInfo=None, \
                         encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
     dict(exists_context(
         fields = fields,
         iterateUnit = iterateUnit,
         interval = interval,
-        fronNow = fronNow,
+        fromNow = fromNow,
         startDate = startDate,
         endDate = endDate,
         datetimeUnit = datetimeUnit,
@@ -54,7 +60,6 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, fronNow=None
         logName = logName,
         logLevel = logLevel,
         logFile = logFile,
-        renameMap = renameMap,
         delay = delay,
         numTasks = numTasks,
         progress = progress,
