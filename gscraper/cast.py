@@ -165,8 +165,10 @@ def cast_datetime_format(__object: DateFormat, default=None, strict=False) -> Da
 
 def cast_str(__object, default=str(), strict=True, match: Optional[Union[RegexFormat,MatchFunction]]=None) -> str:
     if match:
-        is_pattern_type = lambda __object: re.search(str(match), str(__object))
-        if not (match(__object) if isinstance(match, Callable) else is_pattern_type(__object)): return default
+        if isinstance(match, Callable) and match(__object): pass
+        elif isinstance(match, re.Pattern) and match.search(str(__object)): pass
+        elif isinstance(match, str) and re.search(match, str(__object)): pass
+        else: return default
     return str(__object) if not_na(__object, strict=strict) else default
 
 

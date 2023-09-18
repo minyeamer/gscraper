@@ -7,7 +7,7 @@ from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
 from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
 from .types import is_dataframe_type, allin_instance, is_array, is_str_array, is_records
-from .types import init_origin, get_annotation, is_iterable_annotation
+from .types import init_origin, inspect_function
 
 from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_date, cast_datetime_format
 from .date import now, get_date, get_date_range, is_daily_frequency
@@ -15,7 +15,7 @@ from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from .logs import CustomLogger, dumps_data
 from .logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from .map import exists, data_exists, unique, to_array, get_scala, diff
+from .map import not_na, data_exists, unique, to_array, get_scala, diff
 from .map import iloc, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, exists_dict, cloc, apply_df
 from .map import exists_one, convert_data, rename_data, filter_data, chain_exists, set_data, data_empty
@@ -343,7 +343,7 @@ class BaseSession(CustomDict):
         self.logger.info(log_data(data, **context))
 
     def is_valid_response(self, response: Any) -> bool:
-        return exists(response, strict=False)
+        return not_na(response, strict=False)
 
 
 ###################################################################
@@ -360,20 +360,29 @@ class Iterator(CustomDict):
     interval = str()
     fromNow = None
 
-    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
+    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
+                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None):
         super().__init__()
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if isinstance(fromNow, int) else self.fromNow
-        self.set_date(startDate=startDate, endDate=endDate, **context)
+        self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
+        self.set_date(startDate, endDate)
 
-    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, **context):
-        if_null = "today" if isinstance(self.fromNow, int) else None
-        startDate = get_date(startDate, if_null=if_null, days=self.fromNow)
-        endDate = get_date(endDate, if_null=if_null, days=self.fromNow)
-        if startDate: self.startDate = min(startDate, endDate) if endDate else startDate
-        if endDate: self.endDate = max(startDate, endDate) if endDate else endDate
+    def get_date(self, date: Optional[DateFormat]=None) -> dt.date:
+        return get_date(date, if_null="today", days=get_scala(self.fromNow))
+
+    def get_date_pair(self, startDate: Optional[DateFormat]=None,
+                        endDate: Optional[DateFormat]=None) -> Tuple[dt.date,dt.date]:
+        startDate = get_date(startDate, if_null="today", days=get_scala(self.fromNow, index=0))
+        endDate = get_date(endDate, if_null="today", days=get_scala(self.fromNow, index=1))
+        if startDate: startDate = min(startDate, endDate) if endDate else startDate
+        if endDate: endDate = max(startDate, endDate) if endDate else endDate
+        return startDate, endDate
+
+    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None):
+        startDate, endDate = self.get_date_pair(startDate, endDate)
+        if startDate: self.startDate = startDate
+        if endDate: self.endDate = endDate
 
     ###################################################################
     ########################### Set Iterator ##########################
@@ -596,7 +605,7 @@ class Spider(BaseSession, Iterator):
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -611,7 +620,7 @@ class Spider(BaseSession, Iterator):
             renameMap=renameMap, schemaInfo=schemaInfo)
         Iterator.__init__(
             self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, **context)
+            startDate=startDate, endDate=endDate)
         self.delay = delay
         self.progress = progress
         self.message = message if message else self.message
@@ -619,37 +628,18 @@ class Spider(BaseSession, Iterator):
         if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
 
-    ###################################################################
-    ####################### Parameter Inspector #######################
-    ###################################################################
-
-    def inspect(self, __key: Optional[Literal["crawl","required","iterable","literal","return"]]=None) -> Dict[_KT,Union[Dict,str]]:
-        info = dict(parameter=list())
-        info["crawl"] = self.inspect_params(self.crawl)
-        info["required"] = {name: param for name, param in info["crawl"].items() if "default" not in param}
-        info["iterable"] = {name: param for name, param in info["crawl"].items() if "iterable" in param}
-        info["literal"] = {name: param for name, param in info["crawl"].items() if param.get("annotation") == "literal"}
-        info["return"] = get_annotation(inspect.signature(self.crawl).return_annotation)
-        return info[__key] if __key else info
-
-    def inspect_params(self, func: Callable) -> Dict[_KT,Dict]:
-        params = dict()
-        signature = inspect.signature(func)
-        for name, parameter in signature.parameters.items():
-            if name in ["self", "context", "kwargs"]: continue
-            else: params[name] = self._inspect_annotation(parameter)
-        return params
-
-    def _inspect_annotation(self, parameter: Parameter) -> Dict:
-        annotation = parameter.annotation
-        info = dict(annotation=get_annotation(annotation))
-        if parameter.default != inspect.Parameter.empty:
-            info["default"] = parameter.default
-            if parameter.annotation == inspect.Parameter.empty:
-                annotation = get_annotation(type(parameter.default))
-                info["annotation"] = annotation
-        if is_iterable_annotation(annotation):
-            info["iterable"] = True
+    def inspect(self, method: str, __type: Optional[TypeHint]=None, annotation: Optional[TypeHint]=None,
+                ignore: List[_KT]=list()) -> Dict[_KT,Dict]:
+        method = getattr(self, method)
+        info = inspect_function(method, ignore=["self","context","kwargs"]+ignore)
+        if __type or annotation:
+            info = drop_dict(info, "__return__", inplace=False)
+            if __type == "required":
+                return {name: param for name, param in info.items() if "default" not in param}
+            elif __type == "iterable":
+                return {name: param for name, param in info.items() if "iterable" in param}
+            return {name: param for name, param in info.items()
+                    if (annotation in cast_tuple(param["annotation"])) or (__type in cast_tuple(param["type"]))}
         return info
 
     ###################################################################
@@ -754,10 +744,13 @@ class Spider(BaseSession, Iterator):
     def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                         rename: Dict[_KT,Dict]=dict(), **context) -> Context:
         if locals: context = self.local_context(locals, **context)
-        sequence_keys = self.inspect("iterable").keys()
+        sequence_keys = self.inspect("crawl", "iterable").keys()
+        dateformat_keys = self.inspect("crawl", annotation="DateFormat").keys()
         for __key in list(context.keys()):
             if __key in sequence_keys:
                 context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
+            elif __key in dateformat_keys:
+                context[__key] = self.get_date(context[__key])
             if __key in rename:
                 context[__key] = rename_data(context[__key], rename=rename[__key])
         return context
@@ -1036,7 +1029,7 @@ class AsyncSpider(Spider):
     message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[int]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -1451,7 +1444,7 @@ class EncryptedSpider(Spider):
     decryptedKey = dict()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
+                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
@@ -1528,7 +1521,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     decryptedKey = dict()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[int]=None,
+                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
                 startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,

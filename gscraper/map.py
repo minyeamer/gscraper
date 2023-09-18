@@ -101,10 +101,11 @@ def map_context(__keys: _KT, __values: _VT, __default=None, **context) -> Contex
 ############################## String #############################
 ###################################################################
 
-def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> str:
-    if not re.search(pattern, string): return default
-    catch = re.search(pattern, string).groups()
-    return catch[0] if catch and not groups else catch
+def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> Union[str,List[str]]:
+    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
+    if groups: return __pattern.findall(string)
+    catch = __pattern.search(string)
+    return __pattern.search(string).groups()[0] if catch else default
 
 
 def replace_map(string: str, __m: dict) -> str:
@@ -143,7 +144,7 @@ def get_index(__s: IndexedSequence, values: _VT, default=None, if_null: Literal[
 
 
 def get_scala(__object, index: Optional[int]=0, default=None, random=False) -> _VT:
-    if not is_array(__object): return __object if abs_idx(index) == 0 else default
+    if not is_array(__object): return __object
     elif isinstance(__object, Set): return __object.copy().pop()
     elif __object and random: return rand.choice(__object) if __object else default
     else: return iloc(__object, index, default=default)

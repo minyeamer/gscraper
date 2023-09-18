@@ -149,7 +149,7 @@ def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Literal["tod
         __date = today(days=__object, tzinfo=tzinfo)
 
     if not is_numeric_array((days, weeks), how="all"): return __date
-    if isinstance(__date, dt.date):
+    elif isinstance(__date, dt.date):
         return __date - dt.timedelta(days=days, weeks=weeks)
     elif if_null == "today": return today(days=days, weeks=weeks)
 

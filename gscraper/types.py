@@ -1,10 +1,13 @@
-from typing import Callable, Hashable, Literal, Sequence, Tuple, Type, TypedDict, TypeVar, Union
+from typing import Callable, Hashable, Literal, Optional, Sequence, Tuple, Type, TypedDict, TypeVar, Union
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
 from datetime import datetime, date, time, timedelta
 from pandas import DataFrame, Series, isna
 from pytz import BaseTzInfo
-from re import search
+
+from inspect import Parameter
+import inspect
+import re
 
 
 INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
@@ -460,32 +463,96 @@ def is_df_object(__object) -> bool:
 
 
 ###################################################################
-############################ Annotation ###########################
+############################# Inspect #############################
 ###################################################################
 
 AVAILABLE_ANNOTATIONS = [
-    "bool", "int", "float", "datetime", "date", "str", "literal",
-    "sequence", "list", "tuple", "set", "dict", "dataframe", "callable"]
+    "literal", "dict", "datetime", "date", "int", "float", "bool", "str", 
+    "callable", "dataframe", "sequence", "list", "tuple", "set"]
 
 
-def get_type_name(__object) -> str:
-    if isinstance(__object, str):
-        if "Optional" in __object:
-            __object = search("Optional\[([^]]*)\]", __object).groups()[0]
-        if __object in CUSTOM_TYPES:
-            __object = CUSTOM_TYPES[__object]
-    return __object.__name__ if isinstance(__object, Type) else str(__object)
+def _decap(annotation: str, __type="Optional", split=str()) -> Union[str,List[str]]:
+    annotation = str(annotation).strip()
+    if annotation.startswith(__type) or annotation.startswith(f"typing.{__type}"):
+        annotation = re.search(r"{}\[(.*)\]$".format(__type), annotation).groups()[0]
+        if split and (split in annotation):
+            annotation = list(map(lambda x: x.strip(), annotation.split(split)))
+    return annotation
 
 
-def get_annotation(__object) -> str:
-    name = get_type_name(__object).lower()
+def get_annotation_name(annotation, custom_type=False) -> str:
+    if annotation == inspect.Parameter.empty: return str()
+    elif isinstance(annotation, Type): return annotation.__name__
+    annotation = _decap(annotation, "Optional")
+    if custom_type and (annotation in CUSTOM_TYPES):
+        return get_annotation_name(CUSTOM_TYPES[annotation])
+    return annotation
+
+
+def get_annotation_typehint(annotation, custom_type=True) -> str:
+    annotation = get_annotation_name(annotation, custom_type=custom_type)
+    return _decap(annotation, "Union", split=',')
+
+
+def get_annotation_type(annotation, custom_type=True) -> str:
+    name = get_annotation_typehint(annotation, custom_type=custom_type)
+    if isinstance(name, List): return list({__name for __name in map(get_annotation_type, name) if __name})
+    name = name.replace("datetime.","").lower()
     for annotation in AVAILABLE_ANNOTATIONS:
         if annotation in name:
             return annotation
     return str()
 
 
-def is_iterable_annotation(__object) -> bool:
-    name = get_type_name(__object).lower()
-    iterable = ["sequence", "list", "tuple", "set"]
+def is_iterable_annotation(annotation, custom_type=True) -> bool:
+    type_hint = get_annotation_typehint(annotation, custom_type=custom_type)
+    name = (', '.join(type_hint) if isinstance(type_hint, List) else type_hint).lower()
+    iterable = ["iterable", "sequence", "list", "tuple", "set"]
     return any(map(lambda x: x in name, iterable))
+
+
+def inspect_source(func: Callable) -> Dict[_KT,TypeHint]:
+    info, source = dict(), inspect.getsource(func)
+    return_annotation = inspect.signature(func).return_annotation
+    returns = re.search(r"-> ([^:]+):", source).groups()[0] if return_annotation != inspect._empty else None
+    pattern = re.compile(f"def {func.__name__}\(((.|[^:]\n)*)\)"+(r" ->" if returns else r":\n"))
+    catch = pattern.search(source)
+    if catch:
+        raw = catch.groups(0)[0]
+        params = map(lambda x: x.split(": "), raw.replace('\n',' ').split(", "))
+        info = {param[0].strip(): _decap(param[1].split('=')[0]) for param in params if len(param) == 2}
+    return dict(info, **({"__return__":returns} if returns else dict()))
+
+
+def inspect_function(func: Callable, ignore: Sequence[_KT]=list()) -> Dict[_KT,Dict]:
+    params = dict()
+    signature = inspect.signature(func)
+    type_hint = inspect_source(func)
+    for name, parameter in signature.parameters.items():
+        if name in ignore: continue
+        else: params[name] = inspect_parameter(parameter, type_hint.get(name))
+    return_annotation = inspect.signature(func).return_annotation
+    if return_annotation != inspect._empty:
+        params["__return__"] = inspect_annotation(return_annotation, type_hint.get("__return__"))
+    return params
+
+
+def inspect_parameter(parameter: Parameter, __type: Optional[TypeHint]=None) -> Dict:
+    annotation = __type if __type else parameter.annotation
+    info = dict(annotation=get_annotation_name(annotation), type=get_annotation_type(annotation))
+    if parameter.default != inspect.Parameter.empty:
+        info["default"] = parameter.default
+        if parameter.annotation == inspect.Parameter.empty:
+            annotation = get_annotation_type(type(parameter.default))
+            info["type"] = annotation
+    if is_iterable_annotation(annotation):
+        info["iterable"] = True
+    return info
+
+
+def inspect_annotation(annotation, __type: Optional[TypeHint]=None) -> Dict:
+    annotation = __type if __type else annotation
+    info = dict(annotation=get_annotation_name(annotation), type=get_annotation_type(annotation))
+    if is_iterable_annotation(annotation):
+        info["iterable"] = True
+    return info
