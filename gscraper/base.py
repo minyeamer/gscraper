@@ -333,7 +333,8 @@ class BaseSession(CustomDict):
         def wrapper(self: BaseSession, response: Any, *args, **kwargs):
             is_valid = self.is_valid_response(response)
             data = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
-            self.checkpoint("parse", where=func.__name__, msg={"data":data}, save=data)
+            suffix = f"_{kwargs.get('index')}" if kwargs.get("index") else str()
+            self.checkpoint("parse"+suffix, where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **kwargs)
             return data
         return wrapper
@@ -392,7 +393,7 @@ class Iterator(CustomDict):
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(),
                     **context) -> Tuple[List[Context],Context]:
-        arguments, periods, iterator, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
+        arguments, periods, ranges, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
         args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
         if args_context:
             arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
@@ -401,8 +402,8 @@ class Iterator(CustomDict):
         if interval:
             periods, context = self._from_date(interval=interval, **context)
             iterateProduct = diff(iterateProduct, DATE_ITERATOR)
-        iterator, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
-        iterator = self._product_iterator(arguments, periods, iterator)
+        ranges, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
+        iterator = self._product_iterator(arguments, periods, ranges)
         return iterator, context
 
     ###################################################################
@@ -563,11 +564,10 @@ class Iterator(CustomDict):
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
 
-    def _product_iterator(self, *iterator: Sequence[Context]) -> List[Context]:
-        if sum(map(len, iterator)) == 0: return list()
-        iterator_array = map((lambda x: x if x else [{}]), iterator)
-        return list(map(chain_dict, product(*iterator_array)))
-
+    def _product_iterator(self, *ranges: Sequence[Context]) -> List[Context]:
+        if sum(map(len, ranges)) == 0: return list()
+        ranges_array = map((lambda x: x if x else [{}]), ranges)
+        return [dict(index=__i, **chain_dict(query)) for __i, query in enumerate(product(*ranges_array))]
 
 
 ###################################################################
@@ -681,21 +681,12 @@ class Spider(BaseSession, Iterator):
 
     def local_request(self, locals: Dict=dict(), **context) -> Context:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
-        keys = unique(*self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
+        keys = unique("index", *self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
         return kloc(context, keys, if_null="drop")
 
     def local_response(self, locals: Dict=dict(), **context) -> Context:
         if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
-        return RESPONSE_CONTEXT(**context)
-
-    def _filter_locals(self, context: Context, args=None, page=None, date=None, product=None,
-                        param=None, request=None, if_null: Literal["drop","pass"]="drop") -> Context:
-        t = lambda condition: condition if isinstance(condition, bool) else True
-        keys = self.get_iterator(t(args), t(page), t(date), t(product), keys_only=True)
-        if t(param): keys = keys + diff(list(context.keys()), self.get_iterator(keys_only=True))
-        context = kloc(context, keys, if_null=if_null)
-        if not t(request): context = REQUEST_CONTEXT(**context)
-        return context
+        return dict(kloc(context, ["index"]), **RESPONSE_CONTEXT(**context))
 
     ###################################################################
     ######################### Session Managers ########################
@@ -813,15 +804,16 @@ class Spider(BaseSession, Iterator):
         @functools.wraps(func)
         def wrapper(self: Spider, method: str, url: str, session: Optional[requests.Session]=None,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
+                    data=None, json=None, headers=None, cookies=str(), *args, index=0, **kwargs):
             session = session if session else requests
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            suffix = f"_{index}" if index else str()
+            self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
             response = func(self, method=method, url=url, session=session, messages=messages, **kwargs)
-            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
 
@@ -1169,15 +1161,16 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                        data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
+                        data=None, json=None, headers=None, cookies=str(), *args, index=0, **kwargs):
             session = session if session else aiohttp
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint("request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            suffix = f"_{index}" if index else str()
+            self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
             response = await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
-            self.checkpoint("response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
 
@@ -1341,7 +1334,7 @@ class LoginSpider(requests.Session, Spider):
         elif returnType == "dict": return dict(self.cookies.items())
         else: return self.cookies
 
-    def update_cookies(self, cookies=str(), if_exists: Literal["ignore","replace"]="ignore", **kwargs):
+    def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore", **kwargs):
         cookies = decode_cookies(cookies, **kwargs) if isinstance(cookies, str) else dict(cookies, **kwargs)
         for __key, __value in cookies.items():
             if (if_exists == "replace") or (__key not in self.cookies):

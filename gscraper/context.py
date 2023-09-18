@@ -20,7 +20,7 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, wher
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        **context: UNIQUE_CONTEXT(**context)
+                        index=None, **context: UNIQUE_CONTEXT(**context)
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
