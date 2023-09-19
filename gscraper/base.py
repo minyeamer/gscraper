@@ -30,7 +30,7 @@ import functools
 import requests
 import time
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
 from json import JSONDecodeError
 import datetime as dt
 import json
@@ -38,7 +38,6 @@ import logging
 import pandas as pd
 
 from tqdm.auto import tqdm
-from inspect import Parameter
 from itertools import product
 import base64
 import inspect
@@ -368,15 +367,18 @@ class Iterator(CustomDict):
         self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
         self.set_date(startDate, endDate)
 
-    def get_date(self, date: Optional[DateFormat]=None) -> dt.date:
-        return get_date(date, if_null="today", days=get_scala(self.fromNow))
+    def get_date(self, date: Optional[DateFormat]=None, index=0) -> dt.date:
+        fromNow = get_scala(self.fromNow, index=index)
+        if isinstance(fromNow, str) and not date:
+            date, fromNow = fromNow, None
+        return get_date(date, if_null="today", days=fromNow)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None,
                         endDate: Optional[DateFormat]=None) -> Tuple[dt.date,dt.date]:
-        startDate = get_date(startDate, if_null="today", days=get_scala(self.fromNow, index=0))
-        endDate = get_date(endDate, if_null="today", days=get_scala(self.fromNow, index=1))
+        startDate = self.get_date(startDate, index=0)
+        endDate = self.get_date(endDate, index=1)
         if startDate: startDate = min(startDate, endDate) if endDate else startDate
-        if endDate: endDate = max(startDate, endDate) if endDate else endDate
+        if endDate: endDate = max(startDate, endDate) if startDate else endDate
         return startDate, endDate
 
     def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None):
@@ -750,7 +752,7 @@ class Spider(BaseSession, Iterator):
             if __key in sequence_keys:
                 context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
             elif __key in dateformat_keys:
-                context[__key] = self.get_date(context[__key])
+                context[__key] = self.get_date(context[__key], index=int(str(__key).lower().endswith("enddate")))
             if __key in rename:
                 context[__key] = rename_data(context[__key], rename=rename[__key])
         return context
