@@ -368,10 +368,7 @@ class Iterator(CustomDict):
         self.set_date(startDate, endDate)
 
     def get_date(self, date: Optional[DateFormat]=None, index=0) -> dt.date:
-        fromNow = get_scala(self.fromNow, index=index)
-        if isinstance(fromNow, str) and not date:
-            date, fromNow = fromNow, None
-        return get_date(date, if_null="today", days=fromNow)
+        return get_date(date, if_null=get_scala(self.fromNow, index=index))
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None,
                         endDate: Optional[DateFormat]=None) -> Tuple[dt.date,dt.date]:

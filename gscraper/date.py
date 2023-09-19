@@ -108,24 +108,22 @@ def today(__format=str(), days=0, weeks=0, tzinfo=None) -> Union[dt.date,str]:
     else: return now(days=days, weeks=weeks, tzinfo=tzinfo, droptime=True, unit="day")
 
 
-def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
                 days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0,
                 tzinfo=None, astimezone=None, droptz=False,
                 unit: Literal["second","minute","hour","day","month","year"]="second") -> dt.datetime:
     context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     __datetime = cast_datetime(__object, **context)
     if not isinstance(__datetime, dt.datetime):
-        __datetime = now(days=__object, **context)
-
-    timedelta_args = (days, seconds, microseconds, milliseconds, minutes, hours, weeks)
-    if not is_numeric_array(timedelta_args, how="all"): return __datetime
-    elif isinstance(__datetime, dt.datetime):
-        __datetime = __datetime - dt.timedelta(*timedelta_args)
+        if isinstance(__object, int): __datetime = now(days=__object, **context)
+        elif isinstance(if_null, int): __datetime = now(days=if_null, **context)
+        elif isinstance(if_null, str): __datetime = cast_datetime(__object, **context)
+    if isinstance(__datetime, dt.datetime):
+        __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
         return trunc_datetime(__datetime, unit=unit) if unit else __datetime
-    elif if_null == "now": return now(str(), *timedelta_args)
 
 
-def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
             seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, tzinfo=None, astimezone=None,
             unit: Literal["second","minute","hour","day","month","year"]="second") -> dt.time:
     __datetime = get_datetime(**locals())
@@ -133,7 +131,7 @@ def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now
         return __datetime.time()
 
 
-def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Literal["now"]]="now",
+def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
                 days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0,
                 tzinfo=None, astimezone=None, droptz=False, tsUnit: Literal["ms","s"]="ms",
                 unit: Literal["second","minute","hour","day","month","year"]="second") -> int:
@@ -142,19 +140,18 @@ def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Literal
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
 
 
-def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Literal["today"]]="today",
+def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
             days=0, weeks=0, tzinfo=None) -> dt.date:
     __date = cast_date(__object)
     if not isinstance(__date, dt.date):
-        __date = today(days=__object, tzinfo=tzinfo)
-
-    if not is_numeric_array((days, weeks), how="all"): return __date
-    elif isinstance(__date, dt.date):
+        if isinstance(__object, int): __date = today(days=__object, tzinfo=tzinfo)
+        elif isinstance(if_null, int): __date = today(days=if_null, tzinfo=tzinfo)
+        elif isinstance(if_null, str): __date = cast_date(if_null)
+    if isinstance(__date, dt.date):
         return __date - dt.timedelta(days=days, weeks=weeks)
-    elif if_null == "today": return today(days=days, weeks=weeks)
 
 
-def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Literal["today"]]="today",
+def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
                 days=0, weeks=0, tzinfo=None) -> dt.date:
     __date = get_date(**locals())
     if isinstance(__date, dt.date):
