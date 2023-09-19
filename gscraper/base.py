@@ -1089,7 +1089,7 @@ class AsyncSpider(Spider):
         numTasks = min(self.numTasks, (self.redirectLimit if apiRedirect else self.maxLimit), self.maxLimit)
         return asyncio.Semaphore(numTasks)
 
-    def asyncio_exception(func):
+    def catch_exception(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, **kwargs):
             try: return await func(self, *args, **kwargs)
@@ -1147,7 +1147,7 @@ class AsyncSpider(Spider):
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
     @abstractmethod
-    @asyncio_exception
+    @catch_exception
     @asyncio_limit
     async def fetch(self, *args, **context) -> Data:
         ...
@@ -1268,7 +1268,7 @@ class AsyncSpider(Spider):
     def get_redirect_message(self, *args, message=str(), **context) -> str:
         return message if message else REDIRECT_MSG(self.operation)
 
-    @asyncio_exception
+    @catch_exception
     @asyncio_limit
     @gcloud_authorized
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
