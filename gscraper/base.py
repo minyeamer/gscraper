@@ -252,11 +252,11 @@ class BaseSession(CustomDict):
         if ((point in self.extraSave) or ("all" in self.extraSave)) and data_exists(save):
             if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
-            self.local_save(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
+            self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
         if self.interrupt == point:
             raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
 
-    def local_save(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
+    def save_data(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
         prefix = self.rename(prefix if prefix else self.operation, to="ko")
         file = prefix+'_'+self.now("%Y%m%d%H%M%S")
         ext = ext if ext else type(data)
@@ -367,13 +367,14 @@ class Iterator(CustomDict):
         self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
         self.set_date(startDate, endDate)
 
-    def get_date(self, date: Optional[DateFormat]=None, index=0) -> dt.date:
-        return get_date(date, if_null=get_scala(self.fromNow, index=index))
+    def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0) -> dt.date:
+        fromNow = fromNow if fromNow else self.fromNow
+        return get_date(date, if_null=get_scala(fromNow, index=index))
 
-    def get_date_pair(self, startDate: Optional[DateFormat]=None,
-                        endDate: Optional[DateFormat]=None) -> Tuple[dt.date,dt.date]:
-        startDate = self.get_date(startDate, index=0)
-        endDate = self.get_date(endDate, index=1)
+    def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                        fromNow: Optional[Unit]=None) -> Tuple[dt.date,dt.date]:
+        startDate = self.get_date(startDate, fromNow=fromNow, index=0)
+        endDate = self.get_date(endDate, fromNow=fromNow, index=1)
         if startDate: startDate = min(startDate, endDate) if endDate else startDate
         if endDate: endDate = max(startDate, endDate) if startDate else endDate
         return startDate, endDate
@@ -645,37 +646,43 @@ class Spider(BaseSession, Iterator):
     ###################### Local Variable Looker ######################
     ###################################################################
 
-    def from_locals(self, locals: Dict=dict(), _how: Literal["all","args","context","query","request","response"]="all",
-                    **context) -> Union[Arguments,Context,Tuple]:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
-        if is_array(_how): return tuple(self.from_locals(_how=how, **context) for how in _how)
-        elif _how == "args": return self.local_args(locals, **context)
-        elif _how == "context": return self.local_context(locals, **context)
-        elif _how == "query": return self.local_query(locals, **context)
-        elif _how == "request": return self.local_request(locals, **context)
-        elif _how == "response": return self.local_response(locals, **context)
+    def from_locals(self, locals: Dict=dict(), how: Literal["all","args","context","query","request","response"]="all",
+                    drop: _KT=list(), **context) -> Union[Arguments,Context,Tuple]:
+        context = self._map_locals(locals, drop, **context)
+        if is_array(how): return tuple(self.from_locals(how=how, drop=drop, **context) for how in how)
+        elif how == "args": return self.local_args(locals, drop=drop, **context)
+        elif how == "context": return self.local_context(locals, drop=drop, **context)
+        elif how == "query": return self.local_query(locals, drop=drop, **context)
+        elif how == "request": return self.local_request(locals, drop=drop, **context)
+        elif how == "response": return self.local_response(locals, drop=drop, **context)
         else: return context
 
-    def local_args(self, locals: Dict=dict(), **context) -> Arguments:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+    def local_args(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Arguments:
+        context = self._map_locals(locals, drop, **context)
         return kloc(context, self.iterateArgs, if_null="drop", values_only=True)
 
-    def local_context(self, locals: Dict=dict(), **context) -> Context:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+    def local_context(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        context = self._map_locals(locals, drop, **context)
         return drop_dict(context, self.iterateArgs, inplace=False)
 
-    def local_query(self, locals: Dict=dict(), **context) -> Tuple[Arguments,Context]:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+    def local_query(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Tuple[Arguments,Context]:
+        context = self._map_locals(locals, drop, **context)
         return self.local_args(**context), self.local_context(**context)
 
-    def local_request(self, locals: Dict=dict(), **context) -> Context:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+    def local_request(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        context = self._map_locals(locals, drop, **context)
         keys = unique("index", *self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
         return kloc(context, keys, if_null="drop")
 
-    def local_response(self, locals: Dict=dict(), **context) -> Context:
-        if locals: context = dict(dict(locals.pop("context", dict()), **drop_dict(locals, "self")), **context)
+    def local_response(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        context = self._map_locals(locals, drop, **context)
         return dict(kloc(context, ["index"]), **RESPONSE_CONTEXT(**context))
+
+    def _map_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        if locals:
+            context = dict(dict(locals.pop("context", dict()), **locals), **context)
+            context.pop("self", None)
+        return drop_dict(context, cast_list(drop), inplace=False) if drop else context
 
     ###################################################################
     ######################### Session Managers ########################
@@ -688,7 +695,7 @@ class Spider(BaseSession, Iterator):
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             data = func(self, *args, **kwargs)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -702,7 +709,7 @@ class Spider(BaseSession, Iterator):
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -728,21 +735,25 @@ class Spider(BaseSession, Iterator):
     ###################################################################
 
     def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
-                        strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Tuple[Arguments,Context]:
+                        strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
+                        **context) -> Tuple[Arguments,Context]:
         args, context = self.local_query(locals, **context)
-        args = self.validate_args(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique, **context)
-        context = self.validate_context(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename, **context)
+        array_context = dict(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename)
+        args = self.validate_args(*args, how=how, **array_context, **context)
+        context = self.validate_context(**array_context, drop=drop, **context)
         return args, context
 
     def validate_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                    dropna=True, strict=False, unique=True, **context) -> Arguments:
+                    dropna=True, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
         if not args: return args
-        elif len(args) == 1: return (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
-        else: return align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
+        elif len(args) == 1: args = (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
+        else: args = align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
+        rename_args = lambda __s, __key: rename_data(__s, rename=rename[__key]) if __key in rename else __s
+        return tuple(rename_args(args[__i], __key) for __i, __key in enumerate(self.iterateArgs))
 
     def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
-                        rename: Dict[_KT,Dict]=dict(), **context) -> Context:
-        if locals: context = self.local_context(locals, **context)
+                        drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
+        if locals: context = self.local_context(locals, **context, drop=drop)
         sequence_keys = self.inspect("crawl", "iterable").keys()
         dateformat_keys = self.inspect("crawl", annotation="DateFormat").keys()
         for __key in list(context.keys()):
@@ -812,9 +823,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                 params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                 valid: Optional[Status]=None, invalid: Optional[Status]=None, close=True, **context) -> requests.Response:
-        response = session.request(method, url, **messages, allow_redirects=allow_redirects)
+        response = session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify)
         self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
         if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
@@ -822,9 +833,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_status(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status_code
@@ -832,9 +843,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_content(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.content
@@ -842,9 +853,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_text(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.text
@@ -852,9 +863,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_json(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.json()
@@ -862,9 +873,9 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_headers(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
@@ -872,10 +883,10 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_table(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, verify=None, validate=False, exception: Literal["error","interupt"]="interupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, html=True, table_header=0, table_idx=0,
                     engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=verify) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             if html: return pd.read_html(response.text, header=table_header)[table_idx]
@@ -1062,7 +1073,7 @@ class AsyncSpider(Spider):
             semaphore = self.asyncio_semaphore(**kwargs)
             data = await func(self, *args, semaphore=semaphore, **kwargs)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -1077,7 +1088,7 @@ class AsyncSpider(Spider):
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -1280,6 +1291,7 @@ class AsyncSpider(Spider):
             redirectUrl=redirectUrl,
             authorization=authorization,
             account=account,
+            cookies=self.cookies,
             **REDIRECT_CONTEXT(**context))
 
     def _parse_redirect(self, data: RedirectData, **context) -> Records:
@@ -1459,7 +1471,7 @@ class EncryptedSpider(Spider):
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo, **context)
-        if not cookies:
+        if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
     def set_secrets(self, encryptedKey=str(), decryptedKey=str()):
@@ -1471,18 +1483,19 @@ class EncryptedSpider(Spider):
 
     def login_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, cookies=str(),
+        def wrapper(self: EncryptedSpider, *args, self_var=True,
                     uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
+            with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
                 session.login()
                 session.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
                 self.checkpoint("login", where="login", msg={"cookies":dict(session.cookies)})
-                data = func(self, *args, session=session, cookies=cookies, **kwargs)
+                self.cookies = session.get_cookies()
+                data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
@@ -1537,25 +1550,26 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo,
             numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
-        if not cookies:
+        if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
     def login_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, cookies=str(),
+        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True,
                             uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             semaphore = self.asyncio_semaphore(**kwargs)
-            with (BaseLogin(cookies) if cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
+            with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
                 auth.login()
                 auth.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
                 self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
-                async with aiohttp.ClientSession(cookies=auth.cookies) as session:
+                self.cookies = auth.get_cookies()
+                async with aiohttp.ClientSession(cookies=dict(auth.cookies)) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.local_save(data, ext="dataframe")
+            if self.localSave: self.save_data(data, ext="dataframe")
             self.upload_data(data, uploadInfo, **kwargs)
             return data
         return wrapper

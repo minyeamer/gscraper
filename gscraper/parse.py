@@ -93,7 +93,7 @@ def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
 
 
 def encode_object(__object: str) -> str:
-    quote(str(__object).replace('\'','\"'))
+    return quote(str(__object).replace('\'','\"'))
 
 
 ###################################################################
