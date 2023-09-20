@@ -31,7 +31,8 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
 
 RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
                         delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, \
-                        redirectUnit=None, encryptedKey=None, **context: REQUEST_CONTEXT(**context)
+                        redirectUnit=None, encryptedKey=None, index=0, **context: \
+                        dict(REQUEST_CONTEXT(**context), index=index)
 
 
 UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \

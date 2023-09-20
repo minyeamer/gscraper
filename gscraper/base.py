@@ -664,7 +664,7 @@ class Spider(BaseSession, Iterator):
 
     def local_response(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         context = self._map_locals(locals, drop, **context)
-        return dict(kloc(context, ["index"]), **RESPONSE_CONTEXT(**context))
+        return RESPONSE_CONTEXT(**context)
 
     def _map_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         if locals:
