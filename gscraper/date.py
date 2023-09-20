@@ -1,5 +1,5 @@
 from .types import TypeHint, DateFormat, Timedelta, Timezone, CastError
-from .types import is_type, is_str_type, is_timestamp_type, is_numeric_array, INTEGER_TYPES
+from .types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from .cast import cast_datetime, cast_date, get_timezone
 from .map import drop_dict
@@ -115,8 +115,8 @@ def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Union[in
     context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     __datetime = cast_datetime(__object, **context)
     if not isinstance(__datetime, dt.datetime):
-        if isinstance(__object, int): __datetime = now(days=__object, **context)
-        elif isinstance(if_null, int): __datetime = now(days=if_null, **context)
+        if isinstance(__object, int): __datetime = now(hours=__object, **context)
+        elif isinstance(if_null, int): __datetime = now(hours=if_null, **context)
         elif isinstance(if_null, str): __datetime = cast_datetime(__object, **context)
     if isinstance(__datetime, dt.datetime):
         __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
@@ -153,9 +153,11 @@ def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,st
 
 def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
                 days=0, weeks=0, tzinfo=None) -> dt.date:
-    __date = get_date(**locals())
+    __date = get_date(__object, if_null=if_null, tzinfo=tzinfo)
     if isinstance(__date, dt.date):
-        return __date if np.is_busday(__date) else (__date-BDay(1)).date()
+        if not np.is_busday(__date): __date = (__date-BDay(1)).date()
+        if days or weeks: return get_busdate(__date - dt.timedelta(days=days, weeks=weeks))
+        return __date
 
 
 def is_pandas_frequency(interval: Timedelta) -> bool:

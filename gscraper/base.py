@@ -9,7 +9,7 @@ from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, Gsprea
 from .types import is_dataframe_type, allin_instance, is_array, is_str_array, is_records
 from .types import init_origin, inspect_function
 
-from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_date, cast_datetime_format
+from .cast import cast_list, cast_tuple, cast_int, cast_int1, cast_datetime_format
 from .date import now, get_date, get_date_range, is_daily_frequency
 from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
@@ -70,7 +70,7 @@ MAX_REDIRECT_LIMIT = 10
 PAGE_ITERATOR = ["page", "start", "dataSize"]
 PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
 
-DATE_ITERATOR = ["startDate", "endDate", "date"]
+DATE_ITERATOR = ["startDate", "endDate"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
 CHECKPOINT = [
@@ -359,13 +359,11 @@ class Iterator(CustomDict):
     interval = str()
     fromNow = None
 
-    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None):
+    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
         super().__init__()
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
         self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
-        self.set_date(startDate, endDate)
 
     def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0) -> dt.date:
         fromNow = fromNow if fromNow else self.fromNow
@@ -378,11 +376,6 @@ class Iterator(CustomDict):
         if startDate: startDate = min(startDate, endDate) if endDate else startDate
         if endDate: endDate = max(startDate, endDate) if startDate else endDate
         return startDate, endDate
-
-    def set_date(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None):
-        startDate, endDate = self.get_date_pair(startDate, endDate)
-        if startDate: self.startDate = startDate
-        if endDate: self.endDate = endDate
 
     ###################################################################
     ########################### Set Iterator ##########################
@@ -410,7 +403,7 @@ class Iterator(CustomDict):
             if len(iterateProduct) > 1: iterateUnit = iterateUnit[1:]
         if interval:
             periods, context = self._from_date(interval=interval, **context)
-            iterateProduct = diff(iterateProduct, DATE_ITERATOR)
+            iterateProduct = diff(iterateProduct, DATE_ITERATOR+["date"])
         ranges, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
         iterator = self._product_iterator(arguments, periods, ranges)
         return iterator, context
@@ -544,15 +537,13 @@ class Iterator(CustomDict):
 
     def _from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
-        startDate = startDate if isinstance(startDate, dt.date) else cast_date(startDate, default=self.get("startDate"))
-        endDate = endDate if isinstance(endDate, dt.date) else cast_date(endDate, default=self.get("endDate"))
-        date_range = get_date_range(startDate, endDate, interval=interval)
+        date_range = get_date_range(*self.get_date_pair(startDate, endDate), interval=interval)
         if is_daily_frequency(interval):
             period = [dict(startDate=date, endDate=date, date=date) for date in date_range]
         elif len(date_range) > 1:
-            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)))
+            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)), date=(end-dt.timedelta(days=1)))
                         for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
-        else: period = [dict(startDate=startDate, endDate=endDate)]
+        else: period = [dict(startDate=startDate, endDate=endDate, date=endDate)]
         return period, dict(context, interval=interval)
 
     ###################################################################
@@ -606,7 +597,6 @@ class Spider(BaseSession, Iterator):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
@@ -618,9 +608,7 @@ class Spider(BaseSession, Iterator):
             logName=logName, logLevel=logLevel, logFile=logFile,
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
             renameMap=renameMap, schemaInfo=schemaInfo)
-        Iterator.__init__(
-            self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate)
+        Iterator.__init__(self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow)
         self.delay = delay
         self.progress = progress
         self.message = message if message else self.message
@@ -1040,7 +1028,6 @@ class AsyncSpider(Spider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
@@ -1049,9 +1036,8 @@ class AsyncSpider(Spider):
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, **context):
         Spider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
+            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
@@ -1456,7 +1442,6 @@ class EncryptedSpider(Spider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
@@ -1465,9 +1450,8 @@ class EncryptedSpider(Spider):
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey: Union[str,Dict]=str(), **context):
         Spider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
+            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo, **context)
@@ -1534,7 +1518,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
-                startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                 datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
@@ -1543,9 +1526,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
                 apiRedirect=False, redirectUnit: Unit=0, encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
-            startDate=startDate, endDate=endDate, tzinfo=tzinfo, datetimeUnit=datetimeUnit,
-            returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
+            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
+            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
             schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo,

@@ -39,9 +39,8 @@ UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=N
                         partition=None, prtition_by=None, base=None, **context: context
 
 
-PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, startDate=None, endDate=None, \
-                        datetimeUnit=str(), tzinfo=None, returnType=None, \
-                        logName=str(), logLevel=str(), logFile=str(), \
+PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, datetimeUnit=str(), tzinfo=None, \
+                        returnType=None, logName=str(), logLevel=str(), logFile=str(), \
                         delay=0., progress=True, message=str(), numTasks=0, \
                         apiRedirect=False, redirectUnit=0, queryInfo=None, uploadInfo=None, \
                         encryptedKey=None, decryptedKey=None, cookies=str(), **context: \
@@ -49,8 +48,6 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, startDate=No
         fields = fields,
         iterateUnit = iterateUnit,
         interval = interval,
-        startDate = startDate,
-        endDate = endDate,
         datetimeUnit = datetimeUnit,
         tzinfo = tzinfo,
         returnType = returnType,
