@@ -29,6 +29,12 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         **context: TASK_CONTEXT(**context)
 
 
+LOGIN_CONTEXT = lambda userid=None, passwd=None, **context: REQUEST_CONTEXT(**context)
+
+
+API_CONTEXT = lambda clientId=None, clientSecret=None, **context: REQUEST_CONTEXT(**context)
+
+
 RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
                         delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, \
                         redirectUnit=None, encryptedKey=None, index=0, **context: \

@@ -1,6 +1,6 @@
 from __future__ import annotations
-from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
-from .context import UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from .context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
+from .context import RESPONSE_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from .types import _KT, _VT, _PASS, ClassInstance, Arguments, Context, TypeHint, LogLevel
 from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
@@ -194,8 +194,8 @@ class BaseSession(CustomDict):
                 tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **kwargs):
-        super().__init__(kwargs)
+                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
+        super().__init__(context)
         self.operation = self.operation
         self.fields = fields if fields else self.fields
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
@@ -234,11 +234,11 @@ class BaseSession(CustomDict):
         unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
-    def get_rename_map(self, **kwargs) -> RenameMap:
+    def get_rename_map(self, **context) -> RenameMap:
         return self.renameMap
 
-    def rename(self, string: str, **kwargs) -> str:
-        renameMap = self.get_rename_map(**kwargs)
+    def rename(self, string: str, **context) -> str:
+        renameMap = self.get_rename_map(**context)
         return renameMap[string] if renameMap and (string in renameMap) else string
 
     ###################################################################
@@ -310,31 +310,31 @@ class BaseSession(CustomDict):
 
     def catch_exception(func):
         @functools.wraps(func)
-        def wrapper(self: BaseSession, *args, **kwargs):
-            try: return func(self, *args, **kwargs)
+        def wrapper(self: BaseSession, *args, **context):
+            try: return func(self, *args, **context)
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
                 if "exception" in self.debug:
-                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "kwargs":kwargs})
+                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
                     raise exception
-                self.log_errors(*args, **kwargs)
+                self.log_errors(*args, **context)
                 func_name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(func_name, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
+                self.logger.error(log_exception(func_name, json=self.logJson, **REQUEST_CONTEXT(**context)))
                 return init_origin(func)
         return wrapper
 
-    def log_errors(self, *args, **kwargs):
-        self.errors.append(dict({"args":args}, **kwargs))
+    def log_errors(self, *args, **context):
+        self.errors.append(dict({"args":args}, **context))
 
     def validate_response(func):
         @functools.wraps(func)
-        def wrapper(self: BaseSession, response: Any, *args, **kwargs):
+        def wrapper(self: BaseSession, response: Any, *args, **context):
             is_valid = self.is_valid_response(response)
-            data = func(self, response, *args, **kwargs) if is_valid else init_origin(func)
-            suffix = f"_{kwargs.get('index')}" if kwargs.get("index") else str()
+            data = func(self, response, *args, **context) if is_valid else init_origin(func)
+            suffix = f"_{context.get('index')}" if context.get("index") else str()
             self.checkpoint("parse"+suffix, where=func.__name__, msg={"data":data}, save=data)
-            self.log_results(data, **kwargs)
+            self.log_results(data, **context)
             return data
         return wrapper
 
@@ -678,25 +678,25 @@ class Spider(BaseSession, Iterator):
 
     def requests_task(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            data = func(self, *args, **kwargs)
+        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = TASK_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            data = func(self, *args, **context)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
     def requests_session(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
+        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = REQUEST_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
             with requests.Session() as session:
-                data = func(self, *args, session=session, **kwargs)
+                data = func(self, *args, session=session, **context)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
@@ -706,9 +706,9 @@ class Spider(BaseSession, Iterator):
 
     def requests_limit(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, **kwargs):
+        def wrapper(self: Spider, *args, **context):
             if self.delay: time.sleep(self.get_delay())
-            return func(self, *args, **kwargs)
+            return func(self, *args, **context)
         return wrapper
 
     def get_delay(self, tsUnit: Literal["ms","s"]="ms") -> Union[float,int]:
@@ -797,7 +797,7 @@ class Spider(BaseSession, Iterator):
         @functools.wraps(func)
         def wrapper(self: Spider, method: str, url: str, session: Optional[requests.Session]=None,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, index=0, **kwargs):
+                    data=None, json=None, headers=None, cookies=str(), *args, index=0, **context):
             session = session if session else requests
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
@@ -805,7 +805,7 @@ class Spider(BaseSession, Iterator):
             suffix = f"_{index}" if index else str()
             self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            response = func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            response = func(self, method=method, url=url, session=session, messages=messages, **context)
             self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
@@ -900,11 +900,11 @@ class Spider(BaseSession, Iterator):
 
     def gcloud_authorized(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **kwargs):
+        def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
             if not authorization:
                 authorization = fetch_gcloud_authorization(redirectUrl, account)
             return func(
-                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **kwargs)
+                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **context)
         return wrapper
 
     def set_query(self, queryInfo: GspreadReadInfo=dict(), account: Account=dict(), **context):
@@ -1055,66 +1055,66 @@ class AsyncSpider(Spider):
 
     def asyncio_task(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = TASK_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            semaphore = self.asyncio_semaphore(**kwargs)
-            data = await func(self, *args, semaphore=semaphore, **kwargs)
+        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = TASK_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            semaphore = self.asyncio_semaphore(**context)
+            data = await func(self, *args, semaphore=semaphore, **context)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
     def asyncio_session(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            semaphore = self.asyncio_semaphore(**kwargs)
+        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = REQUEST_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
-                data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
+                data = await func(self, *args, session=session, semaphore=semaphore, **context)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
-    def asyncio_semaphore(self, numTasks: Optional[int]=None, apiRedirect=False, **kwargs) -> asyncio.Semaphore:
+    def asyncio_semaphore(self, numTasks: Optional[int]=None, apiRedirect=False, **context) -> asyncio.Semaphore:
         numTasks = min(self.numTasks, (self.redirectLimit if apiRedirect else self.maxLimit), self.maxLimit)
         return asyncio.Semaphore(numTasks)
 
     def catch_exception(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, **kwargs):
-            try: return await func(self, *args, **kwargs)
+        async def wrapper(self: AsyncSpider, *args, **context):
+            try: return await func(self, *args, **context)
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
                 if "exception" in self.debug:
-                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "kwargs":kwargs})
+                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
                     raise exception
-                self.log_errors(*args, **kwargs)
+                self.log_errors(*args, **context)
                 name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(name, *args, json=self.logJson, **REQUEST_CONTEXT(**kwargs)))
+                self.logger.error(log_exception(name, *args, json=self.logJson, **REQUEST_CONTEXT(**context)))
                 return init_origin(func)
         return wrapper
 
     def asyncio_redirect(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, apiRedirect=False, **kwargs):
-            if apiRedirect: return await self.redirect(self, *args, **kwargs)
-            else: return await func(self, *args, **kwargs)
+        async def wrapper(self: AsyncSpider, *args, apiRedirect=False, **context):
+            if apiRedirect: return await self.redirect(self, *args, **context)
+            else: return await func(self, *args, **context)
         return wrapper
 
     def asyncio_limit(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, semaphore: Optional[asyncio.Semaphore]=None, **kwargs):
+        async def wrapper(self: AsyncSpider, *args, semaphore: Optional[asyncio.Semaphore]=None, **context):
             if self.delay:
                 await asyncio.sleep(self.delay)
             if semaphore:
                 async with semaphore:
-                    return await func(self, *args, **kwargs)
-            return await func(self, *args, **kwargs)
+                    return await func(self, *args, **context)
+            return await func(self, *args, **context)
         return wrapper
 
     ###################################################################
@@ -1150,7 +1150,7 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                        data=None, json=None, headers=None, cookies=str(), *args, index=0, **kwargs):
+                        data=None, json=None, headers=None, cookies=str(), *args, index=0, **context):
             session = session if session else aiohttp
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
@@ -1158,7 +1158,7 @@ class AsyncSpider(Spider):
             suffix = f"_{index}" if index else str()
             self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            response = await func(self, method=method, url=url, session=session, messages=messages, **kwargs)
+            response = await func(self, method=method, url=url, session=session, messages=messages, **context)
             self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
@@ -1238,11 +1238,11 @@ class AsyncSpider(Spider):
 
     def gcloud_authorized(func):
         @functools.wraps(func)
-        async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **kwargs):
+        async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
             if not authorization:
                 authorization = fetch_gcloud_authorization(redirectUrl, account)
             return await func(
-                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **kwargs)
+                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **context)
         return wrapper
 
     @gcloud_authorized
@@ -1324,8 +1324,8 @@ class LoginSpider(requests.Session, Spider):
         elif returnType == "dict": return dict(self.cookies.items())
         else: return self.cookies
 
-    def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore", **kwargs):
-        cookies = decode_cookies(cookies, **kwargs) if isinstance(cookies, str) else dict(cookies, **kwargs)
+    def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore", **context):
+        cookies = decode_cookies(cookies, **context) if isinstance(cookies, str) else dict(cookies, **context)
         for __key, __value in cookies.items():
             if (if_exists == "replace") or (__key not in self.cookies):
                 self.cookies.set(__key, __value)
@@ -1338,13 +1338,13 @@ class LoginSpider(requests.Session, Spider):
         @functools.wraps(func)
         def wrapper(self: LoginSpider, method: str, url: str, origin: str,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, **kwargs):
+                    data=None, json=None, headers=None, cookies=str(), *args, **context):
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
             self.checkpoint(origin+"_request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
-            response = func(self, method=method, url=url, origin=origin, messages=messages, **kwargs)
+            response = func(self, method=method, url=url, origin=origin, messages=messages, **context)
             self.checkpoint(origin+"_response", where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
@@ -1471,15 +1471,15 @@ class EncryptedSpider(Spider):
 
     def login_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
-                self.login(session, **kwargs)
-                data = func(self, *args, session=session, **kwargs)
+        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = LOGIN_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            with (BaseLogin(self.cookies) if self.cookies else self.auth(**self.decryptedKey, **context)) as session:
+                self.login(session, **context)
+                data = func(self, *args, session=session, **context)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
@@ -1498,14 +1498,14 @@ class EncryptedSpider(Spider):
 
     def api_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
+        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = API_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
             with requests.Session() as session:
-                data = func(self, *args, session=session, **self.validate_secret(**dict(kwargs, **self.decryptedKey)))
+                data = func(self, *args, session=session, **self.validate_secret(**self.decryptedKey, **context))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
@@ -1568,30 +1568,30 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def login_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
-            semaphore = self.asyncio_semaphore(**kwargs)
-            with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
-                self.login(auth, **kwargs)
+        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = LOGIN_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            semaphore = self.asyncio_semaphore(**context)
+            with (BaseLogin(self.cookies) if self.cookies else self.auth(**self.decryptedKey, **context)) as auth:
+                self.login(auth, **context)
                 async with aiohttp.ClientSession(cookies=dict(auth.cookies)) as session:
-                    data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
+                    data = await func(self, *args, session=session, semaphore=semaphore, **context)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
     def api_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
-            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
-            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
+        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+            context = API_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
+            self.checkpoint("context", where=func.__name__, msg={"context":context})
             async with aiohttp.ClientSession() as session:
-                data = await func(self, *args, session=session, **self.validate_secret(**dict(kwargs, **self.decryptedKey)))
+                data = await func(self, *args, session=session, **self.validate_secret(**self.decryptedKey, **context))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **context)
             return data
         return wrapper
 
