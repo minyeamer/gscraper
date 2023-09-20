@@ -75,7 +75,7 @@ DATE_PARAMS = ["startDate", "endDate", "interval"]
 
 CHECKPOINT = [
     "all", "context", "crawl", "query", "iterator", "gather", "redirect", "request", "response",
-    "parse", "login", "exception"]
+    "parse", "login", "api", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
@@ -683,8 +683,7 @@ class Spider(BaseSession, Iterator):
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             data = func(self, *args, **kwargs)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
@@ -697,10 +696,13 @@ class Spider(BaseSession, Iterator):
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
+
+    def _with_data(self, data: Data, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        if self.localSave: self.save_data(data, ext="dataframe")
+        self.upload_data(data, uploadInfo, **context)
 
     def requests_limit(func):
         @functools.wraps(func)
@@ -1059,8 +1061,7 @@ class AsyncSpider(Spider):
             semaphore = self.asyncio_semaphore(**kwargs)
             data = await func(self, *args, semaphore=semaphore, **kwargs)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
@@ -1074,8 +1075,7 @@ class AsyncSpider(Spider):
                 data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
@@ -1462,29 +1462,60 @@ class EncryptedSpider(Spider):
         if not self.decryptedKey and not isinstance(decryptedKey, Dict):
             try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
-        self.decryptedKey = decryptedKey if decryptedKey else self.decryptedKey
+        self.decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
         self.logger.info(log_encrypt(**self.decryptedKey, show=3))
+
+    ###################################################################
+    ########################## Login Session ##########################
+    ###################################################################
 
     def login_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True,
-                    uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
+        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as session:
-                session.login()
-                session.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
-                self.checkpoint("login", where="login", msg={"cookies":dict(session.cookies)})
-                self.cookies = session.get_cookies()
+                self.login(session, **kwargs)
                 data = func(self, *args, session=session, **kwargs)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 
+    def login(self, auth: LoginSpider, **context):
+        auth.login()
+        auth.update_cookies(self.set_cookies(**context), if_exists="replace")
+        self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
+        self.cookies = auth.get_cookies()
+
     def set_cookies(self, **context) -> Dict:
+        return dict()
+
+    ###################################################################
+    ########################### API Session ###########################
+    ###################################################################
+
+    def api_session(func):
+        @functools.wraps(func)
+        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
+            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
+            with requests.Session() as session:
+                data = func(self, *args, session=session, **self.validate_secret(**dict(kwargs, **self.decryptedKey)))
+            time.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            self._with_data(data, uploadInfo, **kwargs)
+            return data
+        return wrapper
+
+    def validate_secret(self, clientId: str, clientSecret: str, **context) -> Context:
+        headers = self.set_headers(clientId=clientId, clientSecret=clientSecret, **context)
+        self.checkpoint("api", where="set_headers", msg={"headers":headers})
+        if headers: context["headers"] = headers
+        return context
+
+    def set_headers(self, **context) -> Dict:
         return dict()
 
 
@@ -1537,22 +1568,30 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def login_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True,
-                            uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
+        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
             if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
             self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
             semaphore = self.asyncio_semaphore(**kwargs)
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(kwargs, **self.decryptedKey))) as auth:
-                auth.login()
-                auth.update_cookies(self.set_cookies(**kwargs), if_exists="replace")
-                self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
-                self.cookies = auth.get_cookies()
+                self.login(auth, **kwargs)
                 async with aiohttp.ClientSession(cookies=dict(auth.cookies)) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **kwargs)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            if self.localSave: self.save_data(data, ext="dataframe")
-            self.upload_data(data, uploadInfo, **kwargs)
+            self._with_data(data, uploadInfo, **kwargs)
+            return data
+        return wrapper
+
+    def api_session(func):
+        @functools.wraps(func)
+        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **kwargs):
+            if self_var: kwargs = REQUEST_CONTEXT(**dict(self.__dict__, **kwargs))
+            self.checkpoint("context", where=func.__name__, msg={"context":kwargs})
+            async with aiohttp.ClientSession() as session:
+                data = await func(self, *args, session=session, **self.validate_secret(**dict(kwargs, **self.decryptedKey)))
+            await asyncio.sleep(.25)
+            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
+            self._with_data(data, uploadInfo, **kwargs)
             return data
         return wrapper
 

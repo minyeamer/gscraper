@@ -7,4 +7,4 @@ from .logs import *
 from .map import *
 from .parse import *
 
-__version__ = "2.2.5"
+__version__ = "2.2.6"
