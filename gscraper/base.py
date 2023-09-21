@@ -45,6 +45,14 @@ import os
 import random
 
 
+GET = "GET"
+POST = "POST"
+OPTIONS = "OPTIONS"
+HEAD = "HEAD"
+PUT = "PUT"
+PATCH = "PATCH"
+DELETE = "DELETE"
+
 EXAMPLE_URL = "https://example.com"
 
 HEADERS = {
@@ -670,7 +678,7 @@ class Spider(BaseSession, Iterator):
         if locals:
             context = dict(dict(locals.pop("context", dict()), **locals), **context)
             context.pop("self", None)
-        return drop_dict(context, cast_list(drop), inplace=False) if drop else context
+        return drop_dict(context, drop, inplace=False) if drop else context
 
     ###################################################################
     ######################### Session Managers ########################
@@ -1268,7 +1276,7 @@ class AsyncSpider(Spider):
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
         data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
-        response = self.request_text("POST", redirectUrl, session, json=data, headers=dict(Authorization=authorization))
+        response = self.request_text(POST, redirectUrl, session, json=data, headers=dict(Authorization=authorization))
         self.checkpoint("redirect", where="fetch_redirect", msg={"response":response}, save=response, ext="json")
         return self._parse_redirect(json.loads(response), **context)
 
