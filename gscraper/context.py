@@ -8,13 +8,14 @@ to_camel_case = lambda __s=str(): ''.join([s.capitalize() if __i > 0 else s for 
 def exists_context(**context):
     return {key: value for key, value in context.items() if value or isinstance(value, (bool,float,int))}
 
+
 UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, fromNow=None, responseType=None, \
                         debug=None, localSave=None, extraSave=None, interrupt=None, \
                         logger=None, logJson=None, errors=None, renameMap=None, schemaInfo=None, \
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
-                        crawler=None, authClass=None, dependencies=None, \
+                        ssl=None, crawler=None, authClass=None, dependencies=None, \
                         self_var=None, prefix=None, rename=None, **context: context
 
 
@@ -24,7 +25,7 @@ TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=N
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, cookies=None, \
-                        allow_redirects=None, verify=None, validate=None, exception=None, valid=None, invalid=None, \
+                        allow_redirects=None, validate=None, exception=None, valid=None, invalid=None, \
                         close=None, html=None, table_header=None, table_idx=None, engine=None, \
                         **context: TASK_CONTEXT(**context)
 
