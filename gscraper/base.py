@@ -189,8 +189,8 @@ class BaseSession(CustomDict):
     where = WHERE
     which = WHICH
     fields = list()
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     responseType = None
     returnType = None
     errors = list()
@@ -198,16 +198,15 @@ class BaseSession(CustomDict):
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(),
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
         super().__init__(context)
         self.operation = self.operation
         self.fields = fields if fields else self.fields
-        self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
+        self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.renameMap = renameMap if renameMap else self.renameMap
@@ -605,14 +604,13 @@ class Spider(BaseSession, Iterator):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(), **context):
         BaseSession.__init__(
-            self, fields=fields, datetimeUnit=datetimeUnit, tzinfo=tzinfo, returnType=returnType,
+            self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
             logName=logName, logLevel=logLevel, logFile=logFile,
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
             renameMap=renameMap, schemaInfo=schemaInfo)
@@ -976,7 +974,7 @@ class Spider(BaseSession, Iterator):
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame,
                     mode: Literal["fail","replace","append","upsert"]="append",
                     schema: Optional[BigQuerySchema]=None, progress=True, partition=str(),
-                    partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
+                    partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
                     reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
         data = self.map_gbq_data(data, schema=schema, **context)
@@ -1038,9 +1036,8 @@ class AsyncSpider(Spider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
@@ -1317,7 +1314,7 @@ class LoginSpider(requests.Session, Spider):
     operation = "login"
 
     @abstractmethod
-    def __init__(self, logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+    def __init__(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), cookies=str(), **context):
         requests.Session.__init__(self)
         if cookies: self.cookies.update(decode_cookies(cookies))
@@ -1450,9 +1447,8 @@ class EncryptedSpider(Spider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), queryInfo: Optional[GspreadReadInfo]=dict(),
@@ -1557,9 +1553,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
-                datetimeUnit: Literal["second","minute","hour","day","month","year"]="second",
-                tzinfo: Optional[Timezone]=None, returnType: Optional[TypeHint]=None,
-                logName=str(), logLevel: LogLevel="WARN", logFile: Optional[str]=str(),
+                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
                 progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: Optional[GspreadReadInfo]=dict(),
@@ -1652,8 +1647,8 @@ class Pipeline(Spider):
     dependencies = (Spider, Spider)
     fields = list()
     iterateUnit = 0
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "dataframe"
     renameMap = dict()
 
@@ -1687,8 +1682,8 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     dependencies = (AsyncSpider, AsyncSpider)
     fields = list()
     iterateUnit = 0
-    datetimeUnit = "second"
     tzinfo = None
+    datetimeUnit = "second"
     returnType = "dataframe"
     renameMap = dict()
 

@@ -46,7 +46,7 @@ UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=N
                         partition=None, prtition_by=None, base=None, **context: context
 
 
-PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, datetimeUnit=str(), tzinfo=None, \
+PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, tzinfo=None, datetimeUnit=str(), \
                         returnType=None, logName=str(), logLevel=str(), logFile=str(), \
                         delay=0., progress=True, message=str(), numTasks=0, \
                         apiRedirect=False, redirectUnit=0, queryInfo=None, uploadInfo=None, \
@@ -55,8 +55,8 @@ PROXY_CONTEXT = lambda fields=list(), iterateUnit=0, interval=None, datetimeUnit
         fields = fields,
         iterateUnit = iterateUnit,
         interval = interval,
-        datetimeUnit = datetimeUnit,
         tzinfo = tzinfo,
+        datetimeUnit = datetimeUnit,
         returnType = returnType,
         logName = logName,
         logLevel = logLevel,
