@@ -104,12 +104,9 @@ def _info_data(__object, limit=3000) -> Union[Tuple[Shape,Any],Any]:
         __object = __object.to_dict("records")
     elif is_records(__object, empty=False):
         shape = (len(__object), len(__object[0]))
-    elif isinstance(__object, Dict):
-        shape = (len(__object),)
-    else:
-        __object = str(__object)
-        shape = len(__object)
-        if shape < limit: return __object
+    elif (not limit) or (__object == None) or ((limit > 0) and (len(str(__object)) < limit)):
+        return __object
+    else: shape = (len(__object),) if isinstance(__object, Dict) else len(str(__object))
     return (shape, (_limit(__object, limit) if limit > 0 else __object))
 
 def dumps_key_value(__m: Dict, limit=3000) -> Dict:

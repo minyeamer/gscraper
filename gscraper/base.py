@@ -255,7 +255,7 @@ class BaseSession(CustomDict):
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
         if (point in self.debug) or ("all" in self.debug):
-            self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg)))
+            self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg, limit=0)))
         if ((point in self.extraSave) or ("all" in self.extraSave)) and data_exists(save):
             if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
