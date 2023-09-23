@@ -82,11 +82,12 @@ DATE_ITERATOR = ["startDate", "endDate"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
 CHECKPOINT = [
-    "all", "context", "crawl", "query", "iterator", "gather", "redirect", "request", "response",
-    "parse", "login", "api", "exception"]
+    "all", "context", "crawl", "params", "iterator", "gather", "gather_size", "redirect",
+    "request", "response", "parse", "login", "api", "exception"]
 CHECKPOINT_PATH = "saved/"
 
-GATHER_MSG = lambda which, where: f"Collecting {which} from {where}"
+GATHER_MSG = lambda which, where=str(), by=str(): \
+    f"Collecting {which}{(' by '+by) if by else str()}{(' from '+where) if where else str()}"
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 
@@ -188,6 +189,7 @@ class BaseSession(CustomDict):
     operation = "session"
     where = WHERE
     which = WHICH
+    by = str()
     fields = list()
     tzinfo = None
     datetimeUnit = "second"
@@ -587,6 +589,7 @@ class Spider(BaseSession, Iterator):
     operation = "spider"
     where = WHERE
     which = WHICH
+    by = str()
     fields = list()
     iterateArgs = list()
     iterateProduct = list()
@@ -601,7 +604,6 @@ class Spider(BaseSession, Iterator):
     returnType = "records"
     renameMap = dict()
     ssl = None
-    message = str()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
@@ -609,7 +611,7 @@ class Spider(BaseSession, Iterator):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                progress=True, message=str(), cookies=str(), queryInfo: GspreadReadInfo=dict(), **context):
+                progress=True, cookies=str(), queryInfo: GspreadReadInfo=dict(), **context):
         BaseSession.__init__(
             self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
             logName=logName, logLevel=logLevel, logFile=logFile,
@@ -618,7 +620,6 @@ class Spider(BaseSession, Iterator):
         Iterator.__init__(self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow)
         self.delay = delay
         self.progress = progress
-        self.message = message if message else self.message
         self.cookies = cookies
         if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
@@ -648,13 +649,13 @@ class Spider(BaseSession, Iterator):
     ###################### Local Variable Looker ######################
     ###################################################################
 
-    def from_locals(self, locals: Dict=dict(), how: Literal["all","args","context","query","request","response"]="all",
+    def from_locals(self, locals: Dict=dict(), how: Literal["all","args","context","params","request","response"]="all",
                     drop: _KT=list(), **context) -> Union[Arguments,Context,Tuple]:
         context = self._map_locals(locals, drop, **context)
         if is_array(how): return tuple(self.from_locals(how=how, drop=drop, **context) for how in how)
         elif how == "args": return self.local_args(locals, drop=drop, **context)
         elif how == "context": return self.local_context(locals, drop=drop, **context)
-        elif how == "query": return self.local_query(locals, drop=drop, **context)
+        elif how == "params": return self.local_params(locals, drop=drop, **context)
         elif how == "request": return self.local_request(locals, drop=drop, **context)
         elif how == "response": return self.local_response(locals, drop=drop, **context)
         else: return context
@@ -667,7 +668,7 @@ class Spider(BaseSession, Iterator):
         context = self._map_locals(locals, drop, **context)
         return drop_dict(context, self.iterateArgs, inplace=False)
 
-    def local_query(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Tuple[Arguments,Context]:
+    def local_params(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Tuple[Arguments,Context]:
         context = self._map_locals(locals, drop, **context)
         return self.local_args(**context), self.local_context(**context)
 
@@ -735,27 +736,27 @@ class Spider(BaseSession, Iterator):
         self.logger.info(log_data(data, **self.get_iterator(**context)))
 
     ###################################################################
-    ######################## Parameter Checker ########################
+    ####################### Parameter Validator #######################
     ###################################################################
 
-    def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None, dropna=True,
-                        strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
+    def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None,
+                        dropna=False, strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
                         **context) -> Tuple[Arguments,Context]:
-        args, context = self.local_query(locals, **context)
+        args, context = self.local_params(locals, **context)
         array_context = dict(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename)
         args = self.validate_args(*args, how=how, **array_context, **context)
         context = self.validate_context(**array_context, drop=drop, **context)
         return args, context
 
     def validate_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                    dropna=True, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
+                    dropna=False, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
         if not args: return args
         elif len(args) == 1: args = (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
         else: args = align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
         rename_args = lambda __s, __key: rename_data(__s, rename=rename[__key]) if __key in rename else __s
-        return tuple(rename_args(args[__i], __key) for __i, __key in enumerate(self.iterateArgs))
+        return tuple(rename_args(args[__i], __key) for __i, __key in enumerate(self.iterateArgs[:len(args)]))
 
-    def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
+    def validate_context(self, locals: Dict=dict(), default=None, dropna=False, strict=False, unique=True,
                         drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
         if locals: context = self.local_context(locals, **context, drop=drop)
         sequence_keys = self.inspect("crawl", "iterable").keys()
@@ -779,19 +780,48 @@ class Spider(BaseSession, Iterator):
         args, context = self.validate_params(locals())
         return self.gather(*args, **context)
 
-    def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
-                pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
-        iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
-        iterator, context = self.set_iterator(*args, **iterate_params, **context)
-        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
-        message = self.get_message(*args, message=message, **context)
+    def gather(self, *args, count: Optional[Pagination]=None, which=str(), by=str(), progress=True,
+                fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
+        if count: iterator, context = self.init_count(*args, count=count, which=which, by=by, progress=progress, **context)
+        else: iterator, context = self.init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        message = self.get_gather_message(*args, **context)
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
-    def get_message(self, *args, message=str(), **context) -> str:
-        return exists_one(message, self.message, GATHER_MSG(self.which, self.where))
+    def init_iterator(self, args: Arguments, context: Context,
+                    iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
+                    pagination: Pagination=False, count=False) -> Tuple[List[Context],Context]:
+        iterate_params = dict(iterateArgs=iterateArgs, iterateProduct=iterateProduct, pagination=pagination)
+        iterator, context = self.set_iterator(*args, **iterate_params, **context)
+        self.checkpoint("iterator"+("_count" if count else str()), where="init_iterator", msg={"iterator":iterator})
+        return iterator, context
+
+    def init_count(self, *args, count: Pagination, which=str(), by=str(), progress=True,
+                    **context) -> Tuple[List[Context],Context]:
+        if not_na(context.get("size")): pass
+        elif isinstance(count, str):
+            size = self.gather_count(*args, which=which, by=by, progress=progress, **context)
+            return self.init_iterator(args+(size,), context, self.iterateArgs+[count], self.iterateProduct, pagination=count)
+        else: context["size"] = cast_int(self.fetch(*args, **self.get_count_context(**context)))
+        return self.init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=True)
+
+    def gather_count(self, *args, which=str(), by=str(), progress=True, **context) -> List[int]:
+        iterator, context = self.init_iterator(args, self.get_count_context(**context), self.iterateArgs, count=True)
+        message = self.get_count_message(*args, which=which, by=by, **context)
+        size = [self.fetch(*__i, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        self.checkpoint("gather_count", where="gather_count", msg={"size":size})
+        return list(map(cast_int, size))
+
+    def get_gather_message(self, *args, **context) -> str:
+        return GATHER_MSG(self.which, self.where, self.by)
+
+    def get_count_context(self, **context) -> Context:
+        return context
+
+    def get_count_message(self, *args, which=str(), by=str(), **context) -> str:
+        return GATHER_MSG(which, self.where, by)
 
     def map_reduce(self, data: List[Data], fields: IndexLabel=list(),
                     returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -1022,6 +1052,7 @@ class AsyncSpider(Spider):
     operation = "spider"
     where = WHERE
     which = WHICH
+    by = str()
     fields = list()
     iterateArgs = list()
     redirectArgs = None
@@ -1039,7 +1070,6 @@ class AsyncSpider(Spider):
     returnType = "records"
     renameMap = dict()
     ssl = None
-    message = str()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
 
@@ -1133,7 +1163,7 @@ class AsyncSpider(Spider):
         return wrapper
 
     ###################################################################
-    ########################## Async Requests #########################
+    ########################### Async Gather ##########################
     ###################################################################
 
     @abstractmethod
@@ -1142,18 +1172,37 @@ class AsyncSpider(Spider):
         args, context = self.validate_params(locals())
         return await self.gather(*args, **context)
 
-    @asyncio_redirect
-    async def gather(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
-                    pagination: _PASS=None, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
-        iterate_params = dict(iterateArgs=self.iterateArgs, iterateProduct=self.iterateProduct, pagination=self.pagination)
-        iterator, context = self.set_iterator(*args, **iterate_params, **context)
-        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
-        message = self.get_message(*args, message=message, **context)
+    async def gather(self, *args, count: Optional[Pagination]=None, which=str(), by=str(), progress=True,
+                    fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
+        if count: iterator, context = await self.init_count(*args, count=count, which=which, by=by, progress=progress, **context)
+        else: iterator, context = self.init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        message = self.get_gather_message(*args, **context)
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+
+    async def init_count(self, *args, count: Pagination, which=str(), by=str(), progress=True,
+                        **context) -> Tuple[List[Context],Context]:
+        if not_na(context.get("size")): pass
+        elif isinstance(count, str):
+            size = await self.gather_count(*args, which=which, by=by, progress=progress, **context)
+            return self.init_iterator(args+(size,), context, self.iterateArgs+[count], self.iterateProduct, pagination=count)
+        else: context["size"] = cast_int(await self.fetch(*args, **self.get_count_context(**context)))
+        return self.init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=True)
+
+    async def gather_count(self, *args, which=str(), by=str(), progress=True, **context) -> List[int]:
+        iterator, context = self.init_iterator(args, self.get_count_context(**context), self.iterateArgs, count=True)
+        message = self.get_count_message(*args, which=which, by=by, **context)
+        size = await tqdm.gather(*[
+                self.fetch(**__i, **context) for __i in iterator], desc=message, disable=(not progress))
+        self.checkpoint("gather_count", where="gather_count", msg={"size":size})
+        return list(map(cast_int, size))
+
+    ###################################################################
+    ########################## Async Requests #########################
+    ###################################################################
 
     @abstractmethod
     @catch_exception
@@ -1261,21 +1310,19 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, message=str(), progress=True, iterateArgs: _PASS=None, iterateProduct: _PASS=None,
-                        iterateUnit: _PASS=None, redirectUnit: Unit=1, pagination: _PASS=None,
+    async def redirect(self, *args, message=str(), redirectUnit: Unit=1, progress=True,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        self.checkpoint("query", where="gather", msg=dict(zip(["args","context"], self.local_query(locals()))))
-        redirect_context = dict(iterateArgs=self.redirectArgs, iterateProduct=self.redirectProduct, iterateUnit=redirectUnit)
-        iterator, context = self.set_iterator(*args, **redirect_context, **context)
-        self.checkpoint("iterator", where="gather", msg={"iterator":iterator})
-        message = self.get_redirect_message(*args, message=message, **context)
+        self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
+        context["iterateUnit"] = redirectUnit
+        iterator, context = self.init_iterator(args, context, self.redirectArgs, self.redirectProduct, self.pagination)
+        message = self.get_redirect_message(*args, **context)
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.map_reduce(data, fields=fields, returnType=returnType, **context)
 
-    def get_redirect_message(self, *args, message=str(), **context) -> str:
-        return message if message else REDIRECT_MSG(self.operation)
+    def get_redirect_message(self, *args, **context) -> str:
+        return REDIRECT_MSG(self.operation)
 
     @catch_exception
     @asyncio_limit
@@ -1424,7 +1471,7 @@ class BaseLogin(LoginSpider):
     operation = "login"
 
     def __init__(self, cookies=str()):
-        super().__init__(cookies)
+        super().__init__(cookies=cookies)
 
     def login(self):
         return
@@ -1440,6 +1487,7 @@ class EncryptedSpider(Spider):
     operation = "spider"
     where = WHERE
     which = WHICH
+    by = str()
     fields = list()
     iterateArgs = list()
     iterateProduct = list()
@@ -1454,7 +1502,6 @@ class EncryptedSpider(Spider):
     returnType = "records"
     renameMap = dict()
     ssl = None
-    message = str()
     auth = LoginSpider
     decryptedKey = dict()
 
@@ -1542,6 +1589,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     operation = "spider"
     where = WHERE
     which = WHICH
+    by = str()
     fields = list()
     iterateArgs = list()
     redirectArgs = None
@@ -1559,7 +1607,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     returnType = "records"
     rename = dict()
     ssl = None
-    message = str()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
     auth = LoginSpider

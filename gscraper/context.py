@@ -9,7 +9,7 @@ def exists_context(**context):
     return {key: value for key, value in context.items() if value or isinstance(value, (bool,float,int))}
 
 
-UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, \
+UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, by=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, fromNow=None, responseType=None, \
                         debug=None, localSave=None, extraSave=None, interrupt=None, \
@@ -20,7 +20,7 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, wher
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        drop=None, index=None, **context: UNIQUE_CONTEXT(**context)
+                        drop=None, index=None, count=None, **context: UNIQUE_CONTEXT(**context)
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
