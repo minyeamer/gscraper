@@ -871,7 +871,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                 params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                 valid: Optional[Status]=None, invalid: Optional[Status]=None, close=True, **context) -> requests.Response:
         response = session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl)
         self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -881,7 +881,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_status(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -891,7 +891,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_content(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -901,7 +901,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_text(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -911,7 +911,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_json(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -921,7 +921,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_headers(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
@@ -931,7 +931,7 @@ class Spider(BaseSession, Iterator):
     @encode_messages
     def request_table(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, html=True, table_header=0, table_idx=0,
                     engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
@@ -945,11 +945,11 @@ class Spider(BaseSession, Iterator):
         elif not isinstance(encode, bool): return url, params
         else: return encode_params(url, params, encode=encode), None
 
-    def validate_status(self, response: requests.Response, how: Literal["error","interupt"]="interupt",
+    def validate_status(self, response: requests.Response, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status_code
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
-            if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise requests.ConnectionError(INVALID_STATUS_MSG(self.where))
 
     ###################################################################
@@ -1129,8 +1129,7 @@ class AsyncSpider(Spider):
             context = REQUEST_CONTEXT(**(dict(self.__dict__, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
-            ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
-            async with aiohttp.ClientSession(**ssl) as session:
+            async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **context)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
@@ -1257,11 +1256,20 @@ class AsyncSpider(Spider):
         return wrapper
 
     @encode_messages
+    async def request(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context):
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+
+    @encode_messages
     async def request_status(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status
@@ -1269,9 +1277,9 @@ class AsyncSpider(Spider):
     @encode_messages
     async def request_content(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt", 
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt", 
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.read()
@@ -1279,29 +1287,29 @@ class AsyncSpider(Spider):
     @encode_messages
     async def request_text(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> str:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return await response.text()
+            return await response.text(encoding=encoding)
 
     @encode_messages
     async def request_json(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> JsonData:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return await response.json()
+            return await response.json(encoding=encoding)
 
     @encode_messages
     async def request_headers(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
@@ -1309,20 +1317,20 @@ class AsyncSpider(Spider):
     @encode_messages
     async def request_table(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interupt"]="interupt",
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, html=False, table_header=0, table_idx=0,
                             engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             if html: return pd.read_html(await response.text(), header=table_header)[table_idx]
             else: return pd.read_excel(await response.read(), engine=engine)
 
-    def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interupt"]="interupt",
+    def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
-            if how == "interupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise aiohttp.ServerConnectionError(INVALID_STATUS_MSG(self.where))
 
     ###################################################################
@@ -1445,7 +1453,7 @@ class LoginSpider(requests.Session, Spider):
     @encode_messages
     def request_url(self, method: str, url: str, origin: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, verify=None):
+                    headers=None, cookies=str(), allow_redirects=True, **context):
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
