@@ -5,7 +5,7 @@ from .types import _KT, _VT, _PASS, ClassInstance, Arguments, Context, TypeHint,
 from .types import RenameMap, IndexLabel, EncryptedKey, Pagination, Pages
 from .types import Status, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from .types import JsonData, RedirectData, Records, TabularData, Data
-from .types import SchemaInfo, Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
+from .types import Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
 from .types import is_dataframe_type, allin_instance, is_array, is_str_array, is_records
 from .types import init_origin, inspect_function
 
@@ -19,7 +19,7 @@ from .map import not_na, data_exists, unique, to_array, get_scala, diff
 from .map import iloc, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, exists_dict, cloc, apply_df
 from .map import exists_one, convert_data, rename_data, filter_data, chain_exists, set_data, data_empty
-from .parse import parse_cookies, parse_origin, decode_cookies, encode_params, validate_schema, parse_schema
+from .parse import parse_cookies, parse_origin, decode_cookies, encode_params, validate_schema, parse_data
 
 from abc import ABCMeta, abstractmethod
 from bs4 import BeautifulSoup
@@ -193,17 +193,15 @@ class BaseSession(CustomDict):
     fields = list()
     tzinfo = None
     datetimeUnit = "second"
-    responseType = None
     returnType = None
     errors = list()
-    renameMap = dict()
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(),
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
+                **context):
         super().__init__(context)
         self.operation = self.operation
         self.fields = fields if fields else self.fields
@@ -211,9 +209,8 @@ class BaseSession(CustomDict):
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
-        self.renameMap = renameMap if renameMap else self.renameMap
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
-        self.set_schema(schemaInfo)
+        self._validate_schema()
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                     debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False):
@@ -227,12 +224,9 @@ class BaseSession(CustomDict):
         self.interrupt = interrupt
         self.localSave = localSave
 
-    def set_schema(self, schemaInfo: SchemaInfo=dict()):
-        schemaInfo = schemaInfo if schemaInfo else self.schemaInfo
-        if schemaInfo:
-            for __key, schemaContext in schemaInfo.copy().items():
-                schemaInfo[__key]["schema"] = validate_schema(schemaContext["schema"])
-            self.schemaInfo = schemaInfo
+    def _validate_schema(self):
+        for __key, schemaContext in self.schemaInfo.copy().items():
+            self.schemaInfo[__key]["schema"] = validate_schema(schemaContext["schema"])
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, droptz=True) -> dt.datetime:
@@ -244,7 +238,7 @@ class BaseSession(CustomDict):
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
     def get_rename_map(self, **context) -> RenameMap:
-        return self.renameMap
+        return dict()
 
     def rename(self, string: str, **context) -> str:
         renameMap = self.get_rename_map(**context)
@@ -603,7 +597,6 @@ class Spider(BaseSession, Iterator):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "records"
-    renameMap = dict()
     ssl = None
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
@@ -611,22 +604,21 @@ class Spider(BaseSession, Iterator):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                progress=True, cookies=str(), queryInfo: GspreadReadInfo=dict(), **context):
+                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                queryInfo: GspreadReadInfo=dict(), **context):
         BaseSession.__init__(
             self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
             logName=logName, logLevel=logLevel, logFile=logFile,
-            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
-            renameMap=renameMap, schemaInfo=schemaInfo)
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave)
         Iterator.__init__(self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow)
         self.delay = delay
         self.progress = progress
         self.cookies = cookies
         if context: self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
         self.set_query(queryInfo, **context)
-        self.disable_warnings()
+        self._disable_warnings()
 
-    def disable_warnings(self):
+    def _disable_warnings(self):
         if self.ssl == False:
             from urllib3.exceptions import InsecureRequestWarning
             import urllib3
@@ -1082,7 +1074,6 @@ class AsyncSpider(Spider):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "records"
-    renameMap = dict()
     ssl = None
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
@@ -1092,14 +1083,14 @@ class AsyncSpider(Spider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                progress=True, message=str(), cookies=str(), numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
-                queryInfo: GspreadReadInfo=dict(), **context):
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, queryInfo: GspreadReadInfo=dict(), **context):
         Spider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
-            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
-            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
-            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies)
+            self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
+            iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
+            delay=delay, progress=progress, message=message, cookies=cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         if not is_array(self.redirectArgs): self.redirectArgs = self.iterateArgs
@@ -1414,7 +1405,7 @@ class LoginSpider(requests.Session, Spider):
         requests.Session.__init__(self)
         if cookies: self.cookies.update(decode_cookies(cookies))
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt)
-        self.disable_warnings()
+        self._disable_warnings()
 
     @abstractmethod
     def login(self):
@@ -1516,7 +1507,7 @@ class BaseLogin(LoginSpider):
     operation = "login"
 
     def __init__(self, cookies=str()):
-        super().__init__(cookies=cookies)
+        super().__init__(cookies=(cookies if isinstance(cookies, str) else str()))
 
     def login(self):
         return
@@ -1545,7 +1536,6 @@ class EncryptedSpider(Spider):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "records"
-    renameMap = dict()
     ssl = None
     auth = LoginSpider
     decryptedKey = dict()
@@ -1555,14 +1545,14 @@ class EncryptedSpider(Spider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                progress=True, message=str(), cookies=str(), queryInfo: GspreadReadInfo=dict(),
-                encryptedKey: EncryptedKey=str(), decryptedKey: Union[str,Dict]=str(), **context):
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
+                queryInfo: GspreadReadInfo=dict(), encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         Spider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
-            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
-            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
-            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
+            self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
+            iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
+            delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo, **context)
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
@@ -1650,7 +1640,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "records"
-    rename = dict()
     ssl = None
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectLimit = MAX_REDIRECT_LIMIT
@@ -1662,14 +1651,15 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), delay: Union[float,int,Tuple[int]]=1.,
-                progress=True, message=str(), cookies=str(), numTasks=100, queryInfo: GspreadReadInfo=dict(),
-                apiRedirect=False, redirectUnit: Unit=0, encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, queryInfo: GspreadReadInfo=dict(),
+                encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(
-            self, fields=fields, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow, tzinfo=tzinfo,
-            datetimeUnit=datetimeUnit, returnType=returnType, logName=logName, logLevel=logLevel, logFile=logFile,
-            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, renameMap=renameMap,
-            schemaInfo=schemaInfo, delay=delay, progress=progress, message=message, cookies=cookies,
+            self, fields=fields, tzinfo=tzinfo, datetimeUnit=datetimeUnit, returnType=returnType,
+            iterateUnit=iterateUnit, interval=interval, fromNow=fromNow,
+            logName=logName, logLevel=logLevel, logFile=logFile,
+            debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave,
+            delay=delay, progress=progress, message=message, cookies=cookies,
             contextFields=contextFields, queryInfo=queryInfo,
             numTasks=numTasks, apiRedirect=apiRedirect, redirectUnit=redirectUnit, **context)
         if not self.cookies:
@@ -1715,30 +1705,32 @@ class Parser(BaseSession):
     __metaclass__ = ABCMeta
     operation = "parser"
     fields = list()
-    responseType = "dict"
+    pagination = False
     root = list()
-    renameMap = dict()
+    path = list()
+    groupby = list()
+    match = None
+    rankby = str()
     schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: List[str]=list(), root: _KT=list(), renameMap: RenameMap=dict(), schemaInfo: SchemaInfo=dict(), **context):
+                debug: List[str]=list(), **context):
         BaseSession.__init__(
-            self, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug,
-            renameMap=renameMap, schemaInfo=schemaInfo, **context)
-        self.root = root if root else self.root
+            self, fields=fields, logName=logName, logLevel=logLevel, logFile=logFile, debug=debug, **context)
 
     @BaseSession.validate_response
-    def parse(self, response: Any, schemaInfo: SchemaInfo=dict(), root: _KT=list(), discard=False,
+    def parse(self, response: Any, strict=False, discard=False, updateTime=True,
                 fields: IndexLabel=list(), **context) -> Data:
         data = self.parse_response(response, **context)
-        return self.parse_data(data, schemaInfo, root, discard, fields, **context)
+        return self.parse_data(data, strict, discard, updateTime, fields, **context)
 
     def parse_response(self, response: Any, **context) -> Data:
-        return json.loads(response)
+        return response
 
-    def parse_data(self, data: Data, schemaInfo: SchemaInfo=dict(), root: _KT=list(), discard=False,
-                    fields: IndexLabel=list(), updateTime=True, **context) -> Data:
-        data = parse_schema(data, schemaInfo, self.responseType, root, self.get_rename_map(**context), discard, **context)
+    def parse_data(self, data: Data, strict=False, discard=False, updateTime=True,
+                    fields: IndexLabel=list(), **context) -> Data:
+        schema_args = (self.schemaInfo, self.root, self.path, self.groupby, self.match, self.rankby)
+        data = parse_data(data, *schema_args, strict=strict, discard=discard, **context)
         if updateTime:
             data = set_data(data, updateDate=self.today(), updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
@@ -1758,7 +1750,6 @@ class Pipeline(Spider):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
-    renameMap = dict()
 
     @abstractmethod
     @Spider.requests_task
@@ -1793,7 +1784,6 @@ class AsyncPipeline(AsyncSpider, Pipeline):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
-    renameMap = dict()
 
     @abstractmethod
     @AsyncSpider.asyncio_task

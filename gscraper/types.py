@@ -170,12 +170,7 @@ Schema = Sequence[SchemaField]
 class SchemaContext(TypedDict):
     schema: Schema
     root: _KT
-    path: _KT
-    strict: bool
-    index: _KT
     match: MatchFunction
-    rename: RenameMap
-    discard: bool
 
 SchemaInfo = Dict[_KT, SchemaContext]
 

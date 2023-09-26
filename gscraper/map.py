@@ -6,10 +6,12 @@ from .types import is_list_type, is_dict_type, is_records_type, is_dataframe_typ
 
 from .cast import cast_str, cast_list, cast_tuple, cast_set
 
-from typing import Any, Dict, List, Set
+from typing import Any, Callable, Dict, List, Set
 from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
+from collections import defaultdict
 from itertools import chain
 import functools
+import inspect
 import pandas as pd
 import random as rand
 import re
@@ -62,8 +64,14 @@ def data_empty(data: Data, drop_na=True, how: Literal["any","all"]="all") -> boo
     return df_empty(data, drop_na, how) if isinstance(data, pd.DataFrame) else (not data)
 
 
+def is_context_allowed(func: Callable) -> bool:
+    for name, parameter in inspect.signature(func).parameters.items():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD: return True
+    return False
+
+
 def safe_apply(__object, __applyFunc: ApplyFunction, default=None, **context) -> Any:
-    try: return __applyFunc(__object, **context)
+    try: return __applyFunc(__object, **context) if context and is_context_allowed(__applyFunc) else __applyFunc(__object)
     except: return default
 
 
@@ -363,9 +371,10 @@ def exists_dict(__m: Optional[Dict]=dict(), strict=False, **context) -> Dict:
 def hier_get(__m: Dict, __path: _KT, default=None, apply: Optional[ApplyFunction]=None,
             __type: Optional[_TYPE]=None, empty=True, strict=True, **context) -> _VT:
     __m = __m.copy()
-    for __key in cast_tuple(__path):
-        if __key not in __m: return default
-        else: __m = __m[__key]
+    try:
+        for __key in cast_tuple(__path):
+            __m = __m[__key]
+    except: return default
     value = safe_apply(__m, apply, default, **context) if apply else __m
     if __type and not isinstance(value, __type): return default
     return value if empty or exists(value, strict=strict) else default
@@ -374,9 +383,10 @@ def hier_get(__m: Dict, __path: _KT, default=None, apply: Optional[ApplyFunction
 def hier_set(__m: Dict, __path: _KT, value: _VT, empty=True, strict=True, inplace=True) -> Dict:
     if not inplace: __m = __m.copy()
     if empty or exists(value, strict=strict):
-        for __key in cast_tuple(__path)[:-1]:
-            if __key not in __m: __m[__key] = dict()
-            else: __m = __m[__key]
+        try:
+            for __key in cast_tuple(__path)[:-1]:
+                __m = __m[__key]
+        except: return __m if not inplace else None
         __m[__path[-1]] = value
     if not inplace: return __m
 
@@ -480,17 +490,22 @@ def sort_records(__r: Records, by: _KT, ascending=True) -> Records:
     return sorted(__r, key=lambda x: kloc(x, cast_tuple(by), values_only=True), reverse=(not ascending))
 
 
+def groupby_records(__r: Records, by: _KT, if_null: Literal["drop","pass"]="drop") -> Dict[_KT,Records]:
+    by = cast_tuple(by)
+    groups = defaultdict(list)
+    for __m in __r:
+        values = kloc(__m, by, default=str(), if_null=if_null, values_only=True)
+        if len(values) != len(by): continue
+        else: groups[tuple(values)].append(__m)
+    return dict(groups)
+
+
 def isin_records(__r: Records, keys: _KT, how: Literal["any","all"]="any") -> _BOOL:
     if not is_array(keys):
         isin = [keys in __m for __m in __r]
         return allin(isin) if how == "all" else any(isin)
     elif not keys: return list()
     else: return [isin_records(__r, __key, how=how) for __key in keys]
-
-
-def filter_records(__r: List[Dict], __keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
-                    all_keys=False, match: Optional[MatchFunction]=None, __default=None, **context) -> Records:
-    return [__m for __m in __r if match_dict(__m, __keys, __matchFunc, all_keys=all_keys, match=match, **context)]
 
 
 def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
@@ -575,6 +590,12 @@ def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __range
             elif isinstance(__range, dict): df = df[df[__column].apply(lambda x: between(x, **__range, **kwargs))|if_na]
             else: raise ValueError(BETWEEN_RANGE_TYPE_MSG)
     return df
+
+
+def groupby_df(df: pd.DataFrame, by: _KT, if_null: Literal["drop","pass"]="drop") -> Dict[_KT,pd.DataFrame]:
+    counts = cloc(df, cast_list(by), if_null=if_null).value_counts().reset_index(name="count")
+    keys = counts.drop(columns="count").to_dict("split")["data"]
+    return {tuple(key): match_df(df, **dict(zip(by, map(lambda x: (lambda y: x == y), key)))) for key in keys}
 
 
 def include_df(df: pd.DataFrame, columns: IndexLabel, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
