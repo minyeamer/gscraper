@@ -122,6 +122,11 @@ def replace_map(string: str, __m: dict) -> str:
     return string
 
 
+def match_keywords(string: str, keywords: Sequence[str]) -> bool:
+    pattern = re.compile('|'.join(map(re.escape, keywords)))
+    return bool(pattern.search(string))
+
+
 ###################################################################
 ############################## Array ##############################
 ###################################################################
@@ -409,8 +414,8 @@ def align_dict(__m: Dict[_KT,Sequence], how: Literal["min","max"]="min", default
     else: return {__key: iloc(__value, indices, default=default, if_null="pass") for __key, __value in __m.items()}
 
 
-def match_keywords(__m: Dict, keys: _KT, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
-                    how: Literal["any","all"]="any", if_null=False) -> bool:
+def include_dict(__m: Dict, keys: _KT, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
+                how: Literal["any","all"]="any", if_null=False) -> bool:
     if not (include or exclude): return True
     include, exclude, __match = cast_tuple(include, strict=True), cast_tuple(exclude, strict=True), [False, False]
 
@@ -512,7 +517,7 @@ def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), 
                     how: Literal["any","all"]="any", if_null=False) -> Records:
     if not (include or exclude): return __r
     include, exclude = cast_tuple(include, strict=True), cast_tuple(exclude, strict=True)
-    return [__m for __m in __r if match_keywords(__m, keys, include=include, exclude=exclude, how=how, if_null=if_null)]
+    return [__m for __m in __r if include_dict(__m, keys, include=include, exclude=exclude, how=how, if_null=if_null)]
 
 
 ###################################################################
@@ -767,10 +772,10 @@ def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
                 reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False) -> Data:
-    if is_dfarray(data): return concat_df(data)
-    elif is_2darray(data): return list(chain.from_iterable(data))
+    if is_dfarray(data): return concat_df([df for df in data if df_exists(df)])
+    elif is_2darray(data): return list(chain.from_iterable([__s for __s in data if is_array(__s)]))
     elif data_type and is_dict_type(data_type) and is_records(data, how="any"):
-        return chain_dict(data, keep=keep)
+        return chain_dict([__m for __m in data if isinstance(__m, Dict)], keep=keep)
     else: return filter_exists(data)
 
 

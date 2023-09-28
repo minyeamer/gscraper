@@ -15,7 +15,7 @@ from .gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from .gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from .logs import CustomLogger, dumps_data
 from .logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from .map import not_na, data_exists, unique, to_array, get_scala, diff
+from .map import is_na, not_na, data_exists, unique, to_array, get_scala, diff
 from .map import iloc, fill_array, is_same_length, unit_array, concat_array, align_array, transpose_array
 from .map import kloc, apply_dict, chain_dict, drop_dict, exists_dict, cloc, apply_df
 from .map import exists_one, convert_data, rename_data, filter_data, chain_exists, set_data, data_empty
@@ -302,7 +302,7 @@ class BaseSession(CustomDict):
     def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
         if isinstance(response, str) and response:
             try: return json.loads(response), "json"
-            except: response, "html"
+            except: return response, "html"
         elif isinstance(response, pd.DataFrame):
             return response, "dataframe"
         else: return response, "json"
@@ -425,7 +425,7 @@ class Iterator(CustomDict):
     def _from_args(self, *args: Sequence, iterateArgs: List[_KT], iterateUnit: Unit=1,
                 pagination: Pagination=False, **context) -> Tuple[List[Context],Context]:
         if not is_same_length(*args): return list(), context
-        argnames, pagenames = self._split_argnames(*args, iterateArgs=iterateArgs, pagination=pagination)
+        argnames, pagenames = self._split_argnames(*args, iterateArgs=iterateArgs, pagination=pagination, **context)
         if pagination:
             how = "numeric" if pagenames == PAGE_ITERATOR else "categorical"
             args, context = self._from_pages(*args, how=how, iterateArgs=iterateArgs, pagination=pagination, **context)
@@ -435,9 +435,10 @@ class Iterator(CustomDict):
         args = [dict(zip(argnames, values)) for values in zip(*args)]
         return (self._map_pages(*args, keys=pagenames) if pagenames else args), context
 
-    def _split_argnames(self, *args, iterateArgs: List[_KT], pagination: Pagination=False) -> Tuple[List[_KT],List[_KT]]:
+    def _split_argnames(self, *args, iterateArgs: List[_KT], pagination: Pagination=False,
+                        size: Optional[Unit]=None, **context) -> Tuple[List[_KT],List[_KT]]:
         argnames = iterateArgs.copy()
-        if isinstance(pagination, str) and is_str_array(args[iterateArgs.index(pagination)]):
+        if is_na(size) and isinstance(pagination, str) and is_str_array(args[iterateArgs.index(pagination)]):
             argnames.pop(iterateArgs.index(pagination))
             return argnames+["pages"], [pagination]+PAGE_ITERATOR+PAGE_PARAMS
         elif pagination:
@@ -461,7 +462,7 @@ class Iterator(CustomDict):
     def _from_pages(self, *args: Sequence, how: Literal["numeric","categorical"], iterateArgs: List[_KT],
                     pagination: Pagination=False, size: Optional[Unit]=None, **context) -> Tuple[List[List],Context]:
         if how == "numeric":
-            if isinstance(pagination, str):
+            if is_na(size) and isinstance(pagination, str):
                 size = args[iterateArgs.index(pagination)]
             return self._from_numeric_pages(*args, size=size, **context)
         base = list(args)

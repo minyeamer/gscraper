@@ -2,9 +2,9 @@ from .context import SCHEMA_CONTEXT
 from .types import _KT, _VT, _PASS, IndexLabel, JsonData, Records, Data
 from .types import SchemaPath, PathType, ApplyFunction, MatchFunction
 from .types import SchemaApply, SchemaMatch, SchemaField, Schema, SchemaInfo
-from .types import is_array_type, not_na, get_type, init_origin, is_array, is_records, is_df, is_df_sequence
+from .types import not_na, get_type, init_origin, is_numeric_type, is_array, is_records, is_df, is_df_sequence
 
-from .cast import cast_datetime, cast_date, cast_object
+from .cast import cast_str, cast_datetime, cast_date, cast_object
 from .map import re_get, safe_apply, get_scala, exists_one, union
 from .map import kloc, chain_dict, drop_dict, hier_get, groupby_records
 from .map import concat_df, fillna_each, safe_apply_df, groupby_df
@@ -32,7 +32,7 @@ INVALID_VALUE_TYPE_MSG = lambda ret, __t, name=str(): \
 
 INVALID_SCHEMA_TYPE_MSG = "Schema must be a sequence of dictionaries."
 INVALID_FIELD_TYPE_MSG = "Schema field must be a dictionary type."
-INVALID_FIELD_KEY_MSG = "Schema field must have 'name' and 'path' key-values."
+INVALID_FIELD_KEY_MSG = "Schema field must have name, path, type, and mode key-values."
 INVALID_PATH_TYPE_MSG = lambda path: f"'{path}' is not supported type for schema path."
 
 FOR_NAME = lambda name: f" for the '{name}'" if name else str()
@@ -178,12 +178,16 @@ def match_class(source: Tag, class_name: str) -> bool:
 ########################### Schema Base ###########################
 ###################################################################
 
-SCHEMA_KEYS = ["schema", "root", "match"]
+SCHEMA = "schema"
+ROOT = "root"
+MATCH = "match"
+SCHEMA_KEYS = [SCHEMA, ROOT, MATCH]
 
 NAME = "name"
 PATH = "path"
 TYPE = "type"
 MODE = "mode"
+DESC = "description"
 CAST = "cast"
 STRICT = "strict"
 DEFAULT = "default"
@@ -198,13 +202,15 @@ CALLABLE = "callable"
 GLOBAL = "global"
 
 QUERY = "QUERY"
-INDEX = "index"
+INDEX = "INDEX"
 NULLABLE = "NULLABLE"
 NOTNULL = "NOTNULL"
+NOTZERO = "NOTZERO"
 
 FUNC = "func"
 __EXISTS__ = "__EXISTS__"
 __JOIN__ = "__JOIN__"
+__SPLIT__ = "__SPLIT__"
 
 
 def _get_path_type(path: SchemaPath) -> PathType:
@@ -227,7 +233,7 @@ def validate_schema(schema: Schema) -> Schema:
 def _validate_field(field: SchemaField) -> SchemaField:
     if not isinstance(field, Dict):
         raise TypeError(INVALID_FIELD_TYPE_MSG)
-    if (not NAME in field) or (not PATH in field):
+    if len(kloc(field, [NAME, PATH, TYPE, MODE], if_null="drop")) != 4:
         raise ValueError(INVALID_FIELD_KEY_MSG)
     field = field.copy()
     field[HOW] = _get_path_type(field[PATH])
@@ -240,11 +246,15 @@ def _validate_field(field: SchemaField) -> SchemaField:
 
 
 def _init_field(field: SchemaField) -> SchemaField:
-    if TYPE in field:
-        field[TYPE] = get_type(field[TYPE], argidx=-1)
-        if (field.get(MODE) == NOTNULL) and not is_array_type(field[TYPE]):
-            field[DEFAULT] = init_origin(field[TYPE])
-            field[CAST] = True
+    field[TYPE] = get_type(field[TYPE], argidx=-1)
+    if is_numeric_type(field[TYPE]):
+        field[CAST] = True
+    if field[MODE] == NOTNULL:
+        field[DEFAULT] = init_origin(field[TYPE])
+        field[CAST] = True
+    elif field[MODE] == NOTZERO:
+        field[CAST] = True
+        field[STRICT] = False
     return field
 
 
@@ -285,10 +295,11 @@ def _validate_match(field: SchemaField) -> SchemaField:
 
 def parse_data(data: Data, schemaInfo: SchemaInfo, root: _KT=list(), path: _KT=list(), groupby: _KT=list(),
                 match: Optional[MatchFunction]=None, rankby=str(), strict=False, discard=False, **context) -> Data:
+    if root: data = hier_get(data, root)
     if is_records(data):
-        return parse_records(data, schemaInfo, root, path, groupby, match, rankby, strict, discard, **context)
+        return parse_records(data, schemaInfo, list(), path, groupby, match, rankby, strict, discard, **context)
     elif isinstance(data, Dict):
-        return parse_dict(data, schemaInfo, root, discard, **context)
+        return parse_dict(data, schemaInfo, list(), discard, **context)
     elif isinstance(data, pd.DataFrame):
         return parse_df(data, schemaInfo, groupby, match, rankby, discard, **context)
     else: return data
@@ -337,9 +348,11 @@ def parse_dict(__m: Dict, schemaInfo: SchemaInfo, root: _KT=list(), discard=Fals
     __base = dict()
     for schema_context in schemaInfo.values():
         schema, schema_root, schema_match = kloc(schema_context, SCHEMA_KEYS, if_null="pass", values_only=True)
-        if schema_root: __m = hier_get(__m, schema_root, default=dict())
-        if isinstance(schema_match, Callable) and not safe_apply(__m, schema_match, **context): continue
-        __base = _parse_dict_schema(__m, __base, schema, **context)
+        __bm = hier_get(__m, schema_root, default=dict()) if schema_root else __m
+        if not __bm: continue
+        __bm = dict(__bm, **context)
+        if isinstance(schema_match, Callable) and not safe_apply(__bm, schema_match, **context): continue
+        __base = _parse_dict_schema(__bm, __base, schema, **context)
     return __base if discard else chain_dict([__base, __m], keep="first")
 
 
@@ -348,8 +361,11 @@ def _parse_dict_schema(__m: Dict, __base: Dict, schema: Schema, **context) -> Di
         __m = dict(__m, **__base)
         if (field[MODE] == QUERY) and (field[NAME] in context):
             __m[field[NAME]] = context[field[NAME]]
-        elif (field[MODE] == INDEX) and (field[NAME] in context):
-            __base[field[NAME]] = context[field[NAME]]
+            if not ((CAST in field) or (APPLY in field) or (MATCH in field)):
+                __base[field[NAME]] = context[field[NAME]]
+                continue
+        elif (field[MODE] == INDEX) and (field[NAME] in __m):
+            __base[field[NAME]] = __m[field[NAME]]
             continue
         try: __base = _parse_dict_field(__m, __base, **field, **context)
         except Exception as exception:
@@ -359,8 +375,8 @@ def _parse_dict_schema(__m: Dict, __base: Dict, schema: Schema, **context) -> Di
 
 
 def _parse_dict_field(__m: Dict, __base: Dict, name: _KT, path: SchemaPath, how: Optional[PathType]=None,
-                    type: Optional[Type]=None, mode: _PASS=None, cast=False, strict=True, default=None,
-                    apply: SchemaApply=dict(), match: SchemaMatch=dict(), **context) -> Dict:
+                    type: Optional[Type]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True,
+                    default=None, apply: SchemaApply=dict(), match: SchemaMatch=dict(), **context) -> Dict:
     path_type = how if how else _get_path_type(path)
     context = dict(context, type=type, cast=cast, strict=strict, default=default, apply=apply, match=match)
     if path_type in (PATH,CALLABLE): return _set_dict_value(__m, __base, name, path, **context)
@@ -410,6 +426,7 @@ def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], d
 
 def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None,
                     apply: SchemaApply=dict(), match: SchemaMatch=dict(), **context) -> Dict:
+    __m = _from_dict(__m, [], **context)
     if _match_dict(__m, **match):
         results = _apply_schema(__m, **apply)
         if name: __base[name] = results
@@ -437,7 +454,7 @@ def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_K
 
 def _apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, name=str(), **context) -> Any:
     if not func: return __object
-    elif isinstance(func, Callable): return safe_apply(__object, func, default, **context)
+    if isinstance(func, Callable): return safe_apply(__object, func, default, **context)
     elif isinstance(func, str): return _special_apply(__object, func, name, **context)
     else: raise TypeError(INVALID_APPLY_TYPE_MSG(func, name))
 
@@ -445,6 +462,7 @@ def _apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, na
 def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     if func == __EXISTS__: return __exists__(__object, **context)
     elif func == __JOIN__: return __join__(__object, **context)
+    elif func == __SPLIT__: return __split__(__object, **context)
     else: raise ValueError(INVALID_APPLY_SPECIAL_MSG(func, name))
 
 
@@ -466,6 +484,13 @@ def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
     elif isinstance(__object, str):
         return __join__(list(map(lambda x: x.strip(), __object.split(split))), sep=sep)
     else: return str()
+
+
+def __split__(__object, sep=',', maxsplit=-1, type: Optional[Type]=None, default=None, strict=True,
+                index: Optional[int]=None, **context) -> Union[List,_VT]:
+    __s = cast_str(__object, strict=True).split(sep, maxsplit)
+    if type: __s = list(map(lambda x: cast_object(x, type, default=default, strict=strict), __s))
+    return get_scala(__s, index) if isinstance(index, int) else __s
 
 
 ###################################################################
@@ -491,7 +516,7 @@ def _groupby_df(df: pd.DataFrame, schemaInfo: SchemaInfo, groupby: _KT=list(),
                 match: Optional[MatchFunction]=None, rankby=str(), discard=False, **context) -> pd.DataFrame:
     groups = groupby_df(df, by=groupby, if_null="drop")
     params = dict(match=match, rankby=rankby, discard=discard)
-    return union(*[parse_df(group, schemaInfo, **params, **context) for group in groups.values()])
+    return pd.concat([parse_df(group, schemaInfo, **params, **context) for group in groups.values()])
 
 
 def _parse_df_schema(df: pd.DataFrame, __base: pd.DataFrame, schema: Schema, **context) -> pd.DataFrame:
@@ -499,6 +524,9 @@ def _parse_df_schema(df: pd.DataFrame, __base: pd.DataFrame, schema: Schema, **c
         df = concat_df([__base, df], axis=1, keep="first")
         if (field[MODE] == QUERY) and (NAME in context):
             df[field[NAME]] = context.get(NAME)
+            if not ((APPLY in field) or (MATCH in field)):
+                __base[field[NAME]] = context[field[NAME]]
+                continue
         try: __base = _parse_df_field(df, __base, **field, **context)
         except Exception as exception:
             print(EXCEPTION_ON_NAME_MSG(field[NAME]))

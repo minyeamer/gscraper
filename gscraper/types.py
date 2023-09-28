@@ -331,16 +331,22 @@ def init_origin(__object: Union[Type,TypeHint,Any], argidx=0, default=None) -> A
 def is_type(__type: TypeHint, __types: TypeList) -> bool:
     return (__type.lower() if isinstance(__type, str) else __type) in __types
 
-def is_supported(__type: TypeHint) -> bool:
+def is_supported_type(__type: TypeHint) -> bool:
     for __types in TYPE_LIST.values():
         if is_type(__type, __types): return True
     return False
+
+def is_bool_type(__type: TypeHint) -> bool:
+    return is_type(__type, BOOLEAN_TYPES)
 
 def is_float_type(__type: TypeHint) -> bool:
     return is_type(__type, FLOAT_TYPES)
 
 def is_int_type(__type: TypeHint) -> bool:
     return is_type(__type, INTEGER_TYPES)
+
+def is_numeric_type(__type: TypeHint) -> bool:
+    return is_type(__type, BOOLEAN_TYPES+FLOAT_TYPES+INTEGER_TYPES)
 
 def is_datetime_type(__type: TypeHint) -> bool:
     return is_type(__type, DATETIME_TYPES)
@@ -418,7 +424,7 @@ def is_int_array(__object, how: Literal["any","all"]="any", empty=False) -> bool
     return is_nested_in(__object, int, how=how, empty=empty)
 
 def is_numeric_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
-    return is_nested_in(__object, (float,int), how=how, empty=empty)
+    return is_nested_in(__object, (bool,float,int), how=how, empty=empty)
 
 def is_datetime_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, datetime, how=how, empty=empty)

@@ -1,5 +1,5 @@
 from .types import _TYPE, TypeHint, CastError
-from .types import get_type, not_na, is_float_type, is_int_type
+from .types import get_type, not_na, is_bool_type, is_float_type, is_int_type
 from .types import is_datetime_type, is_time_type, is_timestamp_type, is_date_type
 from .types import is_str_type, is_list_type, is_tuple_type, is_set_type
 from .types import RegexFormat, MatchFunction
@@ -202,11 +202,11 @@ def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
 ###################################################################
 
 def cast_object(__object, __type: TypeHint, default=None, strict=True) -> Any:
-    if isinstance(__object, get_type(__type)):
-        return __object if not_na(__object, strict=strict) else default
+    if isinstance(__object, get_type(__type)): return __object
     elif is_str_type(__type): return cast_str(__object, default=default, strict=strict)
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict)
+    elif is_bool_type(__type): return not_na(__object, strict=strict)
     elif is_datetime_type(__type): return cast_datetime(__object, default=default)
     elif is_date_type(__type): return cast_date(__object, default=default)
     elif is_list_type(__type): return cast_list(__object, strict=strict)
