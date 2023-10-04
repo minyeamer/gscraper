@@ -1,4 +1,4 @@
-from .types import LogLevel, LogMessage, Shape, Data, BigQuerySchema, is_records
+from gscraper.base.types import LogLevel, LogMessage, Shape, Data, BigQuerySchema, is_records
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ast import literal_eval

@@ -133,55 +133,6 @@ DATETIME_TYPES = {
 
 
 ###################################################################
-########################### Schema Types ##########################
-###################################################################
-
-SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
-PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
-
-ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]], Dict]
-MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
-SpecialApply = str
-
-class SchemaApply(TypedDict):
-    func: Union[ApplyFunction, SpecialApply]
-    default: Any
-
-class SchemaMatch(TypedDict):
-    func: MatchFunction
-    path: _KT
-    value: Any
-    flip: bool
-    strict: bool
-
-class SchemaField(TypedDict):
-    name: _KT
-    path: SchemaPath
-    type: TypeHint
-    mode: str
-    cast: bool
-    strict: bool
-    default: Any
-    apply: SchemaApply
-    match: SchemaMatch
-
-Schema = Sequence[SchemaField]
-
-class SchemaContext(TypedDict):
-    schema: Schema
-    root: _KT
-    match: MatchFunction
-
-SchemaInfo = Dict[_KT, SchemaContext]
-
-SCHEMA_TYPES = {
-    "SchemaPath":SchemaPath, "PathType":PathType, "ApplyFunction":ApplyFunction,
-    "MatchFunction":MatchFunction, "SpecialApply":SpecialApply,
-    "SchemaApply":SchemaApply, "SchemaMatch":SchemaMatch, "SchemaField":SchemaField,
-    "Schema":Schema, "SchemaContext":SchemaContext, "SchemaInfo":SchemaInfo}
-
-
-###################################################################
 ######################## Google Cloud Types #######################
 ###################################################################
 
@@ -243,12 +194,12 @@ BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
 
 CastError = (ValueError, TypeError)
 
-ViewType = Literal["naverSearch", "naverView", "naverBlog", "naverCafe", "naverNews", "naverQnA"]
-ApiViewType = Literal["naverShopping", "naverBlog", "naverCafe", "naverNews", "naverQnA"]
+ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]], Dict]
+MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 
 SPECIAL_TYPES = {
-    "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat,
-    "BetweenRange":BetweenRange, "ViewType":ViewType, "ApiViewType":ApiViewType}
+    "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat, "BetweenRange":BetweenRange,
+    "ApplyFunction":ApplyFunction, "MatchFunction":MatchFunction}
 
 
 def is_na(__object, strict=True) -> bool:
@@ -267,7 +218,7 @@ def not_na(__object, strict=True) -> bool:
 
 CUSTOM_TYPES = dict(
     **GENERAL_TYPES, **SEQUENCE_TYPES, **DATA_TYPES, **KEY_TYPES, **DATETIME_TYPES,
-    **SCHEMA_TYPES, **GOOGLE_CLOUD_TYPES, **SPECIAL_TYPES)
+    **GOOGLE_CLOUD_TYPES, **SPECIAL_TYPES)
 
 BOOLEAN_TYPES = [bool, "bool", "boolean"]
 FLOAT_TYPES = [float, "float"]

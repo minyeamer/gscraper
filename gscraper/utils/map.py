@@ -1,10 +1,10 @@
-from .types import _KT, _VT, _BOOL, _TYPE, Comparable, Index, IndexLabel, Keyword, RegexFormat, TypeHint
-from .types import Context, IndexedSequence, Records, MappingData, TabularData, Data
-from .types import ApplyFunction, MatchFunction, BetweenRange, RenameMap
-from .types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
-from .types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
+from gscraper.base.types import _KT, _VT, _BOOL, _TYPE, Comparable, Index, IndexLabel, Keyword, RegexFormat, TypeHint
+from gscraper.base.types import Context, IndexedSequence, Records, MappingData, TabularData, Data
+from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap
+from gscraper.base.types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
+from gscraper.base.types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
-from .cast import cast_str, cast_list, cast_tuple, cast_set
+from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
 
 from typing import Any, Callable, Dict, List, Set
 from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
@@ -253,7 +253,8 @@ def get_unique_index(__s: Sequence) -> List[int]:
 
 def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
                 dropna=False, strict=False, unique=False) -> List[int]:
-    count = len(args[0]) if how == "first" else (max(map(len, args)) if how == "max" else min(map(len, args)))
+    args = (args[0],) if how == "first" else args
+    count = max(map(len, args)) if how == "max" else min(map(len, args))
     indices = set(range(0, count))
     if dropna: indices = __and(indices, *map(set, map(lambda __s: get_exists_index(__s, strict=strict), args)))
     if unique: indices = __and(indices, *map(set, map(get_unique_index, args)))
@@ -264,9 +265,7 @@ def align_array(*args: Sequence, how: Literal["min","max","first"]="min", defaul
                 dropna=False, strict=False, unique=False) -> Tuple[List]:
     args = [cast_list(__s) for __s in args]
     indices = align_index(*args, how=how, dropna=dropna, strict=strict, unique=unique)
-    if dropna or unique:
-        return tuple([__s[__i] for __i in indices if __i < len(__s)] for __s in args)
-    else: return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
+    return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
 
 
 def transpose_array(__s: Sequence[Sequence], count: Optional[int]=None, unroll=False) -> List[List]:
