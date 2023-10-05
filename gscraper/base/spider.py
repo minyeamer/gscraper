@@ -29,6 +29,7 @@ import requests
 import time
 
 from typing import Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
+from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
 import json
 import pandas as pd
@@ -523,6 +524,16 @@ class Spider(Parser, Iterator):
             return response.headers
 
     @encode_messages
+    def request_source(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
+                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
+                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None, features="html.paresr", **context) -> Tag:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            return BeautifulSoup(response.text, features)
+
+    @encode_messages
     def request_table(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
                     allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
@@ -915,6 +926,17 @@ class AsyncSpider(Spider):
             return response.headers
 
     @encode_messages
+    async def request_source(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None,
+                            features="html.paresr", **context) -> Tag:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            return BeautifulSoup(await response.text(encoding=encoding), features)
+
+    @encode_messages
     async def request_table(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
@@ -1109,6 +1131,15 @@ class LoginSpider(requests.Session, Spider):
             self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.headers
+
+    @encode_messages
+    def request_source(self, method: str, url: str, origin: str, messages: Dict=dict(),
+                    params=None, encode: Optional[bool]=None, data=None, json=None,
+                    headers=None, cookies=str(), allow_redirects=True, features="html.paresr", **context) -> Tag:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+            self.logger.info(log_response(response, url=url, origin=origin))
+            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            return BeautifulSoup(response.text, features)
 
     def log_response_text(self, response: requests.Response, origin: str):
         self.checkpoint(origin+"_text", where=origin, msg={"response":response.text}, save=response, ext="response")

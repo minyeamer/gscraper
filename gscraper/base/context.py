@@ -27,8 +27,8 @@ TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=N
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, cookies=None, \
                         allow_redirects=None, validate=None, exception=None, valid=None, invalid=None, \
-                        close=None, encoding=None, html=None, table_header=None, table_idx=None, engine=None, \
-                        **context: TASK_CONTEXT(**context)
+                        close=None, encoding=None, features=None, html=None, table_header=None, table_idx=None, \
+                        engine=None, **context: TASK_CONTEXT(**context)
 
 
 LOGIN_CONTEXT = lambda userid=None, passwd=None, domain=None, naverId=None, naverPw=None, \
