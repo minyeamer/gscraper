@@ -9,6 +9,5 @@ from .utils.date import *
 from .utils.gcloud import *
 from .utils.logs import *
 from .utils.map import *
-from .utils.parse import *
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"

@@ -1,26 +1,27 @@
 from __future__ import annotations
-from gscraper.base.session import Iterator, POST, INVALID_VALUE_MSG
-from gscraper.base.parser import Parser
-
 from gscraper.base.context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
 from gscraper.base.context import RESPONSE_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from gscraper.base.session import Iterator
+from gscraper.base.parser import Parser, SchemaInfo
+
 from gscraper.base.types import _KT, _PASS, Arguments, Context, TypeHint, LogLevel
 from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, Timedelta, Timezone
-from gscraper.base.types import JsonData, RedirectData, Records, TabularData, Data
+from gscraper.base.types import Records, TabularData, Data, JsonData, RedirectData
 from gscraper.base.types import Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
-from gscraper.base.types import is_array, is_records, init_origin, inspect_function
+from gscraper.base.types import not_na, is_array, is_records, init_origin, inspect_function
 
 from gscraper.utils.cast import cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
 from gscraper.utils.gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
-from gscraper.utils.map import not_na, unique, to_array, align_array
+from gscraper.utils.map import re_get, unique, to_array, align_array
 from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, cloc, apply_df
 from gscraper.utils.map import exists_one, rename_data, filter_data, chain_exists, data_empty
-from gscraper.utils.parse import parse_cookies, parse_origin, decode_cookies, encode_params
 
 from abc import ABCMeta, abstractmethod
-from urllib.parse import urlparse
+from http.cookies import SimpleCookie
+from requests.cookies import RequestsCookieJar
+from urllib.parse import quote, urlencode, urlparse
 import asyncio
 import aiohttp
 import functools
@@ -29,7 +30,6 @@ import time
 
 from typing import Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
 from json import JSONDecodeError
-import datetime as dt
 import json
 import pandas as pd
 
@@ -37,25 +37,31 @@ from tqdm.auto import tqdm
 import base64
 import inspect
 import random
+import re
 
 
-HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-    "sec-ch-ua": '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-}
+GET = "GET"
+POST = "POST"
+OPTIONS = "OPTIONS"
+HEAD = "HEAD"
+PUT = "PUT"
+PATCH = "PATCH"
+DELETE = "DELETE"
 
 MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
+
+ARGS, PAGES = 0, 1
+KEY, SHEET, FIELDS = "key", "sheet", "fields"
+TABLE, PID = "table", "project_id"
+
+
+###################################################################
+############################# Messages ############################
+###################################################################
+
+INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 
 GATHER_MSG = lambda which, where=str(), by=str(): \
     f"Collecting {which}{(' by '+by) if by else str()}{(' from '+where) if where else str()}"
@@ -70,10 +76,10 @@ DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define op
 
 WHERE, WHICH = "urls", "data"
 
-ARGS, PAGES = 0, 1
-KEY, SHEET, FIELDS = "key", "sheet", "fields"
-TABLE, PID = "table", "project_id"
 
+###################################################################
+############################## Urllib #############################
+###################################################################
 
 encrypt = lambda s=str(), count=0, *args: encrypt(
     base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
@@ -86,6 +92,57 @@ def get_cookies(session, url=None) -> str:
         return "; ".join([str(key)+"="+str(value) for key,value in session.cookie_jar.filter_cookies(url).items()])
     elif isinstance(session, requests.Session):
         return "; ".join([str(key)+"="+str(value) for key,value in dict(session.cookies).items()])
+
+
+def parse_parth(url: str) -> str:
+    return re.sub(urlparse(url).path+'$','',url)
+
+
+def parse_origin(url: str) -> str:
+    return re_get(f"(.*)(?={urlparse(url).path})", url) if urlparse(url).path else url
+
+
+def parse_cookies(cookies: Union[RequestsCookieJar,SimpleCookie]) -> str:
+    return '; '.join([str(key)+"="+str(value) for key, value in cookies.items()])
+
+
+def encode_cookies(cookies: Union[Dict,str], **kwargs) -> str:
+    return '; '.join(
+    [(parse_cookies(data) if isinstance(data, Dict) else str(data)) for data in [cookies,kwargs] if data])
+
+
+def decode_cookies(cookies: str, **kwargs) -> Dict:
+    if not cookies: return kwargs
+    return dict({__key: __value for cookie in cookies.split('; ') for __key, __value in (cookie.split('=')[:2],)}, **kwargs)
+
+
+def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
+    if encode: params = urlencode(params)
+    else: params = '&'.join([f"{key}={value}" for key, value in params.items()])
+    return url+'?'+params if url else params
+
+
+def encode_object(__object: str) -> str:
+    return quote(str(__object).replace('\'','\"'))
+
+
+###################################################################
+############################# Headers #############################
+###################################################################
+
+HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
+    "sec-ch-ua": '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+}
 
 
 def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
@@ -136,8 +193,12 @@ class Spider(Parser, Iterator):
     fromNow = None
     tzinfo = None
     datetimeUnit = "second"
-    returnType = "records"
     ssl = None
+    returnType = "records"
+    root = list()
+    groupby = list()
+    rankby = str()
+    schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
@@ -322,7 +383,7 @@ class Spider(Parser, Iterator):
         message = self.get_gather_message(*args, **context)
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, **context)
 
     def _init_iterator(self, args: Arguments, context: Context,
                     iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
@@ -370,7 +431,7 @@ class Spider(Parser, Iterator):
     def get_count_message(self, *args, which=str(), by=str(), **context) -> str:
         return GATHER_MSG(which, self.where, by)
 
-    def map_reduce(self, data: List[Data], fields: IndexLabel=list(),
+    def reduce(self, data: List[Data], fields: IndexLabel=list(),
                     returnType: Optional[TypeHint]=None, **context) -> Data:
         return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
 
@@ -590,7 +651,7 @@ class Spider(Parser, Iterator):
 
 
 ###################################################################
-########################## Async Spiders ##########################
+########################### Async Spider ##########################
 ###################################################################
 
 class AsyncSpider(Spider):
@@ -607,7 +668,9 @@ class AsyncSpider(Spider):
     iterateProduct = list()
     redirectProduct = list()
     iterateUnit = 1
+    maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectUnit = 1
+    redirectLimit = MAX_REDIRECT_LIMIT
     pagination = False
     pageUnit = 0
     pageLimit = 0
@@ -615,10 +678,12 @@ class AsyncSpider(Spider):
     fromNow = None
     tzinfo = None
     datetimeUnit = "second"
-    returnType = "records"
     ssl = None
-    maxLimit = MAX_ASYNC_TASK_LIMIT
-    redirectLimit = MAX_REDIRECT_LIMIT
+    returnType = "records"
+    root = list()
+    groupby = list()
+    rankby = str()
+    schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
@@ -729,7 +794,7 @@ class AsyncSpider(Spider):
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, **context)
 
     async def _init_count(self, *args, count: Pagination, progress=True,
                         **context) -> Tuple[List[Context],Context]:
@@ -891,7 +956,7 @@ class AsyncSpider(Spider):
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.map_reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, **context)
 
     def get_redirect_message(self, *args, **context) -> str:
         return REDIRECT_MSG(self.operation)
@@ -1082,8 +1147,13 @@ class EncryptedSpider(Spider):
     fromNow = None
     tzinfo = None
     datetimeUnit = "second"
-    returnType = "records"
     ssl = None
+    returnType = "records"
+    returnType = "records"
+    root = list()
+    groupby = list()
+    rankby = str()
+    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
 
@@ -1179,7 +1249,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     iterateProduct = list()
     redirectProduct = None
     iterateUnit = 1
+    maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectUnit = 1
+    redirectLimit = MAX_REDIRECT_LIMIT
     pagination = False
     pageUnit = 0
     pageLimit = 0
@@ -1187,10 +1259,12 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     fromNow = None
     tzinfo = None
     datetimeUnit = "second"
-    returnType = "records"
     ssl = None
-    maxLimit = MAX_ASYNC_TASK_LIMIT
-    redirectLimit = MAX_REDIRECT_LIMIT
+    returnType = "records"
+    root = list()
+    groupby = list()
+    rankby = str()
+    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
 

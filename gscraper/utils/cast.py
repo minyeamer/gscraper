@@ -202,8 +202,7 @@ def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
 ###################################################################
 
 def cast_object(__object, __type: TypeHint, default=None, strict=True) -> Any:
-    if isinstance(__object, get_type(__type)): return __object
-    elif is_str_type(__type): return cast_str(__object, default=default, strict=strict)
+    if is_str_type(__type): return cast_str(__object, default=default, strict=strict)
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict)
     elif is_bool_type(__type): return not_na(__object, strict=strict)
@@ -214,4 +213,5 @@ def cast_object(__object, __type: TypeHint, default=None, strict=True) -> Any:
     elif is_set_type(__type): return cast_set(__object, strict=strict)
     elif is_time_type(__type): return cast_time(__object, default=default)
     elif is_timestamp_type(__type): return cast_timestamp(__object, default=default)
+    elif isinstance(__object, get_type(__type)): return __object
     else: return get_type(__type)(default)

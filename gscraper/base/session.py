@@ -1,36 +1,29 @@
 from __future__ import annotations
 from gscraper.base.context import REQUEST_CONTEXT
+
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, RenameMap, IndexLabel
 from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone, Data
-from gscraper.base.types import is_dataframe_type, allin_instance, is_array, is_str_array, init_origin
+from gscraper.base.types import is_na, not_na, is_dataframe_type, allin_instance, is_array, is_str_array, init_origin
 
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, get_date_range, is_daily_frequency
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
-from gscraper.utils.map import is_na, not_na, data_exists, unique, get_scala, diff
+from gscraper.utils.map import data_exists, unique, get_scala, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict, exists_one, convert_data
 
 from abc import ABCMeta
-from bs4 import BeautifulSoup
 from itertools import product
 import functools
 import logging
 import os
 
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from bs4 import BeautifulSoup
 import datetime as dt
 import json
 import pandas as pd
 
-
-GET = "GET"
-POST = "POST"
-OPTIONS = "OPTIONS"
-HEAD = "HEAD"
-PUT = "PUT"
-PATCH = "PATCH"
-DELETE = "DELETE"
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]
 PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
@@ -42,8 +35,6 @@ CHECKPOINT = [
     "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count", "redirect",
     "request", "response", "parse", "login", "api", "exception"]
 CHECKPOINT_PATH = "saved/"
-
-INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 
@@ -96,7 +87,6 @@ class BaseSession(CustomDict):
     datetimeUnit = "second"
     returnType = None
     errors = list()
-    schemaInfo = dict()
 
     def __init__(self, fields: IndexLabel=list(),
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
