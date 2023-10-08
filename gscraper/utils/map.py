@@ -379,6 +379,10 @@ def keys_to_back(__m: Dict, keys: _KT) -> Dict:
     return dict(sorted(__m.items(), key=functools.cmp_to_key(lambda x, y: -1 if y[0] in cast_tuple(keys) else 0)))
 
 
+def flip_dict(__m: Dict) -> Dict:
+    return {__v: __k for __k, __v in __m.items()}
+
+
 def exists_dict(__m: Optional[Dict]=dict(), strict=False, **context) -> Dict:
     return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict)}
 
@@ -704,6 +708,7 @@ def clean_tag(__object: str) -> str:
 def get_selector(selector: _KT, sep=' > ', index: Optional[Unit]=None) -> Tuple[str,Unit]:
     if not (isinstance(selector, (List,str)) and selector): return str(), None
     elif not isinstance(selector, List): return selector, index
+    selector = selector.copy()
     index = selector.pop() if isinstance(selector[-1], (int,List,Tuple)) else index
     return sep.join(selector), index
 
@@ -777,6 +782,7 @@ def select_date(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=No
 def _selector_by(selector: _KT, key=str(), by: Literal["source","text"]="source") -> Tuple[_KT,str,str]:
     if isinstance(selector, str):
         if selector == "text()": return (str(), str(), "text")
+        elif selector.startswith('@'): return (str(), selector[1:], by)
         elif selector.startswith('.'): return (str(), "class", by)
         elif selector.startswith('#'): return (str(), "id", by)
         else: return (selector, key, by)
@@ -788,7 +794,7 @@ def _selector_by(selector: _KT, key=str(), by: Literal["source","text"]="source"
 
 def select_by(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=None,
             by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-            strip=True, replace: RenameMap=dict(), **kwargs) -> HtmlData:
+            strip=True, replace: RenameMap=dict()) -> HtmlData:
     selector, key, by = _selector_by(selector, key, by)
     context = dict(sep=sep, index=index, lines=lines, strip=strip, replace=replace)
     if key: return select_attr(source, selector, key, sep=sep, index=index)
@@ -805,7 +811,7 @@ def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', inde
         for selector in path[:-1]:
             source = select_one(source, selector, sep=sep)
         selector = path[-1] if path else str()
-        data = select_by(**locals())
+        data = select_by(source, selector, key, sep, index, by, lines, strip, replace)
     except: return default
     data = safe_apply(data, apply, default, **context) if apply else data
     if __type and not isinstance(data, __type): return default
@@ -813,9 +819,10 @@ def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', inde
 
 
 def exists_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
-                by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-                strip=True, replace: RenameMap=dict(), strict=False, **kwargs) -> bool:
-    source = select_by(**locals())
+                    by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                    strict=False) -> bool:
+    context = dict(key=key, sep=sep, index=index, by=by, lines="raw", strip=strip, replace=replace)
+    source = hier_select(source, selector, **context)
     return not_na(source, strict=strict)
 
 
@@ -825,26 +832,57 @@ def _get_class_name(selector: _KT) -> str:
 
 
 def include_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
-                by: Literal["source","text"]="text", lines: Literal["ignore","split","raw"]="ignore",
-                strip=True, replace: RenameMap=dict(), value=str(),
-                how: Literal["include","exact"]="exact", **kwargs) -> bool:
-    text = select_by(**locals())
+                    by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                    how: Literal["include","exact"]="exact", value=str()) -> bool:
+    context = dict(key=key, sep=sep, index=index, by=by, lines="raw", strip=strip, replace=replace)
+    source = hier_select(source, selector, **context)
     name = _get_class_name(selector)
     value = name if name else value
-    if not (value or isinstance(value, str)): return bool(text)
-    elif is_array(text): return any([include_text(str(s), value, how) for s in text])
-    else: return include_text(str(text), value, how)
+    if not (value and isinstance(value, str)): return bool(source)
+    elif is_array(source): return any([include_text(str(__t), value, how) for __t in source])
+    else: return include_text(str(source), value, how)
 
 
-def filter_source(source: List[Tag], selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
-                by: Literal["source","text"]="text", lines: Literal["ignore","split","raw"]="ignore",
-                strip=True, replace: RenameMap=dict(), strict=False, value=str(),
-                how: Literal["include","exact","exist"]="exact", flip=False) -> List[Tag]:
-    array, context = list(), drop_dict(locals(), "source", inplace=False)
-    for __t in source:
-        match = exists_source(__t, **context) if how == "exist" else include_source(__t, **context)
-        if ((not match) if flip else match): array.append(__t)
+def match_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                how: Literal["include","exact","exist"]="exact", value=str(),
+                strict=False, flip=False) -> bool:
+    args = (source, selector, key, sep, index, by, strip, replace)
+    if how == "exist": match = exists_source(*args, strict=strict)
+    else: match = include_source(*args, how=how, value=value)
+    return (not match) if flip else match
+
+
+def filter_source(__s: List[Tag], selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                how: Literal["include","exact","exist"]="exact", value=str(),
+                strict=False, flip=False) -> List[Tag]:
+    array = list()
+    args = (selector, key, sep, index, by, strip, replace, how, value, strict, flip)
+    for __t in __s:
+        if match_source(__t, *args):
+            array.append(__t)
     return array
+
+
+def groupby_source(__s: List[Tag], groupby: Union[_KT,Dict], sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                how: Literal["include","exact","exist"]="exact", value=str(),
+                strict=False, flip=False) -> Dict[_KT,Tag]:
+    groups, others = defaultdict(list), list()
+    args = (str(), sep, index, by, strip, replace, how, value, strict, flip)
+    if not isinstance(groupby, Dict):
+        groupby = dict(enumerate(cast_list(groupby), start=1))
+    for __t in __s:
+        match = False
+        for group, selector in groupby.items():
+            match |= match_source(__t, selector, *args)
+            if match:
+                groups[group].append(__t)
+                break
+        if not match: others.append(__t)
+    if others: groups[None] = others
+    return groups
 
 
 ###################################################################

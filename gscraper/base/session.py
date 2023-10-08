@@ -310,7 +310,7 @@ class Iterator(CustomDict):
     def _split_argnames(self, *args, iterateArgs: List[_KT], pagination: Pagination=False,
                         size: Optional[Unit]=None, **context) -> Tuple[List[_KT],List[_KT]]:
         argnames = iterateArgs.copy()
-        if is_na(size) and isinstance(pagination, str) and is_str_array(args[iterateArgs.index(pagination)]):
+        if isinstance(pagination, str) and is_str_array(args[iterateArgs.index(pagination)]):
             argnames.pop(iterateArgs.index(pagination))
             return argnames+["pages"], [pagination]+PAGE_ITERATOR+PAGE_PARAMS
         elif pagination:
