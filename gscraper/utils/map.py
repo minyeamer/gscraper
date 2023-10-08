@@ -1,20 +1,26 @@
-from gscraper.base.types import _KT, _VT, _BOOL, _TYPE, Comparable, Index, IndexLabel, Keyword, RegexFormat, TypeHint
-from gscraper.base.types import Context, IndexedSequence, Records, MappingData, TabularData, Data
-from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap
+from gscraper.base.types import _KT, _VT, _BOOL, _TYPE, Comparable, Context, TypeHint, Index, IndexLabel, Keyword, Unit
+from gscraper.base.types import IndexedSequence, Records, MappingData, TabularData, Data, HtmlData
+from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap, RegexFormat
 from gscraper.base.types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
 from gscraper.base.types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
-from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
+from gscraper.utils.cast import cast_str, cast_datetime, cast_date, cast_list, cast_tuple, cast_set
 
 from typing import Any, Callable, Dict, List, Set
 from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
+from bs4 import BeautifulSoup, Tag
+import datetime as dt
+import pandas as pd
+
 from collections import defaultdict
 from itertools import chain
 import functools
 import inspect
-import pandas as pd
 import random as rand
 import re
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 
 
 INCLUDE = 0
@@ -116,10 +122,15 @@ def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> Un
     return __pattern.search(string).groups()[0] if catch else default
 
 
-def replace_map(string: str, __m: dict) -> str:
-    for __old, __new in __m.items():
+def replace_map(string: str, strip=False, **context) -> str:
+    for __old, __new in context.items():
         string = string.replace(__old, __new)
-    return string
+    return string.strip() if strip else string
+
+
+def include_text(string: str, value=str(), how: Literal["include","exact"]="include") -> bool:
+    if not (isinstance(string, str) and isinstance(value, str)): return False
+    return (value in string) if how == "include" else (value == string)
 
 
 def match_keywords(string: str, keywords: Sequence[str]) -> bool:
@@ -676,6 +687,164 @@ def safe_apply_df(__object: Union[pd.DataFrame,pd.Series], __applyFunc: ApplyFun
         elif by == "cell":
             __object = __object.apply(lambda x: apply_df(x, apply=__applyFunc, all_cols=True, **context))
     return fillna_each(__object, default)
+
+
+###################################################################
+########################## Beautiful Soup #########################
+###################################################################
+
+def clean_html(__object: str) -> str:
+    return BeautifulSoup(cast_str(__object), "lxml").text
+
+
+def clean_tag(__object: str) -> str:
+    return re.sub("<[^>]*>", "", cast_str(__object))
+
+
+def get_selector(selector: _KT, sep=' > ', index: Optional[Unit]=None) -> Tuple[str,Unit]:
+    if not (isinstance(selector, (List,str)) and selector): return str(), None
+    elif not isinstance(selector, List): return selector, index
+    index = selector.pop() if isinstance(selector[-1], (int,List,Tuple)) else index
+    return sep.join(selector), index
+
+
+def select(source: Tag, selector: _KT, sep=' > ', index: Optional[Unit]=None) -> Union[Tag,List[Tag]]:
+    selector, index = get_selector(selector, sep=sep, index=index)
+    if not selector: return source
+    elif index == 0: return source.select_one(selector)
+    elif not index: return source.select(selector)
+    else: return iloc(source.select(selector), index)
+
+
+def select_one(source: Tag, selector: _KT, sep=' > ') -> Tag:
+    selector, _ = get_selector(selector, sep=sep)
+    if not selector: return source
+    else: return source.select_one(selector)
+
+
+def parse_text(string: Union[str,Sequence[str]], strip=False, replace: RenameMap=dict()) -> Union[str,List[str]]:
+    if is_array(string): return [replace_map(__s, strip, **replace) for __s in string]
+    else: return replace_map(string, strip, **replace)
+
+
+def parse_lines(string: str, how: Literal["ignore","split","raw"]="ignore", sep='\n',
+                strip=False, replace: RenameMap=dict()) -> Union[str,List[str]]:
+    if how == "ignore": return parse_text(string.replace('\n', ' '), strip, **replace)
+    elif how == "split": return parse_text(string.split(sep), strip, **replace)
+    else: return parse_text(string, strip, **replace)
+
+
+def select_text(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
+                lines: Literal["ignore","split","raw"]="ignore", strip=True,
+                replace: RenameMap=dict()) -> Union[str,List[str]]:
+    source = select(source, selector, sep=sep, index=index)
+    try:
+        if is_array(source):
+            return [parse_lines(__s.text, how=lines, strip=strip, **replace)
+                    for __s in source if isinstance(__s, Tag)]
+        else: return parse_lines(source.text, how=lines, strip=strip, **replace)
+    except (AttributeError, IndexError, TypeError):
+        return list() if is_array(source) else str()
+
+
+def select_attr(source: Tag, selector: str, key: str, sep=' > ',
+                index: Optional[Index]=None) -> Union[str,List[str],List[List[str]]]:
+    source = select(source, selector, sep=sep, index=index)
+    try:
+        if is_array(source):
+            return [__s.attrs.get(key,str()) for __s in source if isinstance(__s, Tag)]
+        else: return source.attrs.get(key,str())
+    except (AttributeError, IndexError, TypeError):
+        return list() if is_array(source) else str()
+
+
+def select_datetime(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
+                    lines: Literal["ignore","split","raw"]="ignore", strip=True, default=None,
+                    replace: RenameMap=dict()) -> Union[dt.datetime,List[dt.datetime]]:
+    text = select_text(source, selector, sep=sep, index=index, lines=lines, strip=strip, replace=replace)
+    if is_array(text): return [cast_datetime(text, default) for text in text]
+    else: return cast_datetime(text, default)
+
+
+def select_date(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
+                lines: Literal["ignore","split","raw"]="ignore", strip=True, default=None,
+                replace: RenameMap=dict()) -> Union[dt.date,List[dt.date]]:
+    text = select_text(source, selector, sep=sep, index=index, lines=lines, strip=strip, replace=replace)
+    if is_array(text): return [cast_date(text, default) for text in text]
+    else: return cast_date(text, default)
+
+
+def _selector_by(selector: _KT, key=str(), by: Literal["source","text"]="source") -> Tuple[_KT,str,str]:
+    if isinstance(selector, str):
+        if selector == "text()": return (str(), str(), "text")
+        elif selector.startswith('.'): return (str(), "class", by)
+        elif selector.startswith('#'): return (str(), "id", by)
+        else: return (selector, key, by)
+    elif is_array(selector) and selector:
+        tag, key, by = _selector_by(selector[-1], key, by)
+        return ((selector+[tag] if tag else selector), key, by)
+    else: return (str(), str(), by)
+
+
+def select_by(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=None,
+            by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
+            strip=True, replace: RenameMap=dict(), **kwargs) -> HtmlData:
+    selector, key, by = _selector_by(selector, key, by)
+    context = dict(sep=sep, index=index, lines=lines, strip=strip, replace=replace)
+    if key: return select_attr(source, selector, key, sep=sep, index=index)
+    elif by == "text": return select_text(source, selector, **context)
+    else: return select(source, selector, sep=sep, index=index)
+
+
+def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', index: Optional[Unit]=None,
+                by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
+                strip=True, replace: RenameMap=dict(), apply: Optional[ApplyFunction]=None,
+                __type: Optional[_TYPE]=None, empty=True, strict=True, **context) -> HtmlData:
+    path = cast_tuple(path)
+    try:
+        for selector in path[:-1]:
+            source = select_one(source, selector, sep=sep)
+        selector = path[-1] if path else str()
+        data = select_by(**locals())
+    except: return default
+    data = safe_apply(data, apply, default, **context) if apply else data
+    if __type and not isinstance(data, __type): return default
+    return data if empty or exists(data, strict=strict) else default
+
+
+def exists_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
+                strip=True, replace: RenameMap=dict(), strict=False, **kwargs) -> bool:
+    source = select_by(**locals())
+    return not_na(source, strict=strict)
+
+
+def _get_class_name(selector: _KT) -> str:
+    tag = str(get_scala(selector, -1))
+    return tag[1:] if tag.startswith('.') or tag.startswith('#') else str()
+
+
+def include_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="text", lines: Literal["ignore","split","raw"]="ignore",
+                strip=True, replace: RenameMap=dict(), value=str(),
+                how: Literal["include","exact"]="exact", **kwargs) -> bool:
+    text = select_by(**locals())
+    name = _get_class_name(selector)
+    value = name if name else value
+    if not (value or isinstance(value, str)): return bool(text)
+    elif is_array(text): return any([include_text(str(s), value, how) for s in text])
+    else: return include_text(str(text), value, how)
+
+
+def filter_source(source: List[Tag], selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="text", lines: Literal["ignore","split","raw"]="ignore",
+                strip=True, replace: RenameMap=dict(), strict=False, value=str(),
+                how: Literal["include","exact","exist"]="exact", flip=False) -> List[Tag]:
+    array, context = list(), drop_dict(locals(), "source", inplace=False)
+    for __t in source:
+        match = exists_source(__t, **context) if how == "exist" else include_source(__t, **context)
+        if ((not match) if flip else match): array.append(__t)
+    return array
 
 
 ###################################################################

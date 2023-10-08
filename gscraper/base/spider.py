@@ -198,6 +198,7 @@ class Spider(Parser, Iterator):
     returnType = "records"
     root = list()
     groupby = list()
+    groupSize = dict()
     rankby = str()
     schemaInfo = SchemaInfo()
 
@@ -527,7 +528,7 @@ class Spider(Parser, Iterator):
     def request_source(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
                         allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                        valid: Optional[Status]=None, invalid: Optional[Status]=None, features="html.paresr", **context) -> Tag:
+                        valid: Optional[Status]=None, invalid: Optional[Status]=None, features="html.parser", **context) -> Tag:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
@@ -693,6 +694,7 @@ class AsyncSpider(Spider):
     returnType = "records"
     root = list()
     groupby = list()
+    groupSize = dict()
     rankby = str()
     schemaInfo = SchemaInfo()
 
@@ -930,7 +932,7 @@ class AsyncSpider(Spider):
                             params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None,
-                            features="html.paresr", **context) -> Tag:
+                            features="html.parser", **context) -> Tag:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
@@ -989,9 +991,9 @@ class AsyncSpider(Spider):
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
         data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
-        response = self.request_text(POST, redirectUrl, session, json=data, headers=dict(Authorization=authorization))
+        response = self.request_json(POST, redirectUrl, session, json=data, headers=dict(Authorization=authorization))
         self.checkpoint("redirect", where="fetch_redirect", msg={"response":response}, save=response, ext="json")
-        return self._parse_redirect(json.loads(response), **context)
+        return self._parse_redirect(response, **context)
 
     def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(
@@ -1135,7 +1137,7 @@ class LoginSpider(requests.Session, Spider):
     @encode_messages
     def request_source(self, method: str, url: str, origin: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, features="html.paresr", **context) -> Tag:
+                    headers=None, cookies=str(), allow_redirects=True, features="html.parser", **context) -> Tag:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
@@ -1183,6 +1185,7 @@ class EncryptedSpider(Spider):
     returnType = "records"
     root = list()
     groupby = list()
+    groupSize = dict()
     rankby = str()
     schemaInfo = SchemaInfo()
     auth = LoginSpider
@@ -1294,6 +1297,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     returnType = "records"
     root = list()
     groupby = list()
+    groupSize = dict()
     rankby = str()
     schemaInfo = SchemaInfo()
     auth = LoginSpider

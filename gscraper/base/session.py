@@ -20,6 +20,7 @@ import os
 
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 import datetime as dt
 import json
 import pandas as pd
@@ -166,11 +167,12 @@ class BaseSession(CustomDict):
         data = convert_data(data, return_type="dataframe")
         data.rename(columns=self.get_rename_map()).to_excel(file, index=False)
 
-    def save_source(self, data: str, file: str):
+    def save_source(self, data: Union[str,Tag], file: str):
         file = self._validate_file(file)
-        source = BeautifulSoup(data, "html.parser")
+        if not isinstance(data, Tag):
+            data = BeautifulSoup(data, "html.parser")
         with open(file, "w", encoding="utf-8") as f:
-            f.write(str(source))
+            f.write(str(data))
 
     def _validate_dir(self, dir: str):
         if not os.path.exists(dir):

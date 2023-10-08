@@ -1,6 +1,7 @@
 from typing import Callable, Hashable, Literal, Optional, Sequence, Tuple, Type, TypedDict, TypeVar, Union
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
+from bs4.element import Tag
 from datetime import datetime, date, time, timedelta
 from pandas import DataFrame, Series, isna
 from pytz import BaseTzInfo
@@ -80,7 +81,13 @@ MappingData = Union[Records, DataFrame, Dict]
 Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
 
 JsonData = Union[Dict, List]
+JSON_DATA = (Dict, List)
+
 RedirectData = Dict[str,Records]
+REDIRECT_DATA = (str, Dict, List)
+
+HtmlData = Union[str, Tag, List[str], List[Tag]]
+HTML_DATA = (str, Tag, List)
 
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
@@ -397,6 +404,9 @@ def is_2darray(__object, how: Literal["any","all"]="any", empty=False) -> bool:
 
 def is_records(__object, how: Literal["any","all"]="any", empty=True) -> bool:
     return is_nested_in(__object, Dict, how=how, empty=empty)
+
+def is_json_object(__object) -> bool:
+    return isinstance(__object, JSON_DATA)
 
 def is_dfarray(__object, how: Literal["any","all"]="any", empty=True) -> bool:
     return is_nested_in(__object, DataFrame, how=how, empty=empty)
