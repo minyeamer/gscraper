@@ -46,7 +46,7 @@ RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile
 
 SCHEMA_CONTEXT = lambda schema=None, root=None, by=None, count=None, discard=None, name=None, path=None, \
                         type=None, mode=None, description=None, cast=None, strict=None, default=None, \
-                        apply=None, match=None, how=None, query=None, rank=None, **context: context
+                        apply=None, match=None, how=None, query=None, **context: context
 
 
 UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \

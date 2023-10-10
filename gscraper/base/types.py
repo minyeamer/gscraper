@@ -89,10 +89,12 @@ REDIRECT_DATA = (str, Dict, List)
 HtmlData = Union[str, Tag, List[str], List[Tag]]
 HTML_DATA = (str, Tag, List)
 
+ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict, str, Tag, List[str], List[Tag]]
+
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
     "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
-    "JsonData":JsonData, "RedirectData":RedirectData}
+    "JsonData":JsonData, "RedirectData":RedirectData, "HtmlData":HtmlData, "ResponseData":ResponseData}
 
 
 ###################################################################

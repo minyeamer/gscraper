@@ -2,7 +2,7 @@ from __future__ import annotations
 from gscraper.base.context import REQUEST_CONTEXT
 
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, RenameMap, IndexLabel
-from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone, Data
+from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone, Data, ResponseData
 from gscraper.base.types import is_na, not_na, is_dataframe_type, allin_instance, is_array, is_str_array, init_origin
 
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
@@ -130,6 +130,9 @@ class BaseSession(CustomDict):
     def rename(self, string: str, **context) -> str:
         renameMap = self.get_rename_map(**context)
         return renameMap[string] if renameMap and (string in renameMap) else string
+
+    def match(self, data: ResponseData, **context) -> bool:
+        return True
 
     ###################################################################
     ############################ Checkpoint ###########################
