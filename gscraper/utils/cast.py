@@ -94,7 +94,7 @@ def cast_datetime(__object: DateFormat, default=None, tzinfo=None, astimezone=No
     try:
         if isinstance(__object, dt.datetime): __datetime = __object
         elif isinstance(__object, dt.date): __datetime = dt.datetime(*__object.timetuple()[:6])
-        elif get_ts_unit(__object): return from_timestamp(**locals())
+        elif get_ts_unit(__object): return from_timestamp(__object, default, tzinfo, astimezone)
         else: __datetime = dateparse(__object, yearfirst=True)
         return set_timezone(__datetime, tzinfo, astimezone, droptz)
     except CastError: return default

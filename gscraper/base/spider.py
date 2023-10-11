@@ -915,7 +915,7 @@ class AsyncSpider(Spider):
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return await response.json(encoding=encoding)
+            return await response.json(encoding=encoding, content_type=None)
 
     @encode_messages
     async def request_headers(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),

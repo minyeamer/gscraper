@@ -2,15 +2,16 @@ from __future__ import annotations
 from gscraper.base.context import SCHEMA_CONTEXT
 from gscraper.base.session import BaseSession
 
-from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone
+from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
-from gscraper.base.types import not_na, get_type, init_origin, is_numeric_type, is_bool_type
+from gscraper.base.types import not_na, get_type, init_origin, is_type, is_numeric_type, is_bool_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
-from gscraper.utils.cast import cast_object, cast_str
+from gscraper.utils.cast import cast_object, cast_str, cast_tuple
 from gscraper.utils.logs import log_data
 from gscraper.utils.map import safe_apply, get_scala, exists_one, union
-from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, hier_get, groupby_records
+from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, hier_get
+from gscraper.utils.map import vloc, match_records, groupby_records, drop_duplicates
 from gscraper.utils.map import concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data
 from gscraper.utils.map import select_one, hier_select, exists_source, include_source, groupby_source
 
@@ -55,6 +56,7 @@ INDEX = "INDEX"
 NULLABLE = "NULLABLE"
 NOTNULL = "NOTNULL"
 NOTZERO = "NOTZERO"
+OPTIONAL = "OPTIONAL"
 
 FUNC = "func"
 __EXISTS__ = "__EXISTS__"
@@ -235,6 +237,33 @@ class Parser(BaseSession):
             debug=debug, extraSave=extraSave, interrupt=interrupt, localSave=localSave, **context)
         self.schemaInfo = validate_schema_info(self.schemaInfo)
 
+    def get_unique_fields(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
+                            keep: Literal["fist","last",False]="first", **match) -> List[Field]:
+        context = kloc(self.schemaInfo, cast_tuple(schema_names), default=list(), if_null="pass", values_only=True)
+        fields = union(*vloc(context, "schema", if_null="drop", values_only=True))
+        fields = drop_duplicates(fields, keep=keep)
+        if match: fields = match_records(fields, **match)
+        return vloc(fields, keys, if_null="drop", values_only=values_only) if keys else fields
+
+    def get_fields_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]],
+                            keys: _KT=list(), values_only=False, schema_names: _KT=list(),
+                            keep: Literal["fist","last",False]="first") -> List[Field]:
+        __types = tuple(map(get_type, cast_tuple(__type)))
+        fields = self.get_unique_fields(schema_names=schema_names, keep=keep)
+        fields = [field for field in fields if is_type(field[TYPE], __types)]
+        return vloc(fields, keys, if_null="drop", values_only=values_only) if keys else fields
+
+    def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
+                            keep: Literal["fist","last",False]="first") -> List[str]:
+        return self.get_fields_by_type(__type, keys="name", values_only=True, schema_names=schema_names, keep=keep)
+
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", **context) -> RenameMap:
+        if to in ("desc", "name"):
+            __from, __to = ("description", "name") if to == "name" else ("name", "description")
+            return {field[__from]: field[__to] for field in self.get_unique_fields(schema_names=schema_names, keep=keep)}
+        else: return dict()
+
     ###################################################################
     ######################## Response Validator #######################
     ###################################################################
@@ -251,7 +280,7 @@ class Parser(BaseSession):
         return wrapper
 
     def is_valid_response(self, response: Any) -> bool:
-        return not_na(response, strict=False)
+        return True
 
     def log_results(self, data: Data, **context):
         self.logger.info(log_data(data, **context))
@@ -436,6 +465,8 @@ def _map_dict_schema(__m: Dict, __base: Dict, schema: Schema, **context) -> Dict
         except Exception as exception:
             print(EXCEPTION_ON_NAME_MSG(field[NAME]))
             raise exception
+        if (field[MODE] == OPTIONAL) and (field[NAME] in __base) and pd.isna(__base[field[NAME]]):
+            __base.pop(field[NAME])
     return __base
 
 
@@ -617,6 +648,8 @@ def _map_df_schema(df: pd.DataFrame, __base: pd.DataFrame, schema: Schema, **con
         except Exception as exception:
             print(EXCEPTION_ON_NAME_MSG(field[NAME]))
             raise exception
+        if (field[MODE] == OPTIONAL) and (field[NAME] in __base) and pd.isna(__base[field[NAME]]):
+            __base.drop(columns=field[NAME])
     return __base
 
 
@@ -750,6 +783,8 @@ def _map_html_schema(source: Tag, __base: Dict, schema: Schema, **context) -> Di
         except Exception as exception:
             print(EXCEPTION_ON_NAME_MSG(field[NAME]))
             raise exception
+        if (field[MODE] == OPTIONAL) and (field[NAME] in __base) and pd.isna(__base[field[NAME]]):
+            __base.pop(field[NAME])
     return __base
 
 

@@ -312,15 +312,19 @@ def rename_dict(__m: Dict, rename: RenameMap) -> Dict:
     return {rename.get(__key,__key): __value for __key, __value in __m.items()}
 
 
-def diff_dict(__m: Dict, **kwargs) -> Dict:
-    return {__key: __value for __key, __value in __m.items() if __key not in kwargs}
+def diff_dict(*args: Dict, skip: IndexLabel=list(), keep: Literal["fist","last"]="fist") -> Tuple[Dict]:
+    duplicates = __and(*map(lambda x: set(x.keys), args)) - cast_set(skip)
+    keep = len(args)-1 if keep == "last" else 0
+    return (__m if __i == keep else drop_dict(__m, duplicates, inplace=False) for __i, __m in enumerate(args))
 
 
 def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -> Dict:
     base = dict()
     for __m in __object:
-        if not __m: continue
-        base = dict(base, **(diff_dict(__m, **base) if keep == "first" else __m))
+        if not isinstance(__m, Dict): continue
+        for __key, __value in __m.items():
+            if (keep == "first") and (__key in base): continue
+            else: base[__key] = __value
     return base
 
 
@@ -525,6 +529,26 @@ def isin_records(__r: Records, keys: _KT, how: Literal["any","all"]="any") -> _B
         return allin(isin) if how == "all" else any(isin)
     elif not keys: return list()
     else: return [isin_records(__r, __key, how=how) for __key in keys]
+
+
+def drop_duplicates(__r: Records, keys: Optional[_KT]=list(), keep: Literal["fist","last",False]="first") -> Records:
+    if keep == False: return _drop_duplicates_all(__r, keys)
+    base, history, keys = list(), list(), cast_tuple(keys)
+    for __m in (__r[::-1] if keep == "last" else __r):
+        values = tuple(kloc(__m, keys, if_null="pass").values())
+        if values not in history:
+            base.append(__m)
+            history.append(values)
+    return (base[::-1] if keep == "last" else base)
+
+
+def _drop_duplicates_all(__r: Records, keys: Optional[_KT]=list()) -> Records:
+    history, keys = defaultdict(list), cast_tuple(keys)
+    for __i, __m in enumerate(__r):
+        values = tuple(kloc(__m, keys, if_null="pass").values())
+        history[values].append(__i)
+    indices = sorted(union(*[index for index in history.values() if len(index) == 1]))
+    return iloc(__r, indices, if_null="drop")
 
 
 def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), exclude: Optional[Keyword]=list(),
