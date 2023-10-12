@@ -358,7 +358,7 @@ def match_dict(__m: Dict, __keys: Optional[_KT]=list(), __matchFunc: Optional[Ma
                 all_keys=False, match: Optional[MatchFunction]=None, how: Literal["filter","all","indexer"]="filter",
                 __default=None, **context) -> Union[Dict,_BOOL]:
     if all_keys:
-        return match_dict(__m, how=how, **dict(list(range(len(__m))), [match]*len(__m)))
+        return safe_apply(__m, match, False)
     context = map_context(__keys, __matchFunc, __default=match, **context)
     matches = {__key: safe_apply(__m[__key], match, False) if __key in __m else False for __key, match in context.items()}
     if how == "filter":

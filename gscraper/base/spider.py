@@ -1302,6 +1302,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
+    sessionCookies = True
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
@@ -1332,7 +1333,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as auth:
                 self.login(auth, **context)
-                async with aiohttp.ClientSession(**ssl, cookies=dict(auth.cookies)) as session:
+                cookies = dict(cookies=dict(auth.cookies)) if self.sessionCookies else dict()
+                async with aiohttp.ClientSession(**ssl, **cookies) as session:
+                    if not self.sessionCookies: context["cookies"] = self.cookies
                     data = await func(self, *args, session=session, semaphore=semaphore, **context)
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)

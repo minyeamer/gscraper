@@ -4,7 +4,7 @@ from gscraper.base.session import BaseSession
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
-from gscraper.base.types import not_na, get_type, init_origin, is_type, is_numeric_type, is_bool_type
+from gscraper.base.types import not_na, get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
 from gscraper.utils.cast import cast_object, cast_str, cast_tuple
@@ -150,6 +150,15 @@ class Apply(dict):
         self.update(func=func, **exists_dict(dict(default=default), strict=True))
 
 
+class Match(dict):
+    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
+                value: Optional[Any]=None, flip: Optional[bool]=None, default: Optional[bool]=None,
+                strict: Optional[bool]=None, query: Optional[_KT]=None):
+        self.update(exists_dict(
+            dict(func=func, path=path, value=value, flip=flip, default=default,
+                strict=strict, query=query), strict=True))
+
+
 class Exists(Apply):
     def __init__(self, keys=str()):
         self.update(func=__EXISTS__, **exists_dict(dict(keys=keys), strict=True))
@@ -172,19 +181,10 @@ class Map(dict):
     def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None,
                 groupby: _KT=list(), groupSize: NestedDict=dict(),
                 rankby: Optional[Literal["page","start"]]="start", page=1, start=1,
-                submatch: Optional[Callable]=None, discard=True) -> Data:
+                submatch: Optional[MatchFunction]=None, discard=True) -> Data:
         self.update(func=__MAP__, schema=schema, **exists_dict(
             dict(root=root, match=match, groupby=groupby, groupSize=groupSize,
                 rankby=rankby, page=page, start=start, submatch=submatch, discard=discard), strict=False))
-
-
-class Match(dict):
-    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                value: Optional[Any]=None, flip: Optional[bool]=None, default: Optional[bool]=None,
-                strict: Optional[bool]=None, query: Optional[_KT]=None):
-        self.update(exists_dict(
-            dict(func=func, path=path, value=value, flip=flip, default=default,
-                strict=strict, query=query), strict=True))
 
 
 class Field(dict):
@@ -238,11 +238,14 @@ class Parser(BaseSession):
         self.schemaInfo = validate_schema_info(self.schemaInfo)
 
     def get_unique_fields(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                            keep: Literal["fist","last",False]="first", **match) -> List[Field]:
+                            keep: Literal["fist","last",False]="first", match: Optional[MatchFunction]=None,
+                            **match_by_key) -> List[Field]:
         context = kloc(self.schemaInfo, cast_tuple(schema_names), default=list(), if_null="pass", values_only=True)
         fields = union(*vloc(context, "schema", if_null="drop", values_only=True))
         fields = drop_duplicates(fields, keep=keep)
-        if match: fields = match_records(fields, **match)
+        if isinstance(match, Callable) or match_by_key:
+            all_keys = isinstance(match, Callable)
+            fields = match_records(fields, all_keys=all_keys, match=match, **match_by_key)
         return vloc(fields, keys, if_null="drop", values_only=values_only) if keys else fields
 
     def get_fields_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]],
@@ -257,7 +260,7 @@ class Parser(BaseSession):
                             keep: Literal["fist","last",False]="first") -> List[str]:
         return self.get_fields_by_type(__type, keys="name", values_only=True, schema_names=schema_names, keep=keep)
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
+    def get_rename_map(self, to: Optional[Literal["en","ko","desc","name"]]=None, schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first", **context) -> RenameMap:
         if to in ("desc", "name"):
             __from, __to = ("description", "name") if to == "name" else ("name", "description")
@@ -364,7 +367,7 @@ def _init_field(field: Field) -> Field:
     elif field[MODE] == NOTZERO:
         field[CAST] = True
         field[STRICT] = False
-    elif is_numeric_type(field[TYPE]) and (CAST not in field):
+    elif is_numeric_or_date_type(field[TYPE]) and (CAST not in field):
         field[CAST] = True
         if is_bool_type(field[TYPE]):
             field[STRICT] = False
@@ -402,7 +405,7 @@ def validate_match(match: Match, name=str(), **context) -> Match:
 ###################################################################
 
 def map_records(__r: Records, schemaInfo: SchemaInfo, groupby: _KT=list(), groupSize: NestedDict=dict(),
-                rankby=str(), match: Optional[Callable]=None, discard=False, **context) -> Records:
+                rankby=str(), match: Optional[MatchFunction]=None, discard=False, **context) -> Records:
     context = SCHEMA_CONTEXT(**context)
     if groupby:
         return _groupby_records(__r, schemaInfo, groupby, groupSize, rankby, match, discard, **context)
@@ -416,7 +419,7 @@ def map_records(__r: Records, schemaInfo: SchemaInfo, groupby: _KT=list(), group
 
 
 def _groupby_records(__r: Records, schemaInfo: SchemaInfo, groupby: _KT=list(), groupSize: NestedDict=dict(),
-                    rankby=str(), match: Optional[Callable]=None, discard=False, **context) -> Records:
+                    rankby=str(), match: Optional[MatchFunction]=None, discard=False, **context) -> Records:
     context = dict(context, schemaInfo=schemaInfo, rankby=rankby, match=match, discard=discard)
     groups = groupby_records(__r, by=groupby, if_null="pass")
     return union(*[
@@ -437,7 +440,7 @@ def get_start(count: Optional[int]=0, by: Optional[Literal["page","start"]]=None
 ############################ Parse Dict ###########################
 ###################################################################
 
-def map_dict(__m: Dict, schemaInfo: SchemaInfo, match: Optional[Callable]=None, discard=False, **context) -> Dict:
+def map_dict(__m: Dict, schemaInfo: SchemaInfo, match: Optional[MatchFunction]=None, discard=False, **context) -> Dict:
     context = SCHEMA_CONTEXT(**context)
     __base = dict()
     if match and not match(__m, **context): return __base
@@ -594,7 +597,7 @@ def __split__(__object, sep=',', maxsplit=-1, type: Optional[Type]=None, default
 
 def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None,
             groupby: _KT=list(), groupSize: NestedDict=dict(), rankby: Optional[Literal["page","start"]]="start",
-            page=1, start=1, submatch: Optional[Callable]=None, discard=True, **context) -> Data:
+            page=1, start=1, submatch: Optional[MatchFunction]=None, discard=True, **context) -> Data:
     schemaInfo = SchemaInfo(schema=SchemaContext(schema=schema, root=root, match=match))
     if is_records(__object):
         return map_records(__object, schemaInfo, groupby, groupSize, rankby, submatch, discard, page=page, start=start, **context)
@@ -608,7 +611,7 @@ def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[
 ###################################################################
 
 def map_df(df: pd.DataFrame, schemaInfo: SchemaInfo, groupby: _KT=list(), groupSize: NestedDict=dict(),
-            rankby=str(), match: Optional[Callable]=None, discard=False, **context) -> pd.DataFrame:
+            rankby=str(), match: Optional[MatchFunction]=None, discard=False, **context) -> pd.DataFrame:
     context = SCHEMA_CONTEXT(**context)
     if groupby:
         return _groupby_df(df, schemaInfo, groupby, groupSize, rankby, discard, **context)
@@ -629,7 +632,7 @@ def _groupby_df(df: pd.DataFrame, schemaInfo: SchemaInfo, groupby: _KT=list(), g
         map_df(df, dataSize=hier_get(groupSize, group), **context) for group, df in groups.items()])
 
 
-def _set_df(df: pd.DataFrame, rankby=str(), match: Optional[Callable]=None, **context) -> pd.DataFrame:
+def _set_df(df: pd.DataFrame, rankby=str(), match: Optional[MatchFunction]=None, **context) -> pd.DataFrame:
     start = get_start(len(df), rankby, **context)
     if isinstance(start, int) and (RANK not in df):
         df[RANK] = range(start, len(df)+start)
@@ -734,7 +737,8 @@ def _match_df(df: pd.DataFrame, func: Optional[MatchFunction]=None, path: Option
 ###################################################################
 
 def map_source(source: HtmlData, schemaInfo: SchemaInfo, groupby: Union[_KT,Dict]=str(),
-                groupSize: Dict[bool,int]=dict(), rankby=str(), match: Optional[Callable]=None, **context) -> MappingData:
+                groupSize: Dict[bool,int]=dict(), rankby=str(),
+                match: Optional[MatchFunction]=None, **context) -> MappingData:
     context = SCHEMA_CONTEXT(**context)
     if not is_array(source):
         return _map_html(source, schemaInfo, **context)
@@ -759,7 +763,7 @@ def _groupby_source(source: List[Tag], schemaInfo: SchemaInfo, groupby: Union[_K
             for group, source in groups.items()])
 
 
-def _map_html(source: Tag, schemaInfo: SchemaInfo, match: Optional[Callable]=None, **context) -> Dict:
+def _map_html(source: Tag, schemaInfo: SchemaInfo, match: Optional[MatchFunction]=None, **context) -> Dict:
     __base = dict()
     if match and not match(source, **context): return __base
     for __key, schema_context in schemaInfo.items():

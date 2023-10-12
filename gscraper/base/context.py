@@ -16,7 +16,7 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, wher
                         logger=None, logJson=None, errors=None, ssl=None, \
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
                         root=None, groupby=None, rankby=None, schemaInfo=None, \
-                        crawler=None, decryptedKey=None, auth=None, dependencies=None, \
+                        crawler=None, decryptedKey=None, auth=None, sessionCookies=None, dependencies=None, \
                         self_var=None, prefix=None, rename=None, **context: context
 
 

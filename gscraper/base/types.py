@@ -320,6 +320,9 @@ def is_timestamp_type(__type: TypeHint) -> bool:
 def is_date_type(__type: TypeHint) -> bool:
     return is_type(__type, DATE_TYPES)
 
+def is_numeric_or_date_type(__type: TypeHint) -> bool:
+    return is_type(__type, BOOLEAN_TYPES+FLOAT_TYPES+INTEGER_TYPES+DATETIME_TYPES+DATE_TYPES)
+
 def is_str_type(__type: TypeHint) -> bool:
     return is_type(__type, STRING_TYPES)
 
