@@ -1,4 +1,4 @@
-from gscraper.base.types import _KT, _VT, _BOOL, _TYPE, Comparable, Context, TypeHint, Index, IndexLabel, Keyword, Unit
+from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint, Index, IndexLabel, Keyword, Unit
 from gscraper.base.types import IndexedSequence, Records, MappingData, TabularData, Data, HtmlData
 from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap, RegexFormat
 from gscraper.base.types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
@@ -101,7 +101,7 @@ def map_index(__indices: Index) -> Index:
     else: return
 
 
-def map_context(__keys: _KT, __values: _VT, __default=None, **context) -> Context:
+def map_context(__keys: Optional[_KT]=list(), __values: Optional[_VT]=list(), __default=None, **context) -> Context:
     if context: return context
     elif not (__keys and (__values or __default)): return dict()
 
@@ -109,6 +109,13 @@ def map_context(__keys: _KT, __values: _VT, __default=None, **context) -> Contex
     if not is_array(__values): __values = [__values]*len(__keys)
     elif len(__keys) != len(__values): return dict()
     return {__key:__value for __key, __value in zip(__keys, __values)}
+
+
+def map_match(__keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
+                __default=None, **context) -> Context:
+    context = map_context(__keys, __matchFunc, __default, **context)
+    return {__key: (__match if isinstance(__match, Callable) else lambda x: x == __match)
+            for __key, __match in context.items()}
 
 
 ###################################################################
@@ -201,7 +208,7 @@ def to_array(__object, default=None, dropna=False, strict=False, unique=False) -
 
 
 def apply_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                all_indices=False, apply: Optional[ApplyFunction]=None, __default=None, **context) -> IndexedSequence:
+                all_indices=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> IndexedSequence:
     __s = __s.copy()
     if all_indices: return [safe_apply(__e, apply) for __e in __s]
     for __i, __apply in map_context(__indices, __applyFunc, __default=apply, **context).items():
@@ -215,8 +222,8 @@ def match_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __match
                 __default=None, **context) -> Union[IndexedSequence,_BOOL]:
     if all_indices:
         return match_array(__s, how=how, **dict(list(range(len(__s))), [match]*len(__s)))
-    context = map_context(__indices, __matchFunc, __default=match, **context)
-    matches = {__i: safe_apply(__s[__i], match, False) if abs_idx(__i) < len(__s) else False for __i, match in context.items()}
+    context = map_match(__indices, __matchFunc, __default=match, **context)
+    matches = {__i: safe_apply(__s[__i], __match, False) for __i, __match in context.items() if abs_idx(__i) < len(__s)}
     if how == "filter":
         return [__s[__i] for __i, __match in matches.items() if __match]
     else: return all(matches.values()) if how == "all" else list(matches.values())
@@ -345,7 +352,7 @@ def drop_dict(__m: Dict, keys: _KT, inplace=False) -> Dict:
 
 
 def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                all_keys=False, apply: Optional[ApplyFunction]=None, __default=None, **context) -> Dict:
+                all_keys=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> Dict:
     __m = __m.copy()
     if all_keys: return {__key: apply(__values, **context) for __key, __values in __m.items()}
     for __key, __apply in map_context(__keys, __applyFunc, __default=apply, **context).items():
@@ -356,11 +363,11 @@ def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[Ap
 
 def match_dict(__m: Dict, __keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
                 all_keys=False, match: Optional[MatchFunction]=None, how: Literal["filter","all","indexer"]="filter",
-                __default=None, **context) -> Union[Dict,_BOOL]:
+                __default: _PASS=None, **context) -> Union[Dict,_BOOL]:
     if all_keys:
         return safe_apply(__m, match, False)
-    context = map_context(__keys, __matchFunc, __default=match, **context)
-    matches = {__key: safe_apply(__m[__key], match, False) if __key in __m else False for __key, match in context.items()}
+    context = map_match(__keys, __matchFunc, __default=match, **context)
+    matches = {__key: safe_apply(__m[__key], __match, False) for __key, __match in context.items() if __key in __m}
     if how == "filter":
         return {__key: __m[__key] for __key, __match in matches.items() if __match}
     else: return all(matches.values()) if how == "all" else matches
@@ -368,7 +375,7 @@ def match_dict(__m: Dict, __keys: Optional[_KT]=list(), __matchFunc: Optional[Ma
 
 def between_dict(__m: Dict, __keys: Optional[_KT]=list(), __ranges: Optional[BetweenRange]=list(),
                 inclusive: Literal["both","neither","left","right"]="both", null=False,
-                __default=None, **context) -> bool:
+                __default: _PASS=None, **context) -> bool:
     match = True
     for __key, __range in map_context(__keys, __ranges, **context).items():
         if __key in __m:
@@ -564,7 +571,7 @@ def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), 
 
 def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
         reorder=True) -> pd.DataFrame:
-    columns = [inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))]
+    columns = inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))
     if not columns: return df if if_null != "drop" else pd.DataFrame()
     elif (len(df.columns) != len(columns)) and if_null != "drop":
         if reorder: df = pd.concat([pd.DataFrame(columns=columns),df])
@@ -605,7 +612,7 @@ def drop_df(df: pd.DataFrame, columns: IndexLabel) -> pd.DataFrame:
 
 
 def apply_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-            all_cols=False, apply: Optional[ApplyFunction]=None, __default=None, **context) -> pd.DataFrame:
+            all_cols=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> pd.DataFrame:
     df = df.copy()
     if all_cols: return df.apply(apply, **context)
     context = map_context(__columns, __applyFunc, __default=apply, **context)
@@ -615,15 +622,16 @@ def apply_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __applyFu
 
 def match_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __matchFunc: Optional[MatchFunction]=list(),
             all_cols=False, match: Optional[MatchFunction]=None, how: Literal["filter","all","indexer"]="filter",
-            __default=None, **context) -> Union[pd.DataFrame,pd.Series,bool]:
-    matches = apply_df(df, __columns, __matchFunc, all_cols=all_cols, match=match, **context).all(axis=1)
+            __default: _PASS=None, **context) -> Union[pd.DataFrame,pd.Series,bool]:
+    context = map_match(__columns, __matchFunc, __default=match, **context)
+    matches = apply_df(df, all_cols=all_cols, **context).all(axis=1)
     if how == "filter": return df[matches]
     else: return matches.all(axis=0) if how == "all" else matches
 
 
 def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __ranges: Optional[BetweenRange]=list(),
                 inclusive: Literal["both","neither","left","right"]="both", null=False,
-                __default=None, **context) -> pd.DataFrame:
+                __default: _PASS=None, **context) -> pd.DataFrame:
     df, df.copy()
     kwargs = {"inclusive": inclusive}
     for __column, __range in map_context(__columns, __ranges, **context).items():
