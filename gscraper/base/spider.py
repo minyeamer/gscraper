@@ -1190,6 +1190,7 @@ class EncryptedSpider(Spider):
     schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
+    sessionCookies = True
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
                 iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
@@ -1226,6 +1227,7 @@ class EncryptedSpider(Spider):
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
                 self.login(session, **context)
+                if not self.sessionCookies: context["cookies"] = self.cookies
                 data = func(self, *args, session=session, **context)
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)

@@ -299,7 +299,7 @@ class Iterator(CustomDict):
 
     def _from_args(self, *args: Sequence, iterateArgs: List[_KT], iterateUnit: Unit=1,
                 pagination: Pagination=False, **context) -> Tuple[List[Context],Context]:
-        if not is_same_length(*args): return list(), context
+        if not (is_same_length(*args) or pagination): return list(), context
         argnames, pagenames = self._split_argnames(*args, iterateArgs=iterateArgs, pagination=pagination, **context)
         if pagination:
             how = "numeric" if pagenames == PAGE_ITERATOR else "categorical"

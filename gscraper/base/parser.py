@@ -160,7 +160,7 @@ class Match(dict):
 
 
 class Exists(Apply):
-    def __init__(self, keys=str()):
+    def __init__(self, keys=str(), type: Optional[Type]=None, default=None, strict=True):
         self.update(func=__EXISTS__, **exists_dict(dict(keys=keys), strict=True))
 
 
@@ -486,48 +486,56 @@ def _map_dict_field(__m: Dict, __base: Dict, name: _KT, path: SchemaPath, how: O
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None,
-                cast=False, strict=True, default=None, **context) -> _VT:
-    default = _from_dict(__m, default) if not_na(default) else default
-    if is_array(path): value = hier_get(__m, path, default, empty=False)
-    elif isinstance(path, Callable): value = safe_apply(__m, path, default, **context)
-    else: value = path
+def _cast_value(value: _VT, type: Optional[Type]=None, default=None, strict=True, cast=True) -> _VT:
     return cast_object(value, type, default=default, strict=strict) if type and cast else value
 
 
-def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+                default=None, apply: Apply=dict(), query: Context=dict()) -> _VT:
+    default = _from_dict(__m, default) if not_na(default) else default
+    if is_array(path): value = hier_get(__m, path, default, empty=False)
+    elif isinstance(path, Callable): value = safe_apply(__m, path, default, **query)
+    else: value = path
+    value = _apply_schema(value, **dict(query, **apply)) if apply else value
+    return _cast_value(value, type, default=default, strict=strict, cast=cast)
+
+
+def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     if not _match_dict(__m, **dict(query, **match)): return __base
-    value = _from_dict(__m, path, default=default, **context)
-    __base[name] = _apply_schema(value, **dict(query, **apply))
+    __base[name] = _from_dict(__m, path, type, cast, strict, default, apply, query)
     return __base
 
 
-def _set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     __match = int(_match_dict(__m, **dict(query, **match)))-1
-    value = _from_dict(__m, path[__match], default=default, **context)
-    __base[name] = _apply_schema(value, **dict(query, **get_scala(apply, index=__match, default=dict())))
+    __apply = get_scala(apply, index=__match, default=dict())
+    __base[name] = _from_dict(__m, path[__match], type, cast, strict, default, __apply, query)
     return __base
 
 
-def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     value = hier_get(__m, path[:-1])
     if not isinstance(value, Sequence):
         raise TypeError(INVALID_VALUE_TYPE_MSG(value, SEQUENCE, name))
     sub_path = path[-1] if (len(path) > 0) and is_array(path[-1]) else value
-    context = dict(context, path=sub_path, default=default)
-    value = [_from_dict(__e, **context) for __e in value if _match_dict(__e, **dict(query, **match))]
-    __base[name] = [_apply_schema(__e, **dict(query, **apply)) for __e in value] if apply else value
+    args = (sub_path, type, cast, strict, default, apply, query)
+    __base[name] = [_from_dict(__e, *args) for __e in value if _match_dict(__e, **dict(query, **match))]
     return __base
 
 
-def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     if _match_dict(__m, **dict(query, **match)):
         data = _apply_schema(__m, **dict(query, **apply))
-        if name: __base[name] = data
+        if name:
+            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast)
         elif isinstance(data, Dict):
             __base = dict(__base, **data)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, DICTIONARY, "GLOBAL"))
@@ -540,7 +548,6 @@ def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_K
     if not (func or path or value or query): return True
     elif query: __m = hier_get(context, query)
     elif path: __m = hier_get(__m, path)
-    toggle = (lambda x: not x) if flip else (lambda x: bool(x))
 
     toggle = (lambda x: not x) if flip else (lambda x: bool(x))
     if func: return toggle(_apply_schema(__m, func, default=default, **context))
@@ -568,8 +575,9 @@ def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     else: raise ValueError(INVALID_APPLY_SPECIAL_MSG(func, name))
 
 
-def __exists__(__object, keys: _KT=list(), **context):
-    return exists_one(*kloc(__object, keys, if_null="drop", values_only=True), None)
+def __exists__(__object, keys: _KT=list(), type: Optional[Type]=None, default=None, strict=True, **context) -> Any:
+    value = exists_one(*kloc(__object, keys, if_null="drop", values_only=True), None)
+    return _cast_value(value, type, default=default, strict=strict, cast=True)
 
 
 def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
@@ -599,10 +607,11 @@ def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[
             groupby: _KT=list(), groupSize: NestedDict=dict(), rankby: Optional[Literal["page","start"]]="start",
             page=1, start=1, submatch: Optional[MatchFunction]=None, discard=True, **context) -> Data:
     schemaInfo = SchemaInfo(schema=SchemaContext(schema=schema, root=root, match=match))
+    context = dict(context, submatch=submatch, discard=discard)
     if is_records(__object):
-        return map_records(__object, schemaInfo, groupby, groupSize, rankby, submatch, discard, page=page, start=start, **context)
+        return map_records(__object, schemaInfo, groupby, groupSize, rankby, page=page, start=start, **context)
     elif isinstance(__object, Dict):
-        return map_dict(__object, schemaInfo, submatch, discard, **context)
+        return map_dict(__object, schemaInfo, **context)
     else: return __object
 
 
@@ -657,8 +666,8 @@ def _map_df_schema(df: pd.DataFrame, __base: pd.DataFrame, schema: Schema, **con
 
 
 def _map_df_field(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: SchemaPath, how: Optional[PathType]=None,
-                    type: Optional[Type]=None, mode: _PASS=None, cast=False, strict=True, default=None,
-                    apply: Apply=dict(), match: Match=dict(), **context) -> Dict:
+                type: Optional[Type]=None, mode: _PASS=None, cast=False, strict=True, default=None,
+                apply: Apply=dict(), match: Match=dict(), **context) -> Dict:
     path_type = how if how else _get_path_type(path)
     context = dict(type=type, cast=cast, strict=strict, default=default, apply=apply, match=match, query=context)
     if path_type in (PATH,CALLABLE): return _set_df_value(df, __base, name, path, **context)
@@ -670,46 +679,53 @@ def _map_df_field(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Schem
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None,
-            cast=False, strict=True, default=None, **context) -> pd.Series:
+def _cast_df(df: Union[pd.DataFrame,pd.Series], type: Optional[Type]=None, default=None, strict=True,
+            cast=True) -> Union[pd.DataFrame,pd.Series]:
+    return safe_apply_df(df, cast_object, default, __type=type, strict=strict) if type and cast else df
+
+
+def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+            default=None, apply: Apply=dict(), query: Context=dict()) -> pd.Series:
     default = _from_df(df, default) if is_array(default) else default
     if is_array(path): series = fillna_each(df[path[0]], default)
-    elif isinstance(path, Callable): series = safe_apply_df(df, path, default, **context)
+    elif isinstance(path, Callable): series = safe_apply_df(df, path, default, **query)
     else: series = pd.Series([path]*len(df), index=df.index)
-    return safe_apply_df(series, cast_object, default, __type=type, strict=strict) if type and cast else series
+    series = safe_apply_df(series, apply[FUNC], **dict(query, **drop_dict(apply, FUNC))) if apply else series
+    return _cast_df(df, type, default=default, strict=strict, cast=cast)
 
 
-def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, default=None,
-                apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> pd.DataFrame:
+def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, type: Optional[Type]=None,
+                cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                query: Context=dict()) -> pd.DataFrame:
     if _match_df(df, **dict(query, **match)).empty: return __base
-    series = _from_df(df, path, default=default, **context)
-    if apply:
-        series = safe_apply_df(series, apply[FUNC], **dict(query, **drop_dict(apply, FUNC)))
-    if not is_df_sequence(series):
+    series = _from_df(df, path, type, cast, strict, default, apply, query)
+    if not (is_df_sequence(series) and (len(series) != len(__base))):
         raise TypeError(INVALID_VALUE_TYPE_MSG(series, PANDAS_SERIES, name))
     __base[name] = series
     return __base
 
 
-def _set_df_tuple(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Tuple, default=None,
-                apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> pd.DataFrame:
+def _set_df_tuple(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Tuple, type: Optional[Type]=None,
+                cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                query: Context=dict()) -> pd.DataFrame:
     matches = _match_df(df, **dict(query, **match)).index
     __base[name] = default
     for __i, row in df.iterrows():
         __match = int(__i in matches)-1
-        value = _from_dict(row, path[__match], default=default, **context)
-        if apply: value = _apply_schema(value, **dict(query, **get_scala(apply, index=__match, default=dict())))
+        __apply = get_scala(apply, index=__match, default=dict())
+        value = _from_dict(row, path[__match], type, cast, strict, default, __apply, query)
         __base.at[__i,name] = value
     return __base
 
 
-def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> pd.DataFrame:
+def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=None, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> pd.DataFrame:
     df = _match_df(df, **dict(query, **match))
     if not df.empty:
         data = safe_apply_df(df, apply[FUNC], **dict(query, **drop_dict(apply, FUNC)))
         if name and is_df_sequence(data):
-            __base[name] = data
+            __base[name] = _cast_df(data, type, default=default, strict=strict, cast=cast)
         elif is_df(data): df = pd.concat([df, data], axis=0)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, PANDAS_OBJECT, "GLOBAL"))
     return __base
@@ -805,48 +821,52 @@ def _map_html_field(source: Tag, __base: Dict, name: _KT, path: SchemaPath, how:
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None,
-                cast=False, strict=True, default=None, **context) -> Union[Tag,Any]:
+def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+                default=None, apply: Apply=dict(), query: Context=dict()) -> Union[Tag,Any]:
     default = _from_html(source, default) if not_na(default) else default
     if is_array(path): value = hier_select(source, path, default, empty=False)
-    elif isinstance(path, Callable): value = safe_apply(source, path, default, **context)
+    elif isinstance(path, Callable): value = safe_apply(source, path, default, **query)
     else: value = path
+    value = _apply_schema(value, **dict(query, **apply)) if apply else value
     return cast_object(value, type, default=default, strict=strict) if type and cast else value
 
 
-def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     if not _match_html(source, **dict(query, **match)): return __base
-    value = _from_html(source, path, default=default, **context)
-    __base[name] = _apply_schema(value, **dict(query, **apply))
+    __base[name] = _from_html(source, path, type, cast, strict, default, apply, query)
     return __base
 
 
-def _set_html_tuple(source: Tag, __base: Dict, name: _KT, path: Tuple, default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_html_tuple(source: Tag, __base: Dict, name: _KT, path: Tuple, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     __match = int(_match_html(source, **dict(query, **match)))-1
-    value = _from_html(source, path[__match], default=default, **context)
-    __base[name] = _apply_schema(value, **dict(query, **get_scala(apply, index=__match, default=dict())))
+    __apply = get_scala(apply, index=__match, default=dict())
+    __base[name] = _from_html(source, path[__match], type, cast, strict, default, __apply, query)
     return __base
 
 
-def _set_html_iterate(source: Tag, __base: Dict, name: _KT, path: Sequence[_KT], default=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_html_iterate(source: Tag, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     source = hier_select(source, path[:-1])
     if not isinstance(source, Sequence):
         raise TypeError(INVALID_VALUE_TYPE_MSG(value, SEQUENCE, name))
     sub_path = path[-1] if (len(path) > 0) and is_array(path[-1]) else value
-    context = dict(context, path=sub_path, default=default)
-    value = [_from_html(__t, **context) for __t in source if _match_html(__t, **dict(query, **match))]
-    __base[name] = [_apply_schema(__e, **dict(query, **apply)) for __e in value] if apply else value
+    args = (sub_path, type, cast, strict, default, apply, query)
+    value = [_from_html(__t, *args) for __t in source if _match_html(__t, **dict(query, **match))]
     return __base
 
 
-def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None,
-                    apply: Apply=dict(), match: Match=dict(), query: Context=dict(), **context) -> Dict:
+def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: Optional[Type]=None,
+                    cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
+                    query: Context=dict()) -> Dict:
     if _match_html(source, **dict(query, **match)):
         data = _apply_schema(source, **dict(query, **apply))
-        if name: __base[name] = data
+        if name:
+            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast)
         elif isinstance(data, Dict):
             __base = dict(__base, **data)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, DICTIONARY, "GLOBAL"))
