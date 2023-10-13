@@ -336,10 +336,12 @@ def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -
 
 
 def set_dict(__m: Dict, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-            empty=True, inplace=True, **context) -> Dict:
+            if_exists: Literal["replace","ignore"]="replace", empty=True, inplace=True, **context) -> Dict:
     if not inplace: __m = __m.copy()
     for __key, __value in dict(zip(cast_tuple(__keys), cast_tuple(__values)), **context).items():
-        if exists(__value, strict=True) or empty: __m[__key] = __value
+        if (if_exists == "ignore") and (__key in __m): continue
+        elif (not empty) and is_empty(__value, strict=True): continue
+        else: __m[__key] = __value
     if not inplace: return __m
 
 
@@ -477,8 +479,8 @@ def rename_records(__r: Records, rename: RenameMap) -> Records:
 
 
 def set_records(__r: Records, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-                empty=True, **context) -> Records:
-    return [set_dict(__m, __keys, __values, empty=empty, inplace=False, **context) for __m in __r]
+                if_exists: Literal["replace","ignore"]="replace", empty=True, **context) -> Records:
+    return [set_dict(__m, __keys, __values, if_exists=if_exists, empty=empty, inplace=False, **context) for __m in __r]
 
 
 def drop_records(__r: Records, keys: _KT) -> Records:
@@ -600,10 +602,12 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
 
 
 def set_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __values: Optional[_VT]=list(),
-            empty=True, **context) -> pd.DataFrame:
+            if_exists: Literal["replace","ignore"]="replace", empty=True, **context) -> pd.DataFrame:
     df = df.copy()
     for __column, __value in dict(zip(cast_tuple(__columns), cast_tuple(__values)), **context).items():
-        if exists(__value, strict=True) or empty: df[__column] = __value
+        if (if_exists == "ignore") and (__column in df): continue
+        elif (not empty) and is_empty(__value, strict=True): continue
+        else: df[__column] = __value
     return df
 
 
@@ -1018,11 +1022,12 @@ def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["
 
 
 @multitype_allowed
-def set_data(data: MappingData, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(), empty=True,
+def set_data(data: MappingData, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
+            if_exists: Literal["replace","ignore"]="replace", empty=True,
             return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
-    if is_records(data): return set_records(data, __keys, __values, empty=empty, **context)
-    elif isinstance(data, pd.DataFrame): return set_df(data, __keys, __values, empty=empty, **context)
-    elif isinstance(data, Dict): return set_dict(data, __keys, __values, empty=empty, inplace=False, **context)
+    if is_records(data): return set_records(data, __keys, __values, if_exists=if_exists, empty=empty, **context)
+    elif isinstance(data, pd.DataFrame): return set_df(data, __keys, __values, if_exists=if_exists, empty=empty, **context)
+    elif isinstance(data, Dict): return set_dict(data, __keys, __values, if_exists=if_exists, empty=empty, inplace=False, **context)
     else: return data
 
 

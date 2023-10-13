@@ -310,7 +310,7 @@ class Parser(BaseSession):
             data = map_source(data, self.schemaInfo, self.groupby, self.groupSize, self.rankby, **context)
         else: return data
         if updateTime:
-            data = set_data(data, updateDate=self.today(), updateTime=self.now())
+            data = set_data(data, if_exists="ignore", updateDate=self.today(), updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
 
 ###################################################################
