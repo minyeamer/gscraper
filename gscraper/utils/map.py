@@ -135,9 +135,11 @@ def replace_map(string: str, strip=False, **context) -> str:
     return string.strip() if strip else string
 
 
-def include_text(string: str, value=str(), how: Literal["include","exact"]="include") -> bool:
-    if not (isinstance(string, str) and isinstance(value, str)): return False
-    return (value in string) if how == "include" else (value == string)
+def include_text(string: str, value=str(), how: Literal["include","exact"]="include") -> Union[bool,List[bool]]:
+    if is_array(string): return [include_text(__s, value, how=how) for __s in string]
+    elif is_array(value): return [include_text(string, __v, how=how) for __v in value]
+    elif not (isinstance(string, str) and isinstance(value, str)): return False
+    else: return (value in string) if how == "include" else (value == string)
 
 
 def match_keywords(string: str, keywords: Sequence[str]) -> bool:

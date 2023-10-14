@@ -8,6 +8,7 @@ from gscraper.base.types import not_na, get_type, init_origin, is_type, is_numer
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
 from gscraper.utils.cast import cast_object, cast_str, cast_tuple
+from gscraper.utils.date import is_daily_frequency
 from gscraper.utils.logs import log_data
 from gscraper.utils.map import safe_apply, get_scala, exists_one, union
 from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, hier_get
@@ -313,7 +314,8 @@ class Parser(BaseSession):
             data = map_source(data, self.schemaInfo, self.groupby, self.groupSize, self.rankby, **context)
         else: return data
         if updateTime:
-            data = set_data(data, if_exists="ignore", updateDate=self.today(), updateTime=self.now())
+            updateDate = context.get("startDate") if is_daily_frequency(context.get("interval")) else self.today()
+            data = set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
 
 ###################################################################

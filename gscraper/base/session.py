@@ -32,6 +32,8 @@ PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
 DATE_ITERATOR = ["startDate", "endDate"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
+START, END = 0, 1
+
 CHECKPOINT = [
     "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count", "redirect",
     "request", "response", "parse", "login", "api", "exception"]
@@ -249,8 +251,8 @@ class Iterator(CustomDict):
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                         fromNow: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
-        startDate = self.get_date(startDate, fromNow=fromNow, index=0, busdate=busdate)
-        endDate = self.get_date(endDate, fromNow=fromNow, index=1, busdate=busdate)
+        startDate = self.get_date(startDate, fromNow=fromNow, index=START, busdate=busdate)
+        endDate = self.get_date(endDate, fromNow=fromNow, index=END, busdate=busdate)
         if startDate: startDate = min(startDate, endDate) if endDate else startDate
         if endDate: endDate = max(startDate, endDate) if startDate else endDate
         return startDate, endDate
@@ -416,14 +418,9 @@ class Iterator(CustomDict):
 
     def _from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
-        date_range = get_date_range(*self.get_date_pair(startDate, endDate), interval=interval)
-        if is_daily_frequency(interval):
-            period = [dict(startDate=date, endDate=date, date=date) for date in date_range]
-        elif len(date_range) > 1:
-            period = [dict(startDate=start, endDate=(end-dt.timedelta(days=1)), date=(end-dt.timedelta(days=1)))
-                        for start, end in zip(date_range, date_range[1:]+[endDate+dt.timedelta(days=1)])]
-        else: period = [dict(startDate=startDate, endDate=endDate, date=endDate)]
-        return period, dict(context, interval=interval)
+        date_range = get_date_range(*self.get_date_pair(startDate, endDate), interval=interval, paired=True)
+        map_pair = lambda pair: dict(startDate=pair[START], endDate=pair[END], date=pair[START])
+        return list(map(map_pair, date_range)), dict(context, interval=interval)
 
     ###################################################################
     ########################### From Context ##########################
