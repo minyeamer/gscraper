@@ -62,6 +62,7 @@ OPTIONAL = "OPTIONAL"
 FUNC = "func"
 __EXISTS__ = "__EXISTS__"
 __JOIN__ = "__JOIN__"
+__RENAME__ = "__RENAME__"
 __SPLIT__ = "__SPLIT__"
 __MAP__ = "__MAP__"
 
@@ -172,6 +173,13 @@ class Join(Apply):
         self.update(func=__JOIN__, **exists_dict(dict(keys=keys, sep=sep, split=split), strict=True))
 
 
+class Rename(Apply):
+    def __init__(self, rename_map: RenameMap, path: Optional[_KT]=None,
+                if_null: Optional[Union[Literal["null","pass","error"],Any]]=None):
+        self.update(func=__RENAME__, rename_map=rename_map, **exists_dict(
+            dict(path=path, if_null=if_null), strict=True))
+
+
 class Split(Apply):
     def __init__(self, sep=',', maxsplit: Optional[int]=None, type: Optional[Type]=None,
                 default: Optional[bool]=None, strict: Optional[bool]=None, index: Optional[int]=None):
@@ -264,7 +272,7 @@ class Parser(BaseSession):
                             keep: Literal["fist","last",False]="first") -> List[str]:
         return self.get_fields_by_type(__type, keys="name", values_only=True, schema_names=schema_names, keep=keep)
 
-    def get_rename_map(self, to: Optional[Literal["en","ko","desc","name"]]=None, schema_names: _KT=list(),
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first", **context) -> RenameMap:
         if to in ("desc", "name"):
             __from, __to = ("description", "name") if to == "name" else ("name", "description")
@@ -577,6 +585,7 @@ def _apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, na
 def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     if func == __EXISTS__: return __exists__(__object, **context)
     elif func == __JOIN__: return __join__(__object, **context)
+    elif func == __RENAME__: return __rename__(__object, **context)
     elif func == __SPLIT__: return __split__(__object, **context)
     elif func == __MAP__: return __map__(__object, **context)
     else: raise ValueError(INVALID_APPLY_SPECIAL_MSG(func, name))
@@ -601,6 +610,15 @@ def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
     elif isinstance(__object, str):
         return __join__(list(map(lambda x: x.strip(), __object.split(split))), sep=sep)
     else: return str()
+
+
+def __rename__(__object, rename_map: RenameMap, path: _KT=list(),
+                if_null: Union[Literal["null","pass","error"],Any]="null", **context) -> str:
+    if if_null == "null": value = rename_map.get(__object)
+    elif if_null == "pass": value = rename_map.get(__object, __object)
+    elif if_null == "error": value = rename_map[__object]
+    else: value = rename_map.get(__object, if_null)
+    return hier_get(value, path) if path else value
 
 
 def __split__(__object, sep=',', maxsplit=-1, type: Optional[Type]=None, default=None, strict=True,
