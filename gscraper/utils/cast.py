@@ -1,4 +1,4 @@
-from gscraper.base.types import _TYPE, TypeHint, CastError
+from gscraper.base.types import _TYPE, TypeHint, Timezone, CastError
 from gscraper.base.types import get_type, not_na, is_bool_type, is_float_type, is_int_type
 from gscraper.base.types import is_datetime_type, is_time_type, is_timestamp_type, is_date_type
 from gscraper.base.types import is_str_type, is_list_type, is_tuple_type, is_set_type
@@ -21,15 +21,15 @@ def isfloat(__object) -> bool:
     except CastError: return False
 
 
-def cast_float(__object, default=0., strict=False, trunc=None) -> float:
+def cast_float(__object, default=0., strict=False, trunc: Optional[int]=None) -> float:
     try:
         __object = float(__object) if strict else float(re.sub("[^\d.-]",'',str(__object)))
         return round(__object, trunc) if isinstance(trunc, int) else __object
     except CastError: return default
 
 
-def cast_float2(__object, default=0., strict=False) -> float:
-    return cast_float(__object, default, strict, trunc=2)
+def cast_float2(__object, default=0., strict=False, trunc=2) -> float:
+    return cast_float(__object, default, strict, trunc=trunc)
 
 
 def cast_int(__object, default=0, strict=False) -> int:
@@ -42,7 +42,8 @@ def cast_int1(__object, default=1, strict=False) -> int:
     return cast_int(__object, default, strict)
 
 
-def cast_numeric(__object, __type: TypeHint="auto", default=0, strict=False, trunc=None) -> Union[float,int]:
+def cast_numeric(__object, __type: TypeHint="auto", default=0, strict=False,
+                trunc: Optional[int]=None, **kwargs) -> Union[float,int]:
     if __type == "auto": pass
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict, trunc=trunc)
@@ -61,13 +62,14 @@ TS_SECONDS = 10
 TS_MILLISECONDS = 13
 
 
-def get_timezone(tzinfo=None) -> BaseTzInfo:
+def get_timezone(tzinfo: Optional[Timezone]=None) -> BaseTzInfo:
     if not tzinfo: return None
     try: return timezone(tzinfo)
     except UnknownTimeZoneError: return
 
 
-def set_timezone(__datetime: dt.datetime, tzinfo=None, astimezone=None, droptz=False) -> dt.datetime:
+def set_timezone(__datetime: dt.datetime, tzinfo: Optional[Timezone]=None,
+                astimezone: Optional[Timezone]=None, droptz=False) -> dt.datetime:
     tzinfo = get_timezone(tzinfo)
     if tzinfo:
         __datetime = __datetime.astimezone(tzinfo) if __datetime.tzinfo else tzinfo.localize(__datetime)
@@ -82,7 +84,8 @@ def get_ts_unit(__timestamp: Timestamp) -> str:
     elif len(str(__timestamp)) == TS_MILLISECONDS: return "ms"
 
 
-def from_timestamp(__timestamp: Union[Timestamp,str], default=None, tzinfo=None, astimezone=None) -> dt.datetime:
+def from_timestamp(__timestamp: Union[Timestamp,str], default=None,
+                    tzinfo: Optional[Timezone]=None, astimezone: Optional[Timezone]=None) -> dt.datetime:
     try:
         if isinstance(__timestamp, str): __timestamp = cast_numeric(__timestamp, default=None, strict=True)
         __timestamp = __timestamp/1000 if get_ts_unit(__timestamp) == "ms" else __timestamp
@@ -90,7 +93,8 @@ def from_timestamp(__timestamp: Union[Timestamp,str], default=None, tzinfo=None,
     except CastError: return default
 
 
-def cast_datetime(__object: DateFormat, default=None, tzinfo=None, astimezone=None, droptz=False) -> dt.datetime:
+def cast_datetime(__object: DateFormat, default=None, tzinfo: Optional[Timezone]=None,
+                    astimezone: Optional[Timezone]=None, droptz=False) -> dt.datetime:
     try:
         if isinstance(__object, dt.datetime): __datetime = __object
         elif isinstance(__object, dt.date): __datetime = dt.datetime(*__object.timetuple()[:6])
@@ -100,12 +104,14 @@ def cast_datetime(__object: DateFormat, default=None, tzinfo=None, astimezone=No
     except CastError: return default
 
 
-def cast_time(__object: DateFormat, default=None, tzinfo=None, astimezone=None) -> dt.time:
+def cast_time(__object: DateFormat, default=None, tzinfo: Optional[Timezone]=None,
+                astimezone: Optional[Timezone]=None) -> dt.time:
     __datetime = cast_datetime(**locals())
     if isinstance(__datetime, dt.datetime): return __datetime.time()
 
 
-def cast_timestamp(__object: DateFormat, default=None, tzinfo=None, astimezone=None, tsUnit: Literal["ms","s"]="ms") -> int:
+def cast_timestamp(__object: DateFormat, default=None, tzinfo: Optional[Timezone]=None,
+                    astimezone: Optional[Timezone]=None, tsUnit: Literal["ms","s"]="ms") -> int:
     __datetime = cast_datetime(**locals())
     if isinstance(__datetime, dt.datetime):
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
@@ -120,12 +126,14 @@ def cast_date(__object: DateFormat, default=None, from_ordinal=False) -> dt.date
     except CastError: return default
 
 
-def to_datetime(__object: DateFormat, __type: TypeHint="auto", default=None, tzinfo=None, astimezone=None) -> DateNumeric:
+def to_datetime(__object: DateFormat, __type: TypeHint="auto", default=None,
+                tzinfo: Optional[Timezone]=None, astimezone: Optional[Timezone]=None,
+                droptz=False, tsUnit: Literal["ms","s"]="ms", from_ordinal=False, **kwargs) -> DateNumeric:
     if __type == "auto": pass
-    elif is_datetime_type(__type): return cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone)
+    elif is_datetime_type(__type): return cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     elif is_time_type(__type): return cast_time(__object, tzinfo=tzinfo, astimezone=astimezone)
-    elif is_timestamp_type(__type): return cast_timestamp(__object, tzinfo=tzinfo, astimezone=astimezone)
-    elif is_date_type(__type): return cast_date(__object)
+    elif is_timestamp_type(__type): return cast_timestamp(__object, tzinfo=tzinfo, astimezone=astimezone, tsUnit=tsUnit)
+    elif is_date_type(__type): return cast_date(__object, from_ordinal=from_ordinal)
     else: return default
     __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone)
     if isinstance(__datetime, dt.datetime):
@@ -201,17 +209,21 @@ def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
 ############################ Multitype ############################
 ###################################################################
 
-def cast_object(__object, __type: TypeHint, default=None, strict=True) -> Any:
-    if is_str_type(__type): return cast_str(__object, default=default, strict=strict)
+def cast_object(__object, __type: TypeHint, default=None, strict=True,
+                match: Optional[Union[RegexFormat,MatchFunction]]=None, trunc: Optional[int]=None,
+                tzinfo: Optional[Timezone]=None, astimezone: Optional[Timezone]=None,
+                droptz=False, tsUnit: Literal["ms","s"]="ms", from_ordinal=False,
+                iter_type: _TYPE=(List,Set,Tuple), **kwargs) -> Any:
+    if is_str_type(__type): return cast_str(__object, default=default, strict=strict, match=match)
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
-    elif is_float_type(__type): return cast_float(__object, default=default, strict=strict)
+    elif is_float_type(__type): return cast_float(__object, default=default, strict=strict, trunc=trunc)
     elif is_bool_type(__type): return not_na(__object, strict=strict)
-    elif is_datetime_type(__type): return cast_datetime(__object, default=default)
-    elif is_date_type(__type): return cast_date(__object, default=default)
-    elif is_list_type(__type): return cast_list(__object, strict=strict)
-    elif is_tuple_type(__type): return cast_tuple(__object, strict=strict)
-    elif is_set_type(__type): return cast_set(__object, strict=strict)
-    elif is_time_type(__type): return cast_time(__object, default=default)
-    elif is_timestamp_type(__type): return cast_timestamp(__object, default=default)
+    elif is_datetime_type(__type): return cast_datetime(__object, default=default, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
+    elif is_date_type(__type): return cast_date(__object, default=default, from_ordinal=from_ordinal)
+    elif is_list_type(__type): return cast_list(__object, strict=strict, iter_type=iter_type)
+    elif is_tuple_type(__type): return cast_tuple(__object, strict=strict, iter_type=iter_type)
+    elif is_set_type(__type): return cast_set(__object, strict=strict, iter_type=iter_type)
+    elif is_time_type(__type): return cast_time(__object, default=default, tzinfo=tzinfo, astimezone=astimezone)
+    elif is_timestamp_type(__type): return cast_timestamp(__object, default=default, tzinfo=tzinfo, astimezone=astimezone, tsUnit=tsUnit)
     elif isinstance(__object, get_type(__type)): return __object
     else: return get_type(__type)(default)

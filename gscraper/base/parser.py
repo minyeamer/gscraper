@@ -160,8 +160,10 @@ class Match(dict):
 
 
 class Exists(Apply):
-    def __init__(self, keys=str(), type: Optional[Type]=None, default=None, strict=True):
-        self.update(func=__EXISTS__, **exists_dict(dict(keys=keys), strict=True))
+    def __init__(self, keys=str(), type: Optional[Type]=None, default: Optional[bool]=None,
+                strict: Optional[bool]=None):
+        self.update(func=__EXISTS__, **exists_dict(
+            dict(keys=keys, type=type, default=default, strict=strict), strict=True))
 
 
 class Join(Apply):
@@ -170,8 +172,8 @@ class Join(Apply):
 
 
 class Split(Apply):
-    def __init__(self, sep=',', maxsplit=-1, type: Optional[Type]=None, default=None, strict=True,
-                index: Optional[int]=None):
+    def __init__(self, sep=',', maxsplit: Optional[int]=None, type: Optional[Type]=None,
+                default: Optional[bool]=None, strict: Optional[bool]=None, index: Optional[int]=None):
         self.update(func=__SPLIT__, **exists_dict(
             dict(sep=sep, maxsplit=maxsplit, type=type, default=default, strict=strict,
                 index=index), strict=True))
@@ -179,9 +181,10 @@ class Split(Apply):
 
 class Map(dict):
     def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None,
-                groupby: _KT=list(), groupSize: NestedDict=dict(),
-                rankby: Optional[Literal["page","start"]]="start", page=1, start=1,
-                submatch: Optional[MatchFunction]=None, discard=True) -> Data:
+                groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
+                rankby: Optional[Literal["page","start"]]=None,
+                page: Optional[int]=None, start: Optional[int]=None,
+                submatch: Optional[MatchFunction]=None, discard: Optional[bool]=None) -> Data:
         self.update(func=__MAP__, schema=schema, **exists_dict(
             dict(root=root, match=match, groupby=groupby, groupSize=groupSize,
                 rankby=rankby, page=page, start=start, submatch=submatch, discard=discard), strict=False))
@@ -486,8 +489,10 @@ def _map_dict_field(__m: Dict, __base: Dict, name: _KT, path: SchemaPath, how: O
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _cast_value(value: _VT, type: Optional[Type]=None, default=None, strict=True, cast=True) -> _VT:
-    return cast_object(value, type, default=default, strict=strict) if type and cast else value
+def _cast_value(value: _VT, type: Optional[Type]=None, default=None, strict=True,
+                cast=True, trunc=2, **context) -> _VT:
+    context = dict(context, default=default, strict=strict, trunc=trunc)
+    return cast_object(value, type, **context) if type and cast else value
 
 
 def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
@@ -497,7 +502,7 @@ def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=Fals
     elif isinstance(path, Callable): value = safe_apply(__m, path, default, **query)
     else: value = path
     value = _apply_schema(value, **dict(query, **apply)) if apply else value
-    return _cast_value(value, type, default=default, strict=strict, cast=cast)
+    return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
 def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
@@ -535,7 +540,7 @@ def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Op
     if _match_dict(__m, **dict(query, **match)):
         data = _apply_schema(__m, **dict(query, **apply))
         if name:
-            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast)
+            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast, **query)
         elif isinstance(data, Dict):
             __base = dict(__base, **data)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, DICTIONARY, "GLOBAL"))
@@ -577,7 +582,7 @@ def _special_apply(__object, func: str, name=str(), **context) -> _VT:
 
 def __exists__(__object, keys: _KT=list(), type: Optional[Type]=None, default=None, strict=True, **context) -> Any:
     value = exists_one(*kloc(__object, keys, if_null="drop", values_only=True), None)
-    return _cast_value(value, type, default=default, strict=strict, cast=True)
+    return _cast_value(value, type, default=default, strict=strict, **context)
 
 
 def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
@@ -599,7 +604,7 @@ def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
 def __split__(__object, sep=',', maxsplit=-1, type: Optional[Type]=None, default=None, strict=True,
                 index: Optional[int]=None, **context) -> Union[List,_VT]:
     __s = cast_str(__object, strict=True).split(sep, maxsplit)
-    if type: __s = list(map(lambda x: cast_object(x, type, default=default, strict=strict), __s))
+    if type: __s = list(map(lambda x: _cast_value(x, type, default=default, strict=strict, **context), __s))
     return get_scala(__s, index) if isinstance(index, int) else __s
 
 
@@ -680,8 +685,9 @@ def _map_df_field(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Schem
 
 
 def _cast_df(df: Union[pd.DataFrame,pd.Series], type: Optional[Type]=None, default=None, strict=True,
-            cast=True) -> Union[pd.DataFrame,pd.Series]:
-    return safe_apply_df(df, cast_object, default, __type=type, strict=strict) if type and cast else df
+            cast=True, trunc=2, **context) -> Union[pd.DataFrame,pd.Series]:
+    context = dict(context, default=default, strict=strict, trunc=trunc)
+    df = safe_apply_df(df, cast_object, default, **context) if type and cast else df
 
 
 def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
@@ -691,7 +697,7 @@ def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None, cast
     elif isinstance(path, Callable): series = safe_apply_df(df, path, default, **query)
     else: series = pd.Series([path]*len(df), index=df.index)
     series = safe_apply_df(series, apply[FUNC], **dict(query, **drop_dict(apply, FUNC))) if apply else series
-    return _cast_df(df, type, default=default, strict=strict, cast=cast)
+    return _cast_df(df, type, default=default, strict=strict, cast=cast, **query)
 
 
 def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, type: Optional[Type]=None,
@@ -725,7 +731,7 @@ def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=N
     if not df.empty:
         data = safe_apply_df(df, apply[FUNC], **dict(query, **drop_dict(apply, FUNC)))
         if name and is_df_sequence(data):
-            __base[name] = _cast_df(data, type, default=default, strict=strict, cast=cast)
+            __base[name] = _cast_df(data, type, default=default, strict=strict, cast=cast, **query)
         elif is_df(data): df = pd.concat([df, data], axis=0)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, PANDAS_OBJECT, "GLOBAL"))
     return __base
@@ -828,7 +834,7 @@ def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=Fa
     elif isinstance(path, Callable): value = safe_apply(source, path, default, **query)
     else: value = path
     value = _apply_schema(value, **dict(query, **apply)) if apply else value
-    return cast_object(value, type, default=default, strict=strict) if type and cast else value
+    return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
 def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
@@ -866,7 +872,7 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
     if _match_html(source, **dict(query, **match)):
         data = _apply_schema(source, **dict(query, **apply))
         if name:
-            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast)
+            __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast, **query)
         elif isinstance(data, Dict):
             __base = dict(__base, **data)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, DICTIONARY, "GLOBAL"))
