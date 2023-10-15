@@ -146,7 +146,7 @@ def include_text(string: Union[str,Sequence[str]], value: Union[str,Sequence[str
     elif is_array(value):
         return check([include_text(string, __v, exact=exact, how=how) for __v in value], how=how)
     elif not (isinstance(string, str) and isinstance(value, str)): return False
-    else: return (value in string) if how == "include" else (value == string)
+    else: return (value == string) if exact else (value in string)
 
 
 def match_keywords(string: str, keywords: Sequence[str]) -> bool:

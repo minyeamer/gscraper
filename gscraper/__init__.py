@@ -9,4 +9,4 @@ from .utils.gcloud import *
 from .utils.logs import *
 from .utils.map import *
 
-__version__ = "3.1.4"
+__version__ = "3.1.5"

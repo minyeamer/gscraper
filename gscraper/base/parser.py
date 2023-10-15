@@ -1,6 +1,6 @@
 from __future__ import annotations
-from gscraper.base import CustomDict, CustomRecords, SCHEMA_CONTEXT
-from gscraper.base.session import BaseSession
+from gscraper.base import SCHEMA_CONTEXT
+from gscraper.base.session import CustomDict, CustomRecords, BaseSession
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
@@ -235,8 +235,8 @@ class SchemaInfo(CustomDict):
     def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
                     keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
                     **match_by_key) -> Union[Schema,_VT]:
-        context = kloc(self, cast_tuple(schema_names), default=list(), if_null="pass", values_only=True)
-        schema = Schema(*union(*vloc(context, "schema", if_null="drop", values_only=True)))
+        context = kloc(self, cast_tuple(schema_names), default=dict(), if_null="pass", values_only=True)
+        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)))
         return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
 
     def get_schema_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]],
@@ -571,7 +571,7 @@ def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_K
     if func: return toggle(_apply_schema(__m, func, default=default, **context))
     elif isinstance(value, bool): return toggle(value)
     elif not_na(value, strict=True): return toggle(__m == value)
-    elif not_na(text, strict=True): return include_text(__m, text, exact=exact, how=how)
+    elif not_na(text, strict=True): return toggle(include_text(__m, text, exact=exact, how=how))
     else: return toggle(not_na(__m, strict=strict))
 
 
