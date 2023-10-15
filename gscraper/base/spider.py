@@ -1,6 +1,6 @@
 from __future__ import annotations
-from gscraper.base.context import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
-from gscraper.base.context import RESPONSE_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
+from gscraper.base import RESPONSE_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from gscraper.base.session import Iterator
 from gscraper.base.parser import Parser, SchemaInfo
 
@@ -283,7 +283,6 @@ class Spider(Parser, Iterator):
     def _with_data(self, data: Data, uploadInfo: Optional[UploadInfo]=dict(), **context):
         if self.localSave: self.save_data(data, ext="dataframe")
         self.upload_data(data, uploadInfo, **context)
-        self.alert_message(data, **context)
 
     def requests_limit(func):
         @functools.wraps(func)
@@ -689,8 +688,7 @@ class AsyncSpider(Spider):
 
     def asyncio_task(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(),
-                        alertMessage=False, alertName=str(), nateonUrl=str(), **context):
+        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
@@ -702,8 +700,7 @@ class AsyncSpider(Spider):
 
     def asyncio_session(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(),
-                        alertMessage=False, alertName=str(), nateonUrl=str(), **context):
+        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
             context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
@@ -997,7 +994,7 @@ class LoginSpider(requests.Session, Spider):
     asyncio = False
     operation = "login"
     host = str()
-    where = str()
+    where = WHERE
     ssl = None
 
     @abstractmethod
@@ -1150,7 +1147,6 @@ class EncryptedSpider(Spider):
     datetimeUnit = "second"
     ssl = None
     returnType = "records"
-    returnType = "records"
     root = list()
     groupby = list()
     groupSize = dict()
@@ -1175,7 +1171,7 @@ class EncryptedSpider(Spider):
         if not self.decryptedKey and not isinstance(decryptedKey, Dict):
             try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
-        self.decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
+        self.update(decryptedKey=(decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey))
         self.logger.info(log_encrypt(**self.decryptedKey, show=3))
 
     ###################################################################
@@ -1282,8 +1278,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def login_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(),
-                            alertMessage=False, alertName=str(), nateonUrl=str(), **context):
+        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
             context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
@@ -1302,8 +1297,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def api_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(),
-                        alertMessage=False, alertName=str(), nateonUrl=str(), **context):
+        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
             context = API_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()

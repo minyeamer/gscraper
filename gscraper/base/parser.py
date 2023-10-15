@@ -1,6 +1,6 @@
 from __future__ import annotations
-from gscraper.base.context import SCHEMA_CONTEXT
-from gscraper.base.session import CustomDict, CustomRecords, BaseSession
+from gscraper.base import CustomDict, CustomRecords, SCHEMA_CONTEXT
+from gscraper.base.session import BaseSession
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction

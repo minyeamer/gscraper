@@ -578,6 +578,27 @@ def include_records(__r: Records, keys: _KT, include: Optional[Keyword]=list(), 
     return [__m for __m in __r if include_dict(__m, keys, include=include, exclude=exclude, how=how, if_null=if_null)]
 
 
+def unique_keys(__r: Records, forward=True) -> _KT:
+    keys = list(__r[0].keys()) if __r else list()
+    for __keys in map(lambda x: list(x.keys()), __r[1:]):
+        for __i, __key in enumerate(__keys):
+            if __key in keys: continue
+            try:
+                for __forward in range(-1, __i)[::-1]:
+                    for __backward in range(__i+1, len(__keys)+1):
+                        if __keys[__backward] in keys: break
+                    if __keys[__forward] in keys: break
+                keys.insert(keys.index(__keys[(__forward if forward else __backward)]), __key)
+            except: keys.append(__key)
+    return keys
+
+
+def align_records(__r: Records, default=None, forward=True, reorder=True) -> Records:
+    keys = unique_keys(__r, forward=forward)
+    return [kloc(__m, keys, default=default, if_null="pass", reorder=reorder)
+            for __m in __r if isinstance(__m, Dict)]
+
+
 ###################################################################
 ############################ DataFrame ############################
 ###################################################################
@@ -594,7 +615,7 @@ def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["
 
 def to_dataframe(__object: MappingData) -> pd.DataFrame:
     if isinstance(__object, pd.DataFrame): return __object
-    elif is_records(__object, empty=True): return pd.DataFrame(__object)
+    elif is_records(__object, empty=True): return pd.DataFrame(align_records(__object))
     elif isinstance(__object, dict): return pd.DataFrame([__object])
     else: return pd.DataFrame()
 

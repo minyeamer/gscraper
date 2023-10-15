@@ -1,19 +1,18 @@
 from __future__ import annotations
-from gscraper.base.context import REQUEST_CONTEXT
+from gscraper.base import CustomDict, CustomRecords, REQUEST_CONTEXT
 
-from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, Index, IndexLabel
+from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel
 from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
-from gscraper.base.types import RenameMap, Data, ResponseData, MatchFunction
+from gscraper.base.types import RenameMap, Data, ResponseData
 from gscraper.base.types import is_na, not_na, init_origin, is_dataframe_type
-from gscraper.base.types import is_array, allin_instance, is_str_array, inspect_function
+from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
 
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
 from gscraper.utils.map import data_exists, unique, get_scala, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict
-from gscraper.utils.map import vloc, match_records, drop_duplicates, exists_one, convert_data
+from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict, convert_data
 
 from abc import ABCMeta
 from itertools import product
@@ -21,7 +20,7 @@ import functools
 import logging
 import os
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 import datetime as dt
@@ -43,111 +42,6 @@ CHECKPOINT = [
 CHECKPOINT_PATH = "saved/"
 
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
-
-
-###################################################################
-############################### Base ##############################
-###################################################################
-
-def custom_str(__object, indent=0, step=2) -> str:
-    if isinstance(__object, (CustomDict,CustomList)):
-        return __object.__str__(indent=indent+step, step=step)
-    elif isinstance(__object, str): return f"'{__object}'"
-    else: return str(__object)
-
-
-class CustomDict(dict):
-    def __init__(self, **kwargs):
-        super().update(self.__dict__)
-        super().__init__(kwargs)
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomDict]:
-        if __instance: return __instance.__class__(**self)
-        else: return self.__class__(**self)
-
-    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
-            reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
-        return kloc(dict(self), __key, default, if_null, reorder, values_only)
-
-    def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,CustomDict]:
-        if not inplace: self = self.copy()
-        for __key, __value in dict(kwargs, **__m).items():
-            if inplace: setattr(self, __key, __value)
-            else: self[__key] = __value
-        if inplace: super().update(self.__dict__)
-        return exists_one(inplace, self, strict=False)
-
-    def __getitem__(self, __key: _KT) -> _VT:
-        if isinstance(__key, List): return [self.__getitem__(__k) for __k in __key]
-        else: return super().__getitem__(__key)
-
-    def __setitem__(self, __key: _KT, __value: _VT):
-        if isinstance(__key, List) and is_array(__value):
-            [self.__setitem__(__k, __v) for __k, __v in zip(__key, __value)]
-            return
-        setattr(self, __key, __value)
-        super().__setitem__(__key, __value)
-
-    def __str__(self, indent=2, step=2) -> str:
-        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {custom_str(__v, indent=indent, step=step)}"
-                for __k, __v in self.items()])+'\n'+' '*(indent-step)+'}'
-
-
-class CustomList(list):
-    def __init__(self, *args):
-        super().__init__(args)
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomList]:
-        if __instance: return __instance.__class__(*self)
-        else: return self.__class__(*self)
-
-    def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
-        return iloc(list(self), __key, default, if_null)
-
-    def update(self, *args):
-        self.__init__(*args)
-
-    def __str__(self, indent=2, step=2) -> str:
-        return '[\n'+',\n'.join([' '*indent+custom_str(__e, indent=indent, step=step)
-                for __e in map(dict, self)])+'\n'+' '*(indent-step)+']'
-
-
-class CustomRecords(CustomList):
-    def __init__(self, *args):
-        super().__init__(*[record for record in args if isinstance(record, Dict)])
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomRecords]:
-        if __instance: return __instance.__class__(*self)
-        else: return self.__class__(*self)
-
-    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
-            reorder=True, values_only=True) -> Union[Any,List,Dict,str]:
-        return vloc(list(self), __key, default, if_null, reorder, values_only)
-
-    def copy_or_update(func):
-        @functools.wraps(func)
-        def wrapper(self: CustomRecords, *args, inplace=False, **kwargs):
-            if not inplace: self = self.copy()
-            __r = func(self, *args, **kwargs)
-            if inplace: self.update(*__r)
-            else: self = self.__class__(*__r)
-            return exists_one(inplace, self, strict=False)
-        return wrapper
-
-    @copy_or_update
-    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
-        return [__func(__m, **kwargs) for __m in self]
-
-    @copy_or_update
-    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
-        if isinstance(__match, Callable) or match_by_key:
-            all_keys = isinstance(__match, Callable)
-            return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
-        else: return self
-
-    @copy_or_update
-    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
-        return drop_duplicates(self, keep=keep) if keep != True else self
 
 
 ###################################################################
@@ -208,6 +102,13 @@ class BaseSession(CustomDict):
 
     def match(self, data: ResponseData, **context) -> bool:
         return True
+
+    def print(self, data: Data):
+        if isinstance(data, Dict): print(CustomDict(**data))
+        elif is_records(data, how="all"): print(CustomRecords(*data))
+        elif isinstance(data, pd.DataFrame):
+            print("pd.DataFrame("+str(CustomRecords(*data.to_dict("records")))+")")
+        else: print(data)
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -341,10 +242,10 @@ class Iterator(CustomDict):
     fromNow = None
 
     def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
-        super().__init__()
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
         self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
+        super().__init__()
 
     def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
         fromNow = fromNow if fromNow else self.fromNow
