@@ -2,7 +2,7 @@ from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Conte
 from gscraper.base.types import IndexedSequence, Records, MappingData, TabularData, Data, HtmlData
 from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap, RegexFormat
 from gscraper.base.types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
-from gscraper.base.types import is_list_type, is_dict_type, is_records_type, is_dataframe_type
+from gscraper.base.types import is_comparable, is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
 from gscraper.utils.cast import cast_str, cast_datetime, cast_date, cast_list, cast_tuple, cast_set
 
@@ -93,6 +93,10 @@ def between(__object: Comparable, left=None, right=None,
     return match_left & match_right
 
 
+def check(__values: Sequence[_VT], how: Literal["any","all"]="any") -> bool:
+    return (all(__values) and __values) if how == "all" else any(__values)
+
+
 def map_index(__indices: Index) -> Index:
     if isinstance(__indices, int): return __indices
     elif is_bool_array(__indices, how="all", empty=False):
@@ -135,9 +139,12 @@ def replace_map(string: str, strip=False, **context) -> str:
     return string.strip() if strip else string
 
 
-def include_text(string: str, value=str(), how: Literal["include","exact"]="include") -> Union[bool,List[bool]]:
-    if is_array(string): return [include_text(__s, value, how=how) for __s in string]
-    elif is_array(value): return [include_text(string, __v, how=how) for __v in value]
+def include_text(string: Union[str,Sequence[str]], value: Union[str,Sequence[str]]=str(),
+                exact=False, how: Literal["any","all"]="any") -> bool:
+    if is_array(string):
+        return check([include_text(__s, value, exact=exact, how=how) for __s in string], how=how)
+    elif is_array(value):
+        return check([include_text(string, __v, exact=exact, how=how) for __v in value], how=how)
     elif not (isinstance(string, str) and isinstance(value, str)): return False
     else: return (value in string) if how == "include" else (value == string)
 
@@ -212,10 +219,10 @@ def to_array(__object, default=None, dropna=False, strict=False, unique=False) -
 def apply_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __applyFunc: Optional[ApplyFunction]=list(),
                 all_indices=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> IndexedSequence:
     __s = __s.copy()
-    if all_indices: return [safe_apply(__e, apply) for __e in __s]
+    if all_indices: return [apply(__e) for __e in __s]
     for __i, __apply in map_context(__indices, __applyFunc, __default=apply, **context).items():
         if abs_idx(__i) < len(__s):
-            __s[__i] = safe_apply(__s[__i], __apply)
+            __s[__i] = __apply(__s[__i])
     return __s
 
 
@@ -358,10 +365,10 @@ def drop_dict(__m: Dict, keys: _KT, inplace=False) -> Dict:
 def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
                 all_keys=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> Dict:
     __m = __m.copy()
-    if all_keys: return {__key: apply(__values, **context) for __key, __values in __m.items()}
+    if all_keys: return {__key: apply(__values) for __key, __values in __m.items()}
     for __key, __apply in map_context(__keys, __applyFunc, __default=apply, **context).items():
         if __key in __m:
-            __m[__key] = safe_apply(__m[__key], __apply)
+            __m[__key] = __apply(__m[__key])
     return __m
 
 
@@ -465,7 +472,8 @@ def vloc(__r: List[Dict], keys: _KT, default=None, if_null: Literal["drop","pass
         values_only=False) -> Union[Records,List]:
     __r = [kloc(__m, keys, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
             for __m in __r]
-    return [__m for __m in __r if __m] if if_null == "drop" else __r
+    if if_null == "drop": return [__m for __m in __r if __m]
+    else: return [__m if __m else dict() for __m in __r]
 
 
 def to_records(__object: MappingData) -> Records:
@@ -495,7 +503,7 @@ def apply_records(__r: List[Dict], __keys: Optional[_KT]=list(), __applyFunc: Op
     if scope == "keys":
         return [apply_dict(__m, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context) for __m in __r]
     elif scope == "dict":
-        return [safe_apply(__m, apply, **context) for __m in __r]
+        return [apply(__m, apply) for __m in __r]
     else: return list()
 
 
@@ -555,8 +563,9 @@ def drop_duplicates(__r: Records, keys: Optional[_KT]=list(), keep: Literal["fis
 
 def _drop_duplicates_all(__r: Records, keys: Optional[_KT]=list()) -> Records:
     history, keys = defaultdict(list), cast_tuple(keys)
+    to_comparable = lambda x: x if is_comparable(x) else str(x)
     for __i, __m in enumerate(__r):
-        values = tuple(kloc(__m, keys, if_null="pass").values())
+        values = tuple(map(to_comparable, kloc(__m, keys, if_null="pass").values()))
         history[values].append(__i)
     indices = sorted(union(*[index for index in history.values() if len(index) == 1]))
     return iloc(__r, indices, if_null="drop")
@@ -620,7 +629,7 @@ def drop_df(df: pd.DataFrame, columns: IndexLabel) -> pd.DataFrame:
 def apply_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __applyFunc: Optional[ApplyFunction]=list(),
             all_cols=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> pd.DataFrame:
     df = df.copy()
-    if all_cols: return df.apply(apply, **context)
+    if all_cols: return df.apply({__column: apply for __column in df.columns})
     context = map_context(__columns, __applyFunc, __default=apply, **context)
     context = {str(__column): __apply for __column, __apply in context.items() if __column in df}
     return df.apply(context)
@@ -727,7 +736,8 @@ def safe_apply_df(__object: Union[pd.DataFrame,pd.Series], __applyFunc: ApplyFun
         if by == "row":
             __object = __object.apply(lambda x: safe_apply(x, __applyFunc, **context), axis=1)
         elif by == "cell":
-            __object = __object.apply(lambda x: apply_df(x, apply=__applyFunc, all_cols=True, **context))
+            for __column in __object.columns:
+                __object[__column] = safe_apply_df(__object[__column].copy(), __applyFunc, **context)
     return fillna_each(__object, default)
 
 
@@ -871,14 +881,13 @@ def _get_class_name(selector: _KT) -> str:
 
 def include_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
                     by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
-                    how: Literal["include","exact"]="exact", value=str()) -> bool:
+                    exact=False, value=str()) -> bool:
     context = dict(key=key, sep=sep, index=index, by=by, lines="raw", strip=strip, replace=replace)
     source = hier_select(source, selector, **context)
     name = _get_class_name(selector)
     value = name if name else value
-    if not (value and isinstance(value, str)): return bool(source)
-    elif is_array(source): return any([include_text(str(__t), value, how) for __t in source])
-    else: return include_text(str(source), value, how)
+    if not (value and isinstance(value, Sequence)): return bool(source)
+    else: return include_text(source, value, exact=exact, how="any")
 
 
 def match_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
@@ -887,7 +896,7 @@ def match_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Option
                 strict=False, flip=False) -> bool:
     args = (source, selector, key, sep, index, by, strip, replace)
     if how == "exist": match = exists_source(*args, strict=strict)
-    else: match = include_source(*args, how=how, value=value)
+    else: match = include_source(*args, exact=(how == "exact"), value=value)
     return (not match) if flip else match
 
 

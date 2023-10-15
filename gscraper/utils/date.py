@@ -234,7 +234,7 @@ def flip_pandas_frequency(freq: str, sep='') -> str:
 
 def map_pandas_frequency(freq: str, repl: Optional[str]=None, upper=False, flip=False) -> str:
     if isinstance(repl, str): freq = re.sub(r"[1-9]+", repl, freq).strip()
-    if upper and any(include_text(freq, ("min","ms","us"))): freq = freq.upper()
+    if upper and include_text(freq, ("min","ms","us"), how="any"): freq = freq.upper()
     if flip: freq = flip_pandas_frequency(freq, sep=('-' if '-' in freq else ''))
     return freq
 

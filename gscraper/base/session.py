@@ -1,16 +1,19 @@
 from __future__ import annotations
 from gscraper.base.context import REQUEST_CONTEXT
 
-from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, RenameMap, IndexLabel
-from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone, Data, ResponseData
-from gscraper.base.types import is_na, not_na, is_dataframe_type, allin_instance, is_array, is_str_array, init_origin
+from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, Index, IndexLabel
+from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import RenameMap, Data, ResponseData, MatchFunction
+from gscraper.base.types import is_na, not_na, init_origin, is_dataframe_type
+from gscraper.base.types import is_array, allin_instance, is_str_array, inspect_function
 
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
-from gscraper.utils.date import now, get_date, get_busdate, get_date_range, is_daily_frequency
+from gscraper.utils.date import now, get_date, get_busdate, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
 from gscraper.utils.map import data_exists, unique, get_scala, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict, exists_one, convert_data
+from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict
+from gscraper.utils.map import vloc, match_records, drop_duplicates, exists_one, convert_data
 
 from abc import ABCMeta
 from itertools import product
@@ -18,7 +21,7 @@ import functools
 import logging
 import os
 
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 import datetime as dt
@@ -46,35 +49,105 @@ USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 ############################### Base ##############################
 ###################################################################
 
+def custom_str(__object, indent=0, step=2) -> str:
+    if isinstance(__object, (CustomDict,CustomList)):
+        return __object.__str__(indent=indent+step, step=step)
+    elif isinstance(__object, str): return f"'{__object}'"
+    else: return str(__object)
+
+
 class CustomDict(dict):
     def __init__(self, **kwargs):
+        super().update(self.__dict__)
         super().__init__(kwargs)
-        self.update(self.__dict__)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Any:
-        if __instance: return __instance.__class__(**self.__dict__)
-        else: return self.__class__(**self.__dict__)
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomDict]:
+        if __instance: return __instance.__class__(**self)
+        else: return self.__class__(**self)
 
-    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="drop",
-            reorder=True, values_only=False) -> Union[Any,Dict,List,str]:
-        return kloc(self.__dict__, __key, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
+            reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
+        return kloc(dict(self), __key, default, if_null, reorder, values_only)
 
-    def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,Dict]:
+    def update(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,CustomDict]:
         if not inplace: self = self.copy()
         for __key, __value in dict(kwargs, **__m).items():
-            setattr(self, __key, __value)
-        super().update(self.__dict__)
-        return exists_one(inplace, self)
+            if inplace: setattr(self, __key, __value)
+            else: self[__key] = __value
+        if inplace: super().update(self.__dict__)
+        return exists_one(inplace, self, strict=False)
 
-    def __getitem__(self, __keys: _KT) -> _VT:
-        if is_array(__keys):
-            return [super().__getitem__(__key) for __key in __keys]
-        else:
-            return super().__getitem__(__keys)
+    def __getitem__(self, __key: _KT) -> _VT:
+        if isinstance(__key, List): return [self.__getitem__(__k) for __k in __key]
+        else: return super().__getitem__(__key)
 
     def __setitem__(self, __key: _KT, __value: _VT):
+        if isinstance(__key, List) and is_array(__value):
+            [self.__setitem__(__k, __v) for __k, __v in zip(__key, __value)]
+            return
         setattr(self, __key, __value)
         super().__setitem__(__key, __value)
+
+    def __str__(self, indent=2, step=2) -> str:
+        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {custom_str(__v, indent=indent, step=step)}"
+                for __k, __v in self.items()])+'\n'+' '*(indent-step)+'}'
+
+
+class CustomList(list):
+    def __init__(self, *args):
+        super().__init__(args)
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomList]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)
+
+    def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
+        return iloc(list(self), __key, default, if_null)
+
+    def update(self, *args):
+        self.__init__(*args)
+
+    def __str__(self, indent=2, step=2) -> str:
+        return '[\n'+',\n'.join([' '*indent+custom_str(__e, indent=indent, step=step)
+                for __e in map(dict, self)])+'\n'+' '*(indent-step)+']'
+
+
+class CustomRecords(CustomList):
+    def __init__(self, *args):
+        super().__init__(*[record for record in args if isinstance(record, Dict)])
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomRecords]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)
+
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
+            reorder=True, values_only=True) -> Union[Any,List,Dict,str]:
+        return vloc(list(self), __key, default, if_null, reorder, values_only)
+
+    def copy_or_update(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomRecords, *args, inplace=False, **kwargs):
+            if not inplace: self = self.copy()
+            __r = func(self, *args, **kwargs)
+            if inplace: self.update(*__r)
+            else: self = self.__class__(*__r)
+            return exists_one(inplace, self, strict=False)
+        return wrapper
+
+    @copy_or_update
+    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
+        return [__func(__m, **kwargs) for __m in self]
+
+    @copy_or_update
+    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
+        if isinstance(__match, Callable) or match_by_key:
+            all_keys = isinstance(__match, Callable)
+            return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
+        else: return self
+
+    @copy_or_update
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
+        return drop_duplicates(self, keep=keep) if keep != True else self
 
 
 ###################################################################
@@ -96,7 +169,6 @@ class BaseSession(CustomDict):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 **context):
-        super().__init__(context)
         self.operation = self.operation
         self.fields = fields if fields else self.fields
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
@@ -104,6 +176,7 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
+        super().__init__(context)
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                     debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False):
@@ -222,6 +295,35 @@ class BaseSession(CustomDict):
 
     def log_errors(self, *args, **context):
         self.errors.append(dict({"args":args}, **context))
+
+    ###################################################################
+    ############################# Inspect #############################
+    ###################################################################
+
+    def inspect(self, method: str, __type: Optional[TypeHint]=None, annotation: Optional[TypeHint]=None,
+                ignore: List[_KT]=list()) -> Dict[_KT,Dict]:
+        method = getattr(self, method)
+        info = inspect_function(method, ignore=["self","context","kwargs"]+ignore)
+        if __type or annotation:
+            info = drop_dict(info, "__return__", inplace=False)
+            if __type == "required":
+                return {name: param for name, param in info.items() if "default" not in param}
+            elif __type == "iterable":
+                return {name: param for name, param in info.items() if "iterable" in param}
+            return {name: param for name, param in info.items()
+                    if (annotation in cast_tuple(param["annotation"])) or (__type in cast_tuple(param["type"]))}
+        return info
+
+    def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        drop_keys = cast_list(drop)
+        if locals:
+            if "context" in drop_keys:
+                locals.pop("context", None)
+                drop_keys.pop(drop_keys.index("context"))
+            else: locals = dict(locals, **locals.pop("context", dict()))
+            context = dict(locals, **context)
+            context.pop("self", None)
+        return drop_dict(context, drop_keys, inplace=False) if drop_keys else context
 
 
 ###################################################################

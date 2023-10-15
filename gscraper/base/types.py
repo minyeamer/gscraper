@@ -48,6 +48,50 @@ GENERAL_TYPES = {
 
 
 ###################################################################
+############################ Key Types ############################
+###################################################################
+
+Index = Union[Sequence[int], int]
+IndexLabel = Union[Sequence[Hashable], Hashable]
+
+Column = Union[Sequence[str], str]
+Keyword = Union[Sequence[str], str]
+Id = Union[Sequence[str], str]
+Url = Union[Sequence[str], str]
+Token = Union[Sequence[str], str]
+EncryptedKey = str
+
+Status = Union[Sequence[int], int]
+Shape = Union[Sequence[int], int]
+Unit = Union[Sequence[int], int]
+
+KEY_TYPES = {
+    "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
+    "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey,
+    "Status":Status, "Shape":Shape, "Unit":Unit}
+
+
+###################################################################
+########################## Datetime Types #########################
+###################################################################
+
+Datetime = Union[datetime, date]
+Timestamp = Union[float, int]
+DateNumeric = Union[datetime, date, time, float, int]
+DateFormat = Union[datetime, date, time, float, int, str]
+DateUnit = Literal["second", "minute", "hour", "day", "month", "year"]
+
+DateQuery = Dict[str,datetime]
+Timedelta = Union[str, int, timedelta]
+Timezone = Union[BaseTzInfo, str]
+
+DATETIME_TYPES = {
+    "Datetime":Datetime, "Timestamp":Timestamp, "DateNumeric":DateNumeric,
+    "DateFormat":DateFormat, "DateUnit":DateUnit, "DateQuery":DateQuery,
+    "Timedelta":Timedelta, "Timezone":Timezone}
+
+
+###################################################################
 ########################## Sequence Types #########################
 ###################################################################
 
@@ -95,50 +139,6 @@ DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
     "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
     "JsonData":JsonData, "RedirectData":RedirectData, "HtmlData":HtmlData, "ResponseData":ResponseData}
-
-
-###################################################################
-############################ Key Types ############################
-###################################################################
-
-Index = Union[Sequence[int], int]
-IndexLabel = Union[Sequence[Hashable], Hashable]
-
-Column = Union[Sequence[str], str]
-Keyword = Union[Sequence[str], str]
-Id = Union[Sequence[str], str]
-Url = Union[Sequence[str], str]
-Token = Union[Sequence[str], str]
-EncryptedKey = str
-
-Status = Union[Sequence[int], int]
-Shape = Union[Sequence[int], int]
-Unit = Union[Sequence[int], int]
-
-KEY_TYPES = {
-    "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
-    "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey,
-    "Status":Status, "Shape":Shape, "Unit":Unit}
-
-
-###################################################################
-########################## Datetime Types #########################
-###################################################################
-
-Datetime = Union[datetime, date]
-Timestamp = Union[float, int]
-DateNumeric = Union[datetime, date, time, float, int]
-DateFormat = Union[datetime, date, time, float, int, str]
-DateUnit = Literal["second", "minute", "hour", "day", "month", "year"]
-
-DateQuery = Dict[str,datetime]
-Timedelta = Union[str, int, timedelta]
-Timezone = Union[BaseTzInfo, str]
-
-DATETIME_TYPES = {
-    "Datetime":Datetime, "Timestamp":Timestamp, "DateNumeric":DateNumeric,
-    "DateFormat":DateFormat, "DateUnit":DateUnit, "DateQuery":DateQuery,
-    "Timedelta":Timedelta, "Timezone":Timezone}
 
 
 ###################################################################
@@ -226,7 +226,7 @@ def not_na(__object, strict=True) -> bool:
 ###################################################################
 
 CUSTOM_TYPES = dict(
-    **GENERAL_TYPES, **SEQUENCE_TYPES, **DATA_TYPES, **KEY_TYPES, **DATETIME_TYPES,
+    **GENERAL_TYPES, **KEY_TYPES, **DATETIME_TYPES, **SEQUENCE_TYPES, **DATA_TYPES,
     **GOOGLE_CLOUD_TYPES, **SPECIAL_TYPES)
 
 BOOLEAN_TYPES = [bool, "bool", "boolean"]
@@ -286,6 +286,12 @@ def init_origin(__object: Union[Type,TypeHint,Any], argidx=0, default=None) -> A
         if __type == datetime: return default if default else datetime.now()
         elif __type == date: return default if default else date.today()
         else: return default
+
+
+def is_comparable(__object) -> bool:
+    try: __object > __object
+    except TypeError: return False
+    return True
 
 
 def is_type(__type: TypeHint, __types: TypeList) -> bool:
