@@ -131,15 +131,17 @@ def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Union[int
         return __date
 
 
-def set_datetime(__datetime: dt.datetime, __type: TypeHint=str,
-                __format="%Y-%m-%d %H:%M:%S", tsUnit: Literal["ms","s"]="ms") -> Union[str,int]:
+def set_datetime(__datetime: dt.datetime, __format="%Y-%m-%d %H:%M:%S",
+                __type: TypeHint=str, tsUnit: Literal["ms","s"]="ms") -> Union[str,int]:
+    if not isinstance(__datetime, dt.datetime): return str()
     if __format: return __datetime.strftime(DATETIME_FORMAT.get(__format,__format))
     elif is_str_type(__type): return str(__datetime)
     elif is_timestamp_type(__type): return get_timestamp(__datetime, tsUnit=tsUnit)
     else: return
 
 
-def set_date(__date: dt.date, __type: TypeHint=str, __format="%Y-%m-%d") -> Union[str,int]:
+def set_date(__date: dt.date, __format="%Y-%m-%d", __type: TypeHint=str) -> Union[str,int]:
+    if not isinstance(__date, dt.date): return str()
     if __format: return __date.strftime(DATETIME_FORMAT.get(__format,__format))
     elif is_str_type(__type): return str(__date)
     elif is_type(__type, INTEGER_TYPES+["ordinal"]): return __date.toordinal()

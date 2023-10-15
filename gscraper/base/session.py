@@ -8,7 +8,7 @@ from gscraper.base.types import is_na, not_na, init_origin, is_dataframe_type
 from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
 
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
-from gscraper.utils.date import now, get_date, get_busdate, get_date_range
+from gscraper.utils.date import now, get_date, get_busdate, set_date, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
 from gscraper.utils.map import data_exists, unique, get_scala, exists_one, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
@@ -369,6 +369,16 @@ class Iterator(CustomDict):
         if startDate: startDate = min(startDate, endDate) if endDate else startDate
         if endDate: endDate = max(startDate, endDate) if startDate else endDate
         return startDate, endDate
+
+    def set_date(self, date: Optional[DateFormat]=None, __format="%Y-%m-%d",
+                fromNow: Optional[Unit]=None, index=0, busdate=False) -> str:
+        date = self.get_date(date, fromNow=fromNow, index=index, busdate=busdate)
+        return set_date(date, __format)
+
+    def set_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                        __format="%Y-%m-%d", fromNow: Optional[Unit]=None, index=0, busdate=False) -> Tuple[str,str]:
+        startDate, endDate = self.get_date_pair(startDate, endDate, fromNow=fromNow, index=index, busdate=busdate)
+        return set_date(startDate, __format), set_date(endDate, __format)
 
     ###################################################################
     ########################### Set Iterator ##########################

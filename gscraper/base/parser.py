@@ -561,7 +561,7 @@ def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Op
 
 def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
                 value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-                default=False, strict=False, exact=True, how: Literal["any","all"]="any",
+                default=False, strict=False, exact=False, how: Literal["any","all"]="any",
                 query: Optional[_KT]=None, **context) -> bool:
     if not (func or path or value or query): return True
     elif query: __m = hier_get(context, query)
@@ -763,7 +763,7 @@ def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=N
 
 def _match_df(df: pd.DataFrame, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
             value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-            default=False, strict=False, exact=True, how: Literal["any","all"]="any",
+            default=False, strict=False, exact=False, how: Literal["any","all"]="any",
             query: Optional[_KT]=None, **context) -> pd.DataFrame:
     if not (func or path or value or query): return df
     elif query: return _match_dict(context, func, query, value, flip, default, strict)
@@ -908,7 +908,7 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
 
 def _match_html(source: Tag, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
                 value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-                default=False, strict=False, exact=True, how: Literal["any","all"]="any",
+                default=False, strict=False, exact=False, how: Literal["any","all"]="any",
                 query: Optional[_KT]=None, **context) -> bool:
     if not (func or path or value or query): return True
     elif query: return _match_dict(context, func, query, value, flip, default, strict)
