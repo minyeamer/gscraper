@@ -1,22 +1,23 @@
 from __future__ import annotations
 from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
-from gscraper.base import RESPONSE_CONTEXT, UPLOAD_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from gscraper.base.session import Iterator
 from gscraper.base.parser import Parser, SchemaInfo
+from gscraper.base.gcloud import GCloudQueryReader, GCloudUploader, GCloudQueryInfo, GCloudUploadInfo
+from gscraper.base.gcloud import fetch_gcloud_authorization, BigQuerySchema
 
-from gscraper.base.types import _KT, _PASS, Arguments, Context, TypeHint, LogLevel
-from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, Timedelta, Timezone
-from gscraper.base.types import Records, TabularData, Data, JsonData, RedirectData
-from gscraper.base.types import Account, NumericiseIgnore, BigQuerySchema, GspreadReadInfo, UploadInfo
-from gscraper.base.types import not_na, is_array, is_records, init_origin
+from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint
+from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
+from gscraper.base.types import Records, Data, JsonData, RedirectData
+from gscraper.base.types import Account
+from gscraper.base.types import is_array, init_origin
 
+from gscraper.utils import notna
 from gscraper.utils.cast import cast_tuple, cast_int, cast_datetime_format
-from gscraper.utils.gcloud import fetch_gcloud_authorization, update_gspread, read_gspread
-from gscraper.utils.gcloud import IDTokenCredentials, read_gbq, to_gbq, validate_upsert_key
-from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception, log_table
+from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
 from gscraper.utils.map import re_get, unique, to_array, align_array
-from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, cloc, apply_df
-from gscraper.utils.map import exists_one, rename_data, filter_data, chain_exists, data_empty
+from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, apply_df
+from gscraper.utils.map import exists_one, rename_data, filter_data, chain_exists
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
@@ -28,7 +29,7 @@ import functools
 import requests
 import time
 
-from typing import Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
+from typing import Dict, List, Literal, Optional, Tuple, Type, Union
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
 import json
@@ -53,9 +54,19 @@ MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
-ARGS, PAGES = 0, 1
-KEY, SHEET, FIELDS = "key", "sheet", "fields"
-TABLE, PID = "table", "project_id"
+CONTEXT_UNIQUE = ["context", "contextFields"]
+ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
+
+GCLOUD_AUTH_UNIQUE = ["account"]
+GCLOUD_QUERY_UNIQUE = ["queryInfo"]
+GCLOUD_UPLOAD_UNIQUE = ["uploadInfo", "reauth", "audience", "credentials"]
+GLOUD_UNIQUE = GCLOUD_AUTH_UNIQUE + GCLOUD_QUERY_UNIQUE + GCLOUD_UPLOAD_UNIQUE
+
+SPIDER_UNIQUE = ["delay", "progress", "cookies"]
+ASYNC_UNIQUE = ["numTasks", "maxLimit", "apiRedirect", "redirectUnit"]
+ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
+
+SUCCESS_RESULT = [{"response": "completed"}]
 
 
 ###################################################################
@@ -175,10 +186,7 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
 ############################## Spider #############################
 ###################################################################
 
-ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
-SPIDER_UNIQUE = ["context", "contextFields", "delay", "progress", "cookies", "queryInfo"]
-
-class Spider(Parser, Iterator):
+class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "spider"
@@ -211,14 +219,21 @@ class Spider(Parser, Iterator):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
-                queryInfo: GspreadReadInfo=dict(), **context):
-        Parser.__init__(self, **self.from_locals(locals(), drop=ITERATOR_UNIQUE+SPIDER_UNIQUE))
-        Iterator.__init__(self, iterateUnit=iterateUnit, interval=interval, fromNow=fromNow)
+                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(), **context):
+        Parser.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ITERATOR_UNIQUE+SPIDER_UNIQUE+GLOUD_UNIQUE))
+        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
+        self.interval = interval if interval else self.interval
+        self.fromNow = fromNow if notna(fromNow) else self.fromNow
         self.delay = delay
         self.progress = progress
         self.cookies = cookies
         self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
-        self.set_query(queryInfo, **context)
+        if queryInfo:
+            self.set_query(queryInfo, account)
+        if uploadInfo:
+            gcloud_auth = dict(reauth=reauth, audience=audience, account=account, credentials=credentials)
+            self.update_exists(dict(uploadInfo=uploadInfo), **gcloud_auth)
         self._disable_warnings()
 
     def _disable_warnings(self):
@@ -258,31 +273,33 @@ class Spider(Parser, Iterator):
 
     def requests_task(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        def wrapper(self: Spider, *args, self_var=True, **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
-            data = func(self, *args, **context)
+            data = func(self, *args, **PROXY_CONTEXT(**context))
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
     def requests_session(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        def wrapper(self: Spider, *args, self_var=True, **context):
             context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             with requests.Session() as session:
-                data = func(self, *args, session=session, **context)
+                data = func(self, *args, session=session, **PROXY_CONTEXT(**context))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
-    def _with_data(self, data: Data, uploadInfo: Optional[UploadInfo]=dict(), **context):
+    def _with_data(self, data: Data, uploadInfo: Optional[GCloudUploadInfo]=dict(),
+                    alertMessage=False, alertName=str(), nateonUrl=str(), **context):
         if self.localSave: self.save_data(data, ext="dataframe")
         self.upload_data(data, uploadInfo, **context)
+        self.alert_message(data, alertMessage, alertName, nateonUrl, **context)
 
     def requests_limit(func):
         @functools.wraps(func)
@@ -364,7 +381,7 @@ class Spider(Parser, Iterator):
         return iterator, context
 
     def _init_count(self, *args, count: Pagination, progress=True, **context) -> Tuple[List[Context],Context]:
-        if not_na(context.get("size")): pass
+        if notna(context.get("size")): pass
         elif context.get("interval"):
             return self._gather_count_by_date(*args, progress=progress, **context)
         elif isinstance(count, str):
@@ -526,115 +543,10 @@ class Spider(Parser, Iterator):
             if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise requests.ConnectionError(INVALID_STATUS_MSG(self.where))
 
-    ###################################################################
-    ############################ Google API ###########################
-    ###################################################################
-
-    def gcloud_authorized(func):
-        @functools.wraps(func)
-        def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
-            if not authorization:
-                authorization = fetch_gcloud_authorization(redirectUrl, account)
-            return func(
-                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **context)
-        return wrapper
-
-    def set_query(self, queryInfo: GspreadReadInfo=dict(), account: Account=dict(), **context):
-        if not queryInfo: return
-        for queryContext in queryInfo.values():
-            if len(kloc(queryContext, [KEY, SHEET, FIELDS], if_null="drop")) == 3:
-                self.set_gs_query(**queryContext, account=account)
-
-    def upload_data(self, data: TabularData, uploadInfo: UploadInfo=dict(), reauth=False,
-                    account: Account=dict(), credentials: IDTokenCredentials=None, **context):
-        if data_empty(data) or not uploadInfo: return
-        context = UPLOAD_CONTEXT(**context)
-        for uploadContext in uploadInfo.values():
-            if len(kloc(uploadContext, [KEY, SHEET], if_null="drop")) == 2:
-                self.upload_gspread(data=data, **uploadContext, account=account, **context)
-            elif len(kloc(uploadContext, [TABLE, PID], if_null="drop")) == 2:
-                self.upload_gbq(data=data, **uploadContext, reauth=reauth, credentials=credentials, **context)
-
-    ###################################################################
-    ########################## Google Spread ##########################
-    ###################################################################
-
-    def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, str_cols: NumericiseIgnore=list(),
-                    arr_cols: Sequence[IndexLabel]=list(), account: Account=dict(), **context):
-        data = read_gspread(key, sheet, account, fields=cast_tuple(fields), if_null="drop",
-                            numericise_ignore=str_cols, return_type="dataframe", rename=self.get_rename_map(**context))
-        self.logger.info(log_table(data, dump=self.logJson))
-        for field in cast_tuple(fields):
-            values = list(data[field]) if field in data else None
-            if (len(values) == 1) and (field not in arr_cols): values = values[0]
-            self.update({field:values})
-
-    @Parser.catch_exception
-    def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["fail","replace","append"]="append",
-                        base_sheet=str(), cell=str(), account: Account=dict(), clear: _PASS=None, **context):
-        data = self.map_gs_data(data, **context)
-        if base_sheet:
-            data = self.map_gs_base(data, self.read_gs_base(key, base_sheet, account=account), **context)
-        self.checkpoint(sheet, where="upload_gspread", msg={"key":key, "sheet":sheet, "mode":mode, "data":data}, save=data)
-        self.logger.info(log_table(data, key=key, sheet=sheet, dump=self.logJson))
-        cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
-        update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
-
-    def map_gs_data(self, data: pd.DataFrame, **context) -> pd.DataFrame:
-        return data
-
-    def read_gs_base(self, key: str, sheet: str, str_cols: NumericiseIgnore=list(),
-                    account: Account=dict(), **context) -> pd.DataFrame:
-        data = read_gspread(key, sheet, account=account, numericise_ignore=str_cols, rename=self.get_rename_map(**context))
-        self.logger.info(log_table(data, key=key, sheet=sheet, dump=self.logJson))
-        return data
-
-    def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, **context) -> pd.DataFrame:
-        return cloc(data, base.columns, if_null="drop")
-
-    ###################################################################
-    ######################### Google Bigquery #########################
-    ###################################################################
-
-    @Parser.catch_exception
-    def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame,
-                    mode: Literal["fail","replace","append","upsert"]="append",
-                    schema: Optional[BigQuerySchema]=None, progress=True, partition=str(),
-                    partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
-                    reauth=False, account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
-        schema = schema if schema and is_records(schema) else self.get_gbq_schema(mode=mode, schema=schema, **context)
-        data = self.map_gbq_data(data, schema=schema, **context)
-        context = dict(project_id=project_id, reauth=reauth, account=account, credentials=credentials)
-        if mode == "upsert":
-            data = self.map_gbq_base(data, self.read_gbq_base(query=table, **context), schema=schema, **context)
-        self.checkpoint(table, where="upload_gbq", msg={"table":table, "pid":project_id, "mode":mode, "data":data}, save=data)
-        self.logger.info(log_table(data, table=table, pid=project_id, mode=mode, schema=schema, dump=self.logJson))
-        to_gbq(table, project_id, data, if_exists=("replace" if mode == "upsert" else mode), schema=schema, progress=progress,
-                partition=partition, partition_by=partition_by, **context)
-
-    def get_gbq_schema(self, mode: Literal["fail","replace","append","upsert"]="append", **context) -> BigQuerySchema:
-        ...
-
-    def map_gbq_data(self, data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
-        columns = (field["name"] for field in schema) if schema else tuple()
-        return cloc(data, columns=columns, if_null="drop")
-
-    def read_gbq_base(self, query: str, project_id: str, **context) -> pd.DataFrame:
-        return read_gbq(query, project_id, **context)
-
-    def map_gbq_base(self, data: pd.DataFrame, base: pd.DataFrame, key=str(),
-                    schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
-        key = validate_upsert_key(data, base, key, schema)
-        data = apply_df(data, apply=(lambda x: None if x == str() else x), all_cols=True)
-        data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
-        return data[data[key].notna()].drop_duplicates(key)
-
 
 ###################################################################
 ########################### Async Spider ##########################
 ###################################################################
-
-ASYNC_UNIQUE = ["context", "contextFields", "numTasks", "maxLimit", "apiRedirect", "redirectUnit", "queryInfo"]
 
 class AsyncSpider(Spider):
     __metaclass__ = ABCMeta
@@ -673,14 +585,20 @@ class AsyncSpider(Spider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
-                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, queryInfo: GspreadReadInfo=dict(), **context):
-        Spider.__init__(self, **self.from_locals(locals(), drop=ASYNC_UNIQUE))
+                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
+                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(), **context):
+        Spider.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ASYNC_UNIQUE+GLOUD_UNIQUE))
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
-        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit, strict=False)
+        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
         self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
-        self.set_query(queryInfo, **context)
+        if queryInfo:
+            self.set_query(queryInfo, account)
+        if uploadInfo:
+            gcloud_auth = exists_dict(reauth=reauth, audience=audience, account=account, credentials=credentials)
+            self.update(uploadInfo=uploadInfo, **gcloud_auth)
 
     ###################################################################
     ########################## Async Managers #########################
@@ -688,27 +606,27 @@ class AsyncSpider(Spider):
 
     def asyncio_task(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
-            semaphore = self.asyncio_semaphore(**context)
+            semaphore = self.asyncio_semaphore(**PROXY_CONTEXT(**context))
             data = await func(self, *args, semaphore=semaphore, **context)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
     def asyncio_session(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
             context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
-                data = await func(self, *args, session=session, semaphore=semaphore, **context)
+                data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
@@ -723,7 +641,7 @@ class AsyncSpider(Spider):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if "exception" in self.debug:
+                if ("exception" in self.debug) or ("all" in self.debug):
                     self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
                     raise exception
                 self.log_errors(*args, **context)
@@ -773,7 +691,7 @@ class AsyncSpider(Spider):
 
     async def _init_count(self, *args, count: Pagination, progress=True,
                         **context) -> Tuple[List[Context],Context]:
-        if not_na(context.get("size")): pass
+        if notna(context.get("size")): pass
         elif context.get("interval"):
             return await self._gather_count_by_date(*args, progress=progress, **context)
         elif isinstance(count, str):
@@ -933,7 +851,7 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, message=str(), redirectUnit: Unit=1, progress=True,
+    async def redirect(self, *args, redirectUnit: Unit=1, progress=True,
                         fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
         redirectArgs = redirectArgs if is_array(self.redirectArgs) else self.iterateArgs
@@ -1124,8 +1042,6 @@ class BaseLogin(LoginSpider):
 ######################## Encrypted Spiders ########################
 ###################################################################
 
-ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
-
 class EncryptedSpider(Spider):
     __metaclass__ = ABCMeta
     asyncio = False
@@ -1161,8 +1077,10 @@ class EncryptedSpider(Spider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
-                queryInfo: GspreadReadInfo=dict(), encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
+                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
+                encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
@@ -1180,16 +1098,16 @@ class EncryptedSpider(Spider):
 
     def login_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
                 self.login(session, **context)
                 if not self.sessionCookies: context["cookies"] = self.cookies
-                data = func(self, *args, session=session, **context)
+                data = func(self, *args, session=session, **PROXY_CONTEXT(**context))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
@@ -1208,14 +1126,15 @@ class EncryptedSpider(Spider):
 
     def api_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = API_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             with requests.Session() as session:
-                data = func(self, *args, session=session, **self.validate_secret(**dict(context, **self.decryptedKey)))
+                data = func(self, *args, session=session,
+                    **self.validate_secret(**dict(PROXY_CONTEXT(**context), **self.decryptedKey)))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
@@ -1269,8 +1188,10 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(),
-                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, queryInfo: GspreadReadInfo=dict(),
+                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
+                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
                 encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:
@@ -1278,7 +1199,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 
     def login_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, **context):
             context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             semaphore = self.asyncio_semaphore(**context)
@@ -1288,24 +1209,25 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 cookies = dict(cookies=dict(auth.cookies)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**ssl, **cookies) as session:
                     if not self.sessionCookies: context["cookies"] = self.cookies
-                    data = await func(self, *args, session=session, semaphore=semaphore, **context)
+                    data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 
     def api_session(func):
         @functools.wraps(func)
-        async def wrapper(self: EncryptedSpider, *args, self_var=True, uploadInfo: Optional[UploadInfo]=dict(), **context):
+        async def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = API_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"context":context})
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             async with aiohttp.ClientSession(**ssl) as session:
-                data = await func(self, *args, session=session, **self.validate_secret(**dict(context, **self.decryptedKey)))
+                data = await func(self, *args, session=session,
+                    **self.validate_secret(**dict(PROXY_CONTEXT(**context), **self.decryptedKey)))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, uploadInfo, **context)
+            self._with_data(data, **context)
             return data
         return wrapper
 

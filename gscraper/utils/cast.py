@@ -1,9 +1,11 @@
 from gscraper.base.types import _TYPE, TypeHint, Timezone, CastError
-from gscraper.base.types import get_type, not_na, is_bool_type, is_float_type, is_int_type
+from gscraper.base.types import get_type, is_bool_type, is_float_type, is_int_type
 from gscraper.base.types import is_datetime_type, is_time_type, is_timestamp_type, is_date_type
 from gscraper.base.types import is_str_type, is_list_type, is_tuple_type, is_set_type
 from gscraper.base.types import RegexFormat, MatchFunction
 from gscraper.base.types import DateFormat, DateNumeric, Timestamp
+
+from gscraper.utils import notna
 
 from typing import Any, Callable, List, Literal, Optional, Set, Tuple, Union
 from dateutil.parser import parse as dateparse
@@ -177,7 +179,7 @@ def cast_str(__object, default=str(), strict=True, match: Optional[Union[RegexFo
         elif isinstance(match, re.Pattern) and match.search(str(__object)): pass
         elif isinstance(match, str) and re.search(match, str(__object)): pass
         else: return default
-    return str(__object) if not_na(__object, strict=strict) else default
+    return str(__object) if notna(__object, strict=strict) else default
 
 
 def cast_id(__object, default=str()) -> str:
@@ -187,21 +189,21 @@ def cast_id(__object, default=str()) -> str:
 def cast_list(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> List:
     if isinstance(__object, List): return __object
     elif isinstance(__object, iter_type): return list(__object)
-    elif not_na(__object, strict=strict): return [__object]
+    elif notna(__object, strict=strict): return [__object]
     else: return list()
 
 
 def cast_tuple(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Tuple:
     if isinstance(__object, Tuple): return __object
     elif isinstance(__object, iter_type): return tuple(__object)
-    elif not_na(__object, strict=strict): return (__object,)
+    elif notna(__object, strict=strict): return (__object,)
     else: return tuple()
 
 
 def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
     if isinstance(__object, Set): return __object
     elif isinstance(__object, iter_type): return set(__object)
-    elif not_na(__object, strict=strict): return {__object}
+    elif notna(__object, strict=strict): return {__object}
     else: return set()
 
 
@@ -217,7 +219,7 @@ def cast_object(__object, __type: TypeHint, default=None, strict=True,
     if is_str_type(__type): return cast_str(__object, default=default, strict=strict, match=match)
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict, trunc=trunc)
-    elif is_bool_type(__type): return not_na(__object, strict=strict)
+    elif is_bool_type(__type): return notna(__object, strict=strict)
     elif is_datetime_type(__type): return cast_datetime(__object, default=default, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     elif is_date_type(__type): return cast_date(__object, default=default, from_ordinal=from_ordinal)
     elif is_list_type(__type): return cast_list(__object, strict=strict, iter_type=iter_type)

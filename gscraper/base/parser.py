@@ -1,17 +1,18 @@
 from __future__ import annotations
 from gscraper.base import SCHEMA_CONTEXT
-from gscraper.base.session import CustomDict, CustomRecords, BaseSession
+from gscraper.base.session import TypedDict, CustomRecords, BaseSession
 
-from gscraper.base.types import _KT, _VT, _PASS, Context, TypeHint, LogLevel, IndexLabel, Timezone, RenameMap
+from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
-from gscraper.base.types import not_na, get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type
+from gscraper.base.types import get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
+from gscraper.utils import notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_tuple
 from gscraper.utils.date import is_daily_frequency
 from gscraper.utils.logs import log_data
 from gscraper.utils.map import safe_apply, include_text, get_scala, exists_one, union
-from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, hier_get
+from gscraper.utils.map import kloc, chain_dict, drop_dict, hier_get
 from gscraper.utils.map import vloc, groupby_records, drop_duplicates
 from gscraper.utils.map import concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data
 from gscraper.utils.map import select_one, hier_select, exists_source, include_source, groupby_source
@@ -147,46 +148,45 @@ SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
 PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
 
 
-class Apply(CustomDict):
+class Apply(TypedDict):
     def __init__(self, func: Union[ApplyFunction, str], default: Optional[Any]=None, **context):
-        super().__init__(func=func, **exists_dict(dict(default=default), strict=True), **context)
+        super().__init__(dict(func=func), default=default)
+        self.update(context)
 
 
-class Match(CustomDict):
+class Match(TypedDict):
     def __init__(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                value: Optional[Any]=None, text: Optional[_VT]=None, flip: Optional[bool]=None,
-                default: Optional[bool]=None, strict: Optional[bool]=None, exact: Optional[bool]=None,
-                how: Optional[Literal["any","all"]]=None, query: Optional[_KT]=None, **context):
-        super().__init__(**exists_dict(
-            dict(func=func, path=path, value=value, text=text, flip=flip, default=default,
-                strict=strict, exact=exact, how=how, query=query), strict=True), **context)
+                query: Optional[_KT]=None, value: Optional[Any]=None, text: Optional[_VT]=None,
+                flip: Optional[bool]=None, default: Optional[bool]=False, strict: Optional[bool]=False,
+                exact: Optional[bool]=False, how: Optional[Literal["any","all"]]=None, **context):
+        super().__init__(
+            func=func, path=path, value=value, text=text, flip=flip, default=default,
+            strict=strict, exact=exact, how=how, query=query)
+        self.update(context)
 
 
 class Exists(Apply):
-    def __init__(self, keys=str(), type: Optional[Type]=None, default: Optional[bool]=None,
+    def __init__(self, keys: _KT=list(), type: Optional[Type]=None, default: Optional[bool]=None,
                 strict: Optional[bool]=None):
-        super().__init__(func=__EXISTS__, **exists_dict(
-            dict(keys=keys, type=type, default=default, strict=strict), strict=True))
+        super().__init__(func=__EXISTS__, keys=keys, type=type, default=default, strict=strict)
 
 
 class Join(Apply):
     def __init__(self, keys: _KT=list(), sep=',', split=','):
-        super().__init__(func=__JOIN__, **exists_dict(dict(keys=keys, sep=sep, split=split), strict=True))
+        super().__init__(func=__JOIN__, keys=keys, sep=sep, split=split)
 
 
 class Rename(Apply):
     def __init__(self, rename_map: RenameMap, path: Optional[_KT]=None,
                 if_null: Optional[Union[Literal["null","pass","error"],Any]]=None):
-        super().__init__(func=__RENAME__, rename_map=rename_map, **exists_dict(
-            dict(path=path, if_null=if_null), strict=True))
+        super().__init__(func=__RENAME__, rename_map=rename_map, path=path, if_null=if_null)
 
 
 class Split(Apply):
     def __init__(self, sep=',', maxsplit: Optional[int]=None, type: Optional[Type]=None,
                 default: Optional[bool]=None, strict: Optional[bool]=None, index: Optional[int]=None):
-        super().__init__(func=__SPLIT__, **exists_dict(
-            dict(sep=sep, maxsplit=maxsplit, type=type, default=default, strict=strict,
-                index=index), strict=True))
+        super().__init__(func=__SPLIT__,
+            sep=sep, maxsplit=maxsplit, type=type, default=default, strict=strict, index=index)
 
 
 class Map(Apply):
@@ -195,17 +195,17 @@ class Map(Apply):
                 rankby: Optional[Literal["page","start"]]=None,
                 page: Optional[int]=None, start: Optional[int]=None,
                 submatch: Optional[MatchFunction]=None, discard: Optional[bool]=None) -> Data:
-        super().__init__(func=__MAP__, schema=schema, **exists_dict(
-            dict(root=root, match=match, groupby=groupby, groupSize=groupSize,
-                rankby=rankby, page=page, start=start, submatch=submatch, discard=discard), strict=False))
+        super().__init__(func=__MAP__,
+            schema=schema, root=root, match=match, groupby=groupby, groupSize=groupSize,
+            rankby=rankby, page=page, start=start, submatch=submatch, discard=discard)
 
 
-class Field(CustomDict):
+class Field(TypedDict):
     def __init__(self, name: _KT, path: SchemaPath, type: TypeHint, mode: str, desc: Optional[str]=None,
                 cast: Optional[bool]=None, strict: Optional[bool]=None, default: Optional[Any]=None,
                 apply: Optional[Apply]=None, match: Optional[Match]=None, how: Optional[PathType]=None):
-        super().__init__(name=name, path=path, type=type, mode=mode, desc=desc, **exists_dict(
-            dict(cast=cast, strict=strict, default=default, apply=apply, match=match, how=how), strict=True))
+        super().__init__(dict(name=name, path=path, type=type, mode=mode, desc=desc),
+            cast=cast, strict=strict, default=default, apply=apply, match=match, how=how)
 
 
 class Schema(CustomRecords):
@@ -223,14 +223,14 @@ class Schema(CustomRecords):
         return drop_duplicates(self, "name", keep=keep) if keep != True else self
 
 
-class SchemaContext(CustomDict):
+class SchemaContext(TypedDict):
     def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None):
-        super().__init__(schema=schema, **exists_dict(dict(root=root, match=match), strict=True))
+        super().__init__(dict(schema=schema), root=root, match=match)
 
 
-class SchemaInfo(CustomDict):
+class SchemaInfo(TypedDict):
     def __init__(self, **context: SchemaContext):
-        super().__init__(**context)
+        super().__init__(context)
 
     def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
                     keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
@@ -269,16 +269,16 @@ class Parser(BaseSession):
     def __init__(self, fields: IndexLabel=list(),
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                **context):
+                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False, **context):
         BaseSession.__init__(self, **self.from_locals(locals()))
         self.schemaInfo = validate_schema_info(self.schemaInfo)
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
+    def get_rename_map(self, to: Optional[Literal["desc","name","en","ko"]]=None, schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first", **context) -> RenameMap:
         if to in ("desc", "name"):
             __from, __to = ("desc", "name") if to == "name" else ("name", "desc")
-            return {field[__from]: field[__to] for field in self.get_unique_fields(schema_names=schema_names, keep=keep)}
+            schema = self.schemaInfo.get_schema(schema_names=schema_names, keep=keep)
+            return {field[__from]: field[__to] for field in schema}
         else: return dict()
 
     ###################################################################
@@ -290,7 +290,7 @@ class Parser(BaseSession):
         def wrapper(self: Parser, response: Any, *args, **context):
             is_valid = self.is_valid_response(response)
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
-            suffix = f"_{context.get('index')}" if context.get("index") else str()
+            suffix = f"_{context['index']}" if context.get("index") else str()
             self.checkpoint("parse"+suffix, where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **context)
             return data
@@ -509,7 +509,7 @@ def _cast_value(value: _VT, type: Optional[Type]=None, default=None, strict=True
 
 def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
                 default=None, apply: Apply=dict(), query: Context=dict()) -> _VT:
-    default = _from_dict(__m, default) if not_na(default) else default
+    default = _from_dict(__m, default) if notna(default) else default
     if is_array(path): value = hier_get(__m, path, default, empty=False)
     elif isinstance(path, Callable): value = safe_apply(__m, path, default, **query)
     else: value = path
@@ -560,9 +560,9 @@ def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Op
 
 
 def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-                default=False, strict=False, exact=False, how: Literal["any","all"]="any",
-                query: Optional[_KT]=None, **context) -> bool:
+                query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
+                flip=False, default=False, strict=False, exact=False,
+                how: Literal["any","all"]="any", **context) -> bool:
     if not (func or path or value or query): return True
     elif query: __m = hier_get(context, query)
     elif path: __m = hier_get(__m, path)
@@ -570,9 +570,9 @@ def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_K
     toggle = (lambda x: not x) if flip else (lambda x: bool(x))
     if func: return toggle(_apply_schema(__m, func, default=default, **context))
     elif isinstance(value, bool): return toggle(value)
-    elif not_na(value, strict=True): return toggle(__m == value)
-    elif not_na(text, strict=True): return toggle(include_text(__m, text, exact=exact, how=how))
-    else: return toggle(not_na(__m, strict=strict))
+    elif notna(value): return toggle(__m == value)
+    elif notna(text): return toggle(include_text(__m, text, exact=exact, how=how))
+    else: return toggle(notna(__m, strict=strict))
 
 
 ###################################################################
@@ -595,8 +595,8 @@ def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     else: raise ValueError(INVALID_APPLY_SPECIAL_MSG(func, name))
 
 
-def __exists__(__object, keys: _KT=list(), type: Optional[Type]=None, default=None, strict=True, **context) -> Any:
-    value = exists_one(*kloc(__object, keys, if_null="drop", values_only=True), None)
+def __exists__(__object, keys: _KT=list(), type: Optional[Type]=None, default=None, strict=False, **context) -> Any:
+    value = exists_one(*kloc(__object, keys, if_null="drop", values_only=True))
     return _cast_value(value, type, default=default, strict=strict, **context)
 
 
@@ -762,19 +762,19 @@ def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=N
 
 
 def _match_df(df: pd.DataFrame, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-            value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-            default=False, strict=False, exact=False, how: Literal["any","all"]="any",
-            query: Optional[_KT]=None, **context) -> pd.DataFrame:
+            query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
+            flip=False, default=False, strict=False, exact=False,
+            how: Literal["any","all"]="any", **context) -> pd.DataFrame:
     if not (func or path or value or query): return df
     elif query: return _match_dict(context, func, query, value, flip, default, strict)
     elif path: df = df[path]
 
     if func: condition = safe_apply_df(df, func, **context)
     elif isinstance(value, bool): return df if value else pd.DataFrame(columns=df.columns)
-    elif not_na(value, strict=True): condition = (df == value)
-    elif not_na(text, strict=True):
+    elif notna(value): condition = (df == value)
+    elif notna(text):
         condition = safe_apply_df(df, include_text, value=text, exact=exact, how=how)
-    else: condition = safe_apply_df(df, lambda x: not_na(x, strict=strict), by="cell")
+    else: condition = safe_apply_df(df, lambda x: exists(x, strict=strict), by="cell")
 
     if isinstance(condition, pd.DataFrame):
         return df[~df.any(axis=1)] if flip else df[df.any(axis=1)]
@@ -856,7 +856,7 @@ def _map_html_field(source: Tag, __base: Dict, name: _KT, path: SchemaPath, how:
 
 def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
                 default=None, apply: Apply=dict(), query: Context=dict()) -> Union[Tag,Any]:
-    default = _from_html(source, default) if not_na(default) else default
+    default = _from_html(source, default) if notna(default) else default
     if is_array(path): value = hier_select(source, path, default, empty=False)
     elif isinstance(path, Callable): value = safe_apply(source, path, default, **query)
     else: value = path
@@ -907,16 +907,16 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
 
 
 def _match_html(source: Tag, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                value: Optional[_VT]=None, text: Optional[_VT]=None, flip=False,
-                default=False, strict=False, exact=False, how: Literal["any","all"]="any",
-                query: Optional[_KT]=None, **context) -> bool:
+                query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
+                flip=False, default=False, strict=False, exact=False,
+                how: Literal["any","all"]="any", **context) -> bool:
     if not (func or path or value or query): return True
     elif query: return _match_dict(context, func, query, value, flip, default, strict)
 
     toggle = (lambda x: not x) if flip else (lambda x: bool(x))
     if func: return toggle(_apply_schema(hier_select(source, path), func, default=default, **context))
     elif isinstance(value, bool): return toggle(value)
-    elif not_na(value, strict=True) or not_na(text, strict=True):
-        by = "text" if not_na(text, strict=True) else "source"
+    elif notna(value) or notna(text):
+        by = "text" if notna(text) else "source"
         return toggle(include_source(source, path, value=value, by=by, exact=exact, how=how))
     else: return toggle(exists_source(source, path, strict=strict))

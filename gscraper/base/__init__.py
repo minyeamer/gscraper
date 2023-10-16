@@ -1,14 +1,3 @@
-import re
-
-
-to_snake_case = lambda __s=str(): re.sub(r"(?<!^)(?=[A-Z])", '_', str(__s)).lower()
-to_camel_case = lambda __s=str(): ''.join([s.capitalize() if __i > 0 else s for __i, s in enumerate(str(__s).split('_'))])
-
-
-###################################################################
-############################# Context #############################
-###################################################################
-
 UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, by=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, fromNow=None, \
@@ -49,12 +38,14 @@ SCHEMA_CONTEXT = lambda schema=None, root=None, by=None, count=None, discard=Non
                         apply=None, match=None, how=None, query=None, **context: context
 
 
-UPLOAD_CONTEXT = lambda key=None, sheet=None, mode=None, base_sheet=None, cell=None, \
-                        table=None, project_id=None, schema=None, progress=None, \
+UPLOAD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
+                        default=None, head=None, headers=None, numericise_ignore=None, \
+                        table=None, project_id=None, schema=None, base_query=None, progress=None, \
                         partition=None, prtition_by=None, base=None, **context: context
 
 
-PROXY_CONTEXT = lambda queryInfo=None, uploadInfo=None, **context: context
+PROXY_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, \
+                        **context: context
 
 
 REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, renameMap=None, logFile=None, **context: \

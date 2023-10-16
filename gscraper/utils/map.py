@@ -1,9 +1,11 @@
-from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint, Index, IndexLabel, Keyword, Unit
-from gscraper.base.types import IndexedSequence, Records, MappingData, TabularData, Data, HtmlData
-from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RenameMap, RegexFormat
-from gscraper.base.types import not_na, is_na, is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
+from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint
+from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence
+from gscraper.base.types import Records, MappingData, TabularData, Data, HtmlData, RenameMap
+from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RegexFormat
+from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
 from gscraper.base.types import is_comparable, is_list_type, is_dict_type, is_records_type, is_dataframe_type
 
+from gscraper.utils import isna, notna, empty, exists
 from gscraper.utils.cast import cast_str, cast_datetime, cast_date, cast_list, cast_tuple, cast_set
 
 from typing import Any, Callable, Dict, List, Set
@@ -28,6 +30,11 @@ EXCLUDE = 1
 
 BETWEEN_RANGE_TYPE_MSG = "Between condition must be an iterable or a dictionary."
 
+
+###################################################################
+############################# Boolean #############################
+###################################################################
+
 __or = lambda *args: functools.reduce(lambda x,y: x|y, args)
 __and = lambda *args: functools.reduce(lambda x,y: x&y, args)
 union = lambda *arrays: functools.reduce(lambda x,y: x+y, arrays)
@@ -39,36 +46,78 @@ def allin(__object: Iterable) -> bool:
     return bool(tuple(__object)) and all(__object)
 
 
-def exists(__object, strict=False) -> bool:
-    if is_array(__object): return bool(__object) if strict else (len([__e for __e in __object if not_na(__e)]) > 0)
-    else: return not_na(__object, strict=strict)
-
-
-def is_empty(__object, strict=False) -> bool:
-    return (not exists(__object, strict=strict))
-
-
 def str_na(__object, strict=False) -> str:
     return str(__object) if exists(__object, strict=strict) else str()
 
 
+def df_empty(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") -> bool:
+    return isinstance(df, pd.DataFrame) and (df.dropna(axis=0, how=how) if drop_na else df).empty
+
+
 def df_exists(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") -> bool:
-    if not isinstance(df, pd.DataFrame): return False
-    return not (df.dropna(axis=0, how=how) if drop_na else df).empty
+    return isinstance(df, pd.DataFrame) and not (df.dropna(axis=0, how=how) if drop_na else df).empty
 
 
-def df_empty(df: pd.DataFrame, drop_na=True, how: Literal["any","all"]="all") -> bool:
-    if not isinstance(df, pd.DataFrame): return False
-    return (df.dropna(axis=0, how=how) if drop_na else df).empty
+def data_exists(data: Data, drop_na=False, how: Literal["any","all"]="all") -> bool:
+    if isinstance(data, (Dict,List,pd.DataFrame)):
+        return df_exists(data, drop_na, how) if isinstance(data, pd.DataFrame) else bool(data)
+    else: return False
 
 
-def data_exists(data: Data, drop_na=True, how: Literal["any","all"]="all") -> bool:
-    return df_exists(data, drop_na, how) if isinstance(data, pd.DataFrame) else bool(data)
+def data_empty(data: Data, drop_na=False, how: Literal["any","all"]="all") -> bool:
+    if isinstance(data, (Dict,List,pd.DataFrame)):
+        return df_empty(data, drop_na, how) if isinstance(data, pd.DataFrame) else (not data)
+    else: return False
 
 
-def data_empty(data: Data, drop_na=True, how: Literal["any","all"]="all") -> bool:
-    return df_empty(data, drop_na, how) if isinstance(data, pd.DataFrame) else (not data)
+def between(__object: Comparable, left=None, right=None,
+            inclusive: Literal["both","neither","left","right"]="both", **kwargs) -> bool:
+    match_left = ((left == None) or (__object >= left if inclusive in ["both","left"] else __object > left))
+    match_right = ((right == None) or (__object <= right if inclusive in ["both","right"] else __object < right))
+    return match_left & match_right
 
+
+###################################################################
+############################## String #############################
+###################################################################
+
+def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> Union[str,List[str]]:
+    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
+    if groups: return __pattern.findall(string)
+    catch = __pattern.search(string)
+    return __pattern.search(string).groups()[0] if catch else default
+
+
+def replace_map(string: str, strip=False, **context) -> str:
+    for __old, __new in context.items():
+        string = string.replace(__old, __new)
+    return string.strip() if strip else string
+
+
+def exists_text(string: Union[str,Sequence[str]], how: Literal["any","all"]="any") -> bool:
+    if isinstance(string, Sequence):
+        return (all(string) and string) if how == "all" else any(string)
+    else: return bool(string)
+
+
+def include_text(string: Union[str,Sequence[str]], value: Union[str,Sequence[str]]=str(),
+                exact=False, how: Literal["any","all"]="any") -> bool:
+    if is_array(string):
+        return exists_text([include_text(__s, value, exact=exact, how=how) for __s in string], how=how)
+    elif is_array(value):
+        return exists_text([include_text(string, __v, exact=exact, how=how) for __v in value], how=how)
+    elif not (isinstance(string, str) and isinstance(value, str)): return False
+    else: return (value == string) if exact else (value in string)
+
+
+def match_keywords(string: str, keywords: Sequence[str]) -> bool:
+    pattern = re.compile('|'.join(map(re.escape, keywords)))
+    return bool(pattern.search(string))
+
+
+###################################################################
+############################# Context #############################
+###################################################################
 
 def is_context_allowed(func: Callable) -> bool:
     for name, parameter in inspect.signature(func).parameters.items():
@@ -79,22 +128,6 @@ def is_context_allowed(func: Callable) -> bool:
 def safe_apply(__object, __applyFunc: ApplyFunction, default=None, **context) -> Any:
     try: return __applyFunc(__object, **context) if context and is_context_allowed(__applyFunc) else __applyFunc(__object)
     except: return default
-
-
-def safe_len(__object, default=0) -> int:
-    try: return len(__object)
-    except: return default
-
-
-def between(__object: Comparable, left=None, right=None,
-            inclusive: Literal["both","neither","left","right"]="both", **kwargs) -> bool:
-    match_left = ((left == None) or (__object >= left if inclusive in ["both","left"] else __object > left))
-    match_right = ((right == None) or (__object <= right if inclusive in ["both","right"] else __object < right))
-    return match_left & match_right
-
-
-def check(__values: Sequence[_VT], how: Literal["any","all"]="any") -> bool:
-    return (all(__values) and __values) if how == "all" else any(__values)
 
 
 def map_index(__indices: Index) -> Index:
@@ -120,38 +153,6 @@ def map_match(__keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]
     context = map_context(__keys, __matchFunc, __default, **context)
     return {__key: (__match if isinstance(__match, Callable) else lambda x: x == __match)
             for __key, __match in context.items()}
-
-
-###################################################################
-############################## String #############################
-###################################################################
-
-def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> Union[str,List[str]]:
-    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
-    if groups: return __pattern.findall(string)
-    catch = __pattern.search(string)
-    return __pattern.search(string).groups()[0] if catch else default
-
-
-def replace_map(string: str, strip=False, **context) -> str:
-    for __old, __new in context.items():
-        string = string.replace(__old, __new)
-    return string.strip() if strip else string
-
-
-def include_text(string: Union[str,Sequence[str]], value: Union[str,Sequence[str]]=str(),
-                exact=False, how: Literal["any","all"]="any") -> bool:
-    if is_array(string):
-        return check([include_text(__s, value, exact=exact, how=how) for __s in string], how=how)
-    elif is_array(value):
-        return check([include_text(string, __v, exact=exact, how=how) for __v in value], how=how)
-    elif not (isinstance(string, str) and isinstance(value, str)): return False
-    else: return (value == string) if exact else (value in string)
-
-
-def match_keywords(string: str, keywords: Sequence[str]) -> bool:
-    pattern = re.compile('|'.join(map(re.escape, keywords)))
-    return bool(pattern.search(string))
 
 
 ###################################################################
@@ -198,7 +199,7 @@ def flatten(*args, iter_type: _TYPE=(List,Set,Tuple)) -> List:
 def unique(*elements, strict=True, unroll=False) -> List:
     array = list()
     for __e in (flatten(*elements) if unroll else elements):
-        if not exists(__e, strict=strict): continue
+        if isna(__e, strict=strict): continue
         if __e not in array: array.append(__e)
     return array
 
@@ -211,13 +212,13 @@ def to_array(__object, default=None, dropna=False, strict=False, unique=False) -
     __s = cast_list(__object)
     if unique: return _unique(*__s, strict=strict)
     elif dropna: return [__e for __e in __s if exists(__e, strict=strict)]
-    elif not_na(default, strict=True):
+    elif notna(default):
         return [__e if exists(__e, strict=strict) else default for __e in __s]
     else: return __s
 
 
 def apply_array(__s: IndexedSequence, __indices: Optional[Index]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                all_indices=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> IndexedSequence:
+                apply: Optional[ApplyFunction]=None, all_indices=False, __default: _PASS=None, **context) -> IndexedSequence:
     __s = __s.copy()
     if all_indices: return [apply(__e) for __e in __s]
     for __i, __apply in map_context(__indices, __applyFunc, __default=apply, **context).items():
@@ -249,6 +250,11 @@ def fill_array(__s: Sequence, count: int, value=None) -> List:
 def filter_array(__s: Sequence, match: MatchFunction, apply: Optional[ApplyFunction]=None) -> Sequence:
     __apply = apply if apply else (lambda x: x)
     return [__apply(__e) for __e in __s if match(__s)]
+
+
+def safe_len(__object, default=0) -> int:
+    try: return len(__object)
+    except: return default
 
 
 def is_same_length(*args: IndexedSequence, empty=True) -> bool:
@@ -345,11 +351,10 @@ def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -
 
 
 def set_dict(__m: Dict, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-            if_exists: Literal["replace","ignore"]="replace", empty=True, inplace=True, **context) -> Dict:
+            if_exists: Literal["replace","ignore"]="replace", inplace=True, **context) -> Dict:
     if not inplace: __m = __m.copy()
     for __key, __value in dict(zip(cast_tuple(__keys), cast_tuple(__values)), **context).items():
         if (if_exists == "ignore") and (__key in __m): continue
-        elif (not empty) and is_empty(__value, strict=True): continue
         else: __m[__key] = __value
     if not inplace: return __m
 
@@ -363,7 +368,7 @@ def drop_dict(__m: Dict, keys: _KT, inplace=False) -> Dict:
 
 
 def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                all_keys=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> Dict:
+                apply: Optional[ApplyFunction]=None, all_keys=False, __default: _PASS=None, **context) -> Dict:
     __m = __m.copy()
     if all_keys: return {__key: apply(__values) for __key, __values in __m.items()}
     for __key, __apply in map_context(__keys, __applyFunc, __default=apply, **context).items():
@@ -405,6 +410,10 @@ def flip_dict(__m: Dict) -> Dict:
     return {__v: __k for __k, __v in __m.items()}
 
 
+def notna_dict(__m: Optional[Dict]=dict(), strict=True, **context) -> Dict:
+    return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict)}
+
+
 def exists_dict(__m: Optional[Dict]=dict(), strict=False, **context) -> Dict:
     return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict)}
 
@@ -418,12 +427,12 @@ def hier_get(__m: Dict, __path: _KT, default=None, apply: Optional[ApplyFunction
     except: return default
     value = safe_apply(__m, apply, default, **context) if apply else __m
     if __type and not isinstance(value, __type): return default
-    return value if empty or exists(value, strict=strict) else default
+    return value if empty or notna(value, strict=strict) else default
 
 
 def hier_set(__m: Dict, __path: _KT, value: _VT, empty=True, strict=True, inplace=True) -> Dict:
     if not inplace: __m = __m.copy()
-    if empty or exists(value, strict=strict):
+    if empty or notna(value, strict=strict):
         try:
             for __key in cast_tuple(__path)[:-1]:
                 __m = __m[__key]
@@ -436,7 +445,7 @@ def hier_get_set(__m: Dict, __get_path: _KT, __set_path: _KT, default=None,
                 apply: Optional[ApplyFunction]=None, __type: Optional[_TYPE]=None,
                 empty=True, strict=True, inplace=True, **context) -> Dict:
     value = hier_get(__m, __get_path, default, apply, __type, empty, strict, **context)
-    if empty or exists(value, strict=strict):
+    if empty or notna(value, strict=strict):
         return hier_set(__m, __set_path, value, inplace=inplace)
     elif not inplace: return __m
 
@@ -489,8 +498,8 @@ def rename_records(__r: Records, rename: RenameMap) -> Records:
 
 
 def set_records(__r: Records, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-                if_exists: Literal["replace","ignore"]="replace", empty=True, **context) -> Records:
-    return [set_dict(__m, __keys, __values, if_exists=if_exists, empty=empty, inplace=False, **context) for __m in __r]
+                if_exists: Literal["replace","ignore"]="replace", **context) -> Records:
+    return [set_dict(__m, __keys, __values, if_exists=if_exists, inplace=False, **context) for __m in __r]
 
 
 def drop_records(__r: Records, keys: _KT) -> Records:
@@ -498,12 +507,12 @@ def drop_records(__r: Records, keys: _KT) -> Records:
 
 
 def apply_records(__r: List[Dict], __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                    all_keys=False, apply: Optional[ApplyFunction]=None, scope: Literal["keys","dict"]="keys",
+                    apply: Optional[ApplyFunction]=None, all_keys=False, scope: Literal["keys","dict"]="keys",
                     __default=None, **context) -> Records:
     if scope == "keys":
         return [apply_dict(__m, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context) for __m in __r]
     elif scope == "dict":
-        return [apply(__m, apply) for __m in __r]
+        return [apply(__m) for __m in __r]
     else: return list()
 
 
@@ -605,17 +614,18 @@ def align_records(__r: Records, default=None, forward=True, reorder=True) -> Rec
 
 def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
         reorder=True) -> pd.DataFrame:
-    columns = inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))
-    if not columns: return df if if_null != "drop" else pd.DataFrame()
-    elif (len(df.columns) != len(columns)) and if_null != "drop":
+    __inter = inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))
+    if not __inter: return pd.DataFrame() if if_null == "drop" else df
+    elif (if_null == "pass") and (len(columns) != len(__inter)):
         if reorder: df = pd.concat([pd.DataFrame(columns=columns),df])
-        else: df = pd.concat([pd.DataFrame(columns=unique(*df.columns,*columns)),df]).fillna(default)
-    else: return df[columns]
+        else: df = pd.concat([pd.DataFrame(columns=unique(*__inter,*columns)),df])
+        return df.where(pd.notna(df), default)
+    else: return df[__inter]
 
 
 def to_dataframe(__object: MappingData) -> pd.DataFrame:
     if isinstance(__object, pd.DataFrame): return __object
-    elif is_records(__object, empty=True): return pd.DataFrame(align_records(__object))
+    elif is_records(__object, empty=True): return pd.DataFrame(align_records(__object)).convert_dtypes()
     elif isinstance(__object, dict): return pd.DataFrame([__object])
     else: return pd.DataFrame()
 
@@ -634,11 +644,10 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
 
 
 def set_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __values: Optional[_VT]=list(),
-            if_exists: Literal["replace","ignore"]="replace", empty=True, **context) -> pd.DataFrame:
+            if_exists: Literal["replace","ignore"]="replace", **context) -> pd.DataFrame:
     df = df.copy()
     for __column, __value in dict(zip(cast_tuple(__columns), cast_tuple(__values)), **context).items():
         if (if_exists == "ignore") and (__column in df): continue
-        elif (not empty) and is_empty(__value, strict=True): continue
         else: df[__column] = __value
     return df
 
@@ -648,7 +657,7 @@ def drop_df(df: pd.DataFrame, columns: IndexLabel) -> pd.DataFrame:
 
 
 def apply_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-            all_cols=False, apply: Optional[ApplyFunction]=None, __default: _PASS=None, **context) -> pd.DataFrame:
+            apply: Optional[ApplyFunction]=None, all_cols=False, __default: _PASS=None, **context) -> pd.DataFrame:
     df = df.copy()
     if all_cols: return df.apply({__column: apply for __column in df.columns})
     context = map_context(__columns, __applyFunc, __default=apply, **context)
@@ -732,7 +741,7 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
 
 def fillna_each(__object: Union[pd.DataFrame,pd.Series],
                 default: Union[pd.DataFrame,pd.Series,Sequence,Any]=None) -> Union[pd.DataFrame,pd.Series]:
-    if is_na(default, strict=True): return __object
+    if isna(default): return __object
     elif isinstance(default, (pd.DataFrame, pd.Series)): default.index = __object.index
     elif is_array(default): default = pd.Series(default, index=__object.index)
     else: return __object.fillna(default)
@@ -884,7 +893,15 @@ def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', inde
     except: return default
     data = safe_apply(data, apply, default, **context) if apply else data
     if __type and not isinstance(data, __type): return default
-    return data if empty or exists(data, strict=strict) else default
+    return data if empty or notna(data, strict=strict) else default
+
+
+def notna_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
+                by: Literal["source","text"]="source", strip=True, replace: RenameMap=dict(),
+                strict=True) -> bool:
+    context = dict(key=key, sep=sep, index=index, by=by, lines="raw", strip=strip, replace=replace)
+    source = hier_select(source, selector, **context)
+    return notna(source, strict=strict)
 
 
 def exists_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optional[Unit]=0,
@@ -892,7 +909,7 @@ def exists_source(source: Tag, selector: _KT, key=str(), sep=' > ', index: Optio
                     strict=False) -> bool:
     context = dict(key=key, sep=sep, index=index, by=by, lines="raw", strip=strip, replace=replace)
     source = hier_select(source, selector, **context)
-    return not_na(source, strict=strict)
+    return notna(source, strict=strict)
 
 
 def _get_class_name(selector: _KT) -> str:
@@ -957,6 +974,12 @@ def groupby_source(__s: List[Tag], groupby: Union[_KT,Dict], sep=' > ', index: O
 ############################ Multitype ############################
 ###################################################################
 
+def notna_one(*args, strict=True) -> Any:
+    for arg in args:
+        if notna(arg, strict=strict): return arg
+    if args: return args[-1]
+
+
 def exists_one(*args, strict=False) -> Any:
     for arg in args:
         if exists(arg, strict=strict): return arg
@@ -988,7 +1011,8 @@ def multitype_allowed(func):
         if not return_type: return func(data, *args, **kwargs)
         if convert_first: data, return_type = convert_data(data, return_type), None
         data = func(data, *args, **kwargs)
-        return convert_data(data, return_type)
+        if not convert_first: data = convert_data(data, return_type)
+        return data
     return wrapper
 
 
@@ -1055,11 +1079,11 @@ def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["
 
 @multitype_allowed
 def set_data(data: MappingData, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-            if_exists: Literal["replace","ignore"]="replace", empty=True,
+            if_exists: Literal["replace","ignore"]="replace",
             return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
-    if is_records(data): return set_records(data, __keys, __values, if_exists=if_exists, empty=empty, **context)
-    elif isinstance(data, pd.DataFrame): return set_df(data, __keys, __values, if_exists=if_exists, empty=empty, **context)
-    elif isinstance(data, Dict): return set_dict(data, __keys, __values, if_exists=if_exists, empty=empty, inplace=False, **context)
+    if is_records(data): return set_records(data, __keys, __values, if_exists=if_exists, **context)
+    elif isinstance(data, pd.DataFrame): return set_df(data, __keys, __values, if_exists=if_exists, **context)
+    elif isinstance(data, Dict): return set_dict(data, __keys, __values, if_exists=if_exists, inplace=False, **context)
     else: return data
 
 
@@ -1076,13 +1100,13 @@ def drop_data(data: MappingData, __keys: Optional[_KT]=list(),
 @multitype_rename
 @multitype_filter
 def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                all_keys=False, apply: Optional[ApplyFunction]=None, fields: Optional[Union[_KT,Index]]=list(),
+                apply: Optional[ApplyFunction]=None, all_keys=False, fields: Optional[Union[_KT,Index]]=list(),
                 default=None, if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
                 rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
-    if is_records(data): return apply_records(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
-    elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, all_cols=all_keys, apply=apply, **context)
-    elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, all_keys=all_keys, apply=apply, **context)
-    elif is_array(data): return apply_array(data, __keys, __applyFunc, all_indices=all_keys, apply=apply, **context)
+    if is_records(data): return apply_records(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
+    elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, apply=apply, all_cols=all_keys, **context)
+    elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
+    elif is_array(data): return apply_array(data, __keys, __applyFunc, apply=apply, all_indices=all_keys, **context)
     else: return data
 
 

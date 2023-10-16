@@ -1,9 +1,9 @@
-from typing import Callable, Hashable, Literal, Optional, Sequence, Tuple, Type, TypedDict, TypeVar, Union
+from typing import Callable, Hashable, Literal, Optional, Sequence, Tuple, Type, TypeVar, Union
 from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
 from bs4.element import Tag
 from datetime import datetime, date, time, timedelta
-from pandas import DataFrame, Series, isna
+from pandas import DataFrame, Series
 from pytz import BaseTzInfo
 
 from inspect import Parameter
@@ -18,12 +18,12 @@ INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
 ########################## General Types ##########################
 ###################################################################
 
-_BOOL = TypeVar("_BOOL", Sequence[bool], bool)
-_TYPE = TypeVar("_TYPE", Sequence[Type], Type)
-
 _KT = TypeVar("_KT", Sequence[Hashable], Hashable)
 _VT = TypeVar("_VT", Sequence[Any], Any)
 _PASS = None
+
+_TYPE = TypeVar("_TYPE", Sequence[Type], Type)
+_BOOL = TypeVar("_BOOL", Sequence[bool], bool)
 
 Comparable = TypeVar("Comparable")
 ClassInstance = TypeVar("ClassInstance")
@@ -41,7 +41,7 @@ TypeHint = Union[Type, str]
 TypeList = Sequence[TypeHint]
 
 GENERAL_TYPES = {
-    "_BOOL":_BOOL, "_TYPE":_TYPE, "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "Comparable":Comparable,
+    "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "_TYPE":_TYPE, "_BOOL":_BOOL, "Comparable":Comparable,
     "ClassInstance":ClassInstance, "Arguments":Arguments, "ArgsMapper":ArgsMapper,
     "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "LogMessage":LogMessage,
     "TypeHint":TypeHint, "TypeList":TypeList}
@@ -133,62 +133,16 @@ REDIRECT_DATA = (str, Dict, List)
 HtmlData = Union[str, Tag, List[str], List[Tag]]
 HTML_DATA = (str, Tag, List)
 
+Account = Union[Dict[str,str], str]
+PostData = Union[Dict[str,Any],str]
+
 ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict, str, Tag, List[str], List[Tag]]
 
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
     "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
-    "JsonData":JsonData, "RedirectData":RedirectData, "HtmlData":HtmlData, "ResponseData":ResponseData}
-
-
-###################################################################
-######################## Google Cloud Types #######################
-###################################################################
-
-Account = Union[Dict[str,str], str]
-PostData = Union[Dict[str,Any],str]
-
-GspreadMode = Literal["replace", "append"]
-NumericiseIgnore = Union[Sequence[int], bool]
-
-BigQueryMode = Literal["fail", "replace", "append", "upsert"]
-BigQuerySchema = List[Dict[str,str]]
-
-class GspreadReadContext(TypedDict):
-    key: str
-    sheet: str
-    fields: IndexLabel
-    str_cols: NumericiseIgnore
-    arr_cols: Sequence[IndexLabel]
-
-class GspreadUpdateContext(TypedDict):
-    key: str
-    sheet: str
-    mode: Literal["replace", "append"]
-    base_sheet: str
-    cell: str
-
-GspreadReadInfo = Dict[_KT, GspreadReadContext]
-GspreadUpdateInfo = Dict[_KT, GspreadUpdateContext]
-
-class BigQueryContext(TypedDict):
-    table: str
-    project_id: str
-    mode: Literal["fail", "replace", "append", "upsert"]
-    schema: BigQuerySchema
-    progress: bool
-    partition: str
-    partition_by: Literal["auto", "second", "minute", "hour", "day", "month", "year", "date"]
-
-BigQueryInfo = Dict[_KT, BigQueryContext]
-UploadInfo = Dict[_KT, Union[GspreadUpdateContext, BigQueryContext]]
-
-GOOGLE_CLOUD_TYPES = {
-    "Account":Account, "PostData":PostData, "GspreadMode":GspreadMode,
-    "NumericiseIgnore":NumericiseIgnore, "BigQueryMode":BigQueryMode, "BigQuerySchema":BigQuerySchema,
-    "GspreadReadContext":GspreadReadContext, "GspreadUpdateContext":GspreadUpdateContext,
-    "GspreadReadInfo":GspreadReadInfo, "GspreadUpdateInfo":GspreadUpdateInfo,
-    "BigQueryContext":BigQueryContext, "BigQueryInfo":BigQueryInfo, "UploadInfo":UploadInfo}
+    "JsonData":JsonData, "RedirectData":RedirectData, "HtmlData":HtmlData,
+    "Account":Account, "PostData":PostData, "ResponseData":ResponseData}
 
 
 ###################################################################
@@ -211,23 +165,12 @@ SPECIAL_TYPES = {
     "ApplyFunction":ApplyFunction, "MatchFunction":MatchFunction}
 
 
-def is_na(__object, strict=True) -> bool:
-    if isinstance(__object, float):
-        return isna(__object) and (True if strict else (not __object))
-    return (__object == None) if strict else (not __object)
-
-
-def not_na(__object, strict=True) -> bool:
-    return not is_na(__object, strict=strict)
-
-
 ###################################################################
 ############################ Type Check ###########################
 ###################################################################
 
 CUSTOM_TYPES = dict(
-    **GENERAL_TYPES, **KEY_TYPES, **DATETIME_TYPES, **SEQUENCE_TYPES, **DATA_TYPES,
-    **GOOGLE_CLOUD_TYPES, **SPECIAL_TYPES)
+    **GENERAL_TYPES, **KEY_TYPES, **DATETIME_TYPES, **SEQUENCE_TYPES, **DATA_TYPES, **SPECIAL_TYPES)
 
 BOOLEAN_TYPES = [bool, "bool", "boolean"]
 FLOAT_TYPES = [float, "float"]

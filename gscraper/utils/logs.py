@@ -1,16 +1,18 @@
-from gscraper.base.types import LogLevel, LogMessage, Shape, Data, BigQuerySchema, is_records
+from gscraper.base.types import LogLevel, LogMessage, Shape, Data, is_records
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ast import literal_eval
 from aiohttp import ClientResponse
-from pandas import DataFrame
 from requests import Response
-import json
 import logging
+
+from pandas import DataFrame
+import json
 import os
 import re
 import sys
 import traceback
+
 
 LOG_FILE = "log"
 CRITICAL = 50
@@ -25,6 +27,7 @@ NOTSET = 0
 GENERAL_LOG = "[%(levelname)s] %(name)s(%(module)s) line %(lineno)d: %(funcName)s - %(message)s | %(asctime)s"
 JSON_LOG = '{"levelname":"%(levelname)s", "name":"%(name)s", "module":"%(module)s", \
 "lineno":"%(lineno)d", "funcName":"%(funcName)s", "message":"%(message)s", "asctime":"%(asctime)s"},'
+
 
 unquote = lambda s: str(s).replace('\"','').replace('\'','')
 unmap = lambda s: str(s).replace('{','(').replace('}',')').replace('\"','`').replace('\'','`')
@@ -98,7 +101,9 @@ def _limit(__object: Union[Data,str], limit=3000) -> Union[Data,str]:
         else: return _limit(dict(list(__object.items())[:key_limit]), limit=limit)
     else: return str(__object)[:limit]
 
-def _info_data(__object, limit=3000) -> Union[Tuple[Shape,Any],Any]:
+def _info_data(__object, limit=3000, depth=3) -> Union[Tuple[Shape,Any],Any]:
+    if isinstance(__object, Dict):
+        __object = dumps_key_value(__object, limit=limit, depth=depth-1)
     if isinstance(__object, DataFrame):
         shape = __object.shape
         __object = __object.to_dict("records")
@@ -109,16 +114,17 @@ def _info_data(__object, limit=3000) -> Union[Tuple[Shape,Any],Any]:
     else: shape = (len(__object),) if isinstance(__object, Dict) else len(str(__object))
     return (shape, (_limit(__object, limit) if limit > 0 else __object))
 
-def dumps_key_value(__m: Dict, limit=3000) -> Dict:
-    _dumps = lambda kwargs: (kwargs[0], _info_data(kwargs[1], limit=limit))
+def dumps_key_value(__m: Dict, limit=3000, depth=3) -> Dict:
+    _dumps = lambda kwargs: (kwargs[0],
+        _info_data(kwargs[1], limit=limit, depth=depth) if depth > 0 else kwargs[1])
     return dict(map(_dumps, __m.items()))
 
-def dumps_data(__object, limit=3000) -> Any:
-    if isinstance(__object, Dict): return dumps_key_value(__object, limit=limit)
+def dumps_data(__object, limit=3000, depth=3) -> Any:
+    if isinstance(__object, Dict): return dumps_key_value(__object, limit=limit, depth=depth)
     else: return _info_data(__object, limit=limit)
 
-def dumps(__object, dump=False, limit=3000) -> Any:
-    __object = dumps_data(__object, limit=limit)
+def dumps(__object, dump=False, limit=3000, depth=3) -> Any:
+    __object = dumps_data(__object, limit=limit, depth=depth)
     return dumps_map(__object) if dump else __object
 
 
@@ -161,7 +167,7 @@ def log_exception(func: str, dump=False, **kwargs) -> LogMessage:
     return dict(func=func, kwargs=dumps(kwargs, dump=dump), error=error)
 
 
-def log_table(data: DataFrame, schema: Optional[BigQuerySchema]=None, dump=False, **kwargs) -> LogMessage:
+def log_table(data: DataFrame, schema: Optional[List]=None, dump=False, **kwargs) -> LogMessage:
     schema = dict(schema=dumps(schema, dump=dump)) if schema else dict()
     try: shape = data.shape
     except: shape = (0,0)

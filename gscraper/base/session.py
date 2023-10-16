@@ -1,18 +1,19 @@
 from __future__ import annotations
 from gscraper.base import REQUEST_CONTEXT
 
-from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, TypeHint, LogLevel, Index, IndexLabel
+from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, Index, IndexLabel
 from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, Data, ResponseData, MatchFunction
-from gscraper.base.types import is_na, not_na, init_origin, is_dataframe_type
+from gscraper.base.types import init_origin, is_dataframe_type
 from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
 
+from gscraper.utils import isna, notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, set_date, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
-from gscraper.utils.map import data_exists, unique, get_scala, exists_one, diff
+from gscraper.utils.map import data_exists, unique, get_scala, notna_one, exists_one, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, apply_dict, chain_dict, drop_dict
+from gscraper.utils.map import kloc, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
 from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data
 
 from abc import ABCMeta
@@ -21,7 +22,7 @@ import functools
 import logging
 import os
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 import datetime as dt
@@ -57,9 +58,9 @@ def custom_str(__object, indent=0, step=2) -> str:
 
 
 class CustomDict(dict):
-    def __init__(self, **kwargs):
+    def __init__(self, __m: Dict=dict(), **kwargs):
         super().update(self.__dict__)
-        super().__init__(kwargs)
+        super().__init__(dict(__m, **kwargs))
 
     def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomDict]:
         if __instance: return __instance.__class__(**self)
@@ -75,7 +76,13 @@ class CustomDict(dict):
             if inplace: setattr(self, __key, __value)
             else: self[__key] = __value
         if inplace: super().update(self.__dict__)
-        return exists_one(inplace, self, strict=False)
+        return exists_one(inplace, self)
+
+    def update_notna(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,CustomDict]:
+        return self.update(__m, inplace=inplace, **notna_dict(kwargs))
+
+    def update_exists(self, __m: Optional[Dict]=dict(), inplace=True, **kwargs) -> Union[bool,CustomDict]:
+        return self.update(__m, inplace=inplace, **exists_dict(kwargs))
 
     def __getitem__(self, __key: _KT) -> _VT:
         if isinstance(__key, List): return [self.__getitem__(__k) for __k in __key]
@@ -91,6 +98,91 @@ class CustomDict(dict):
     def __str__(self, indent=2, step=2) -> str:
         return '{\n'+',\n'.join([' '*indent+f"'{__k}': {custom_str(__v, indent=indent, step=step)}"
                 for __k, __v in self.items()])+'\n'+' '*(indent-step)+'}'
+
+
+class TypedDict(CustomDict):
+    def __init__(self, __m: Dict=dict(), **kwargs):
+        super().__init__(__m, **notna_dict(kwargs))
+
+
+###################################################################
+########################### Custom List ###########################
+###################################################################
+
+class CustomList(list):
+    def __init__(self, *args):
+        super().__init__(args)
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomList]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)
+
+    def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
+        return iloc(list(self), __key, default, if_null)
+
+    def copy_or_update(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomRecords, *args, inplace=False, **kwargs):
+            if not inplace: self = self.copy()
+            __r = func(self, *args, **kwargs)
+            if inplace: self.update(*__r)
+            else: self = self.__class__(*__r)
+            return exists_one(inplace, self)
+        return wrapper
+
+    @copy_or_update
+    def add(self, __iterable: Iterable, inplace=True):
+        for arg in __iterable:
+            self.append(arg)
+
+    def update(self, __iterable: Iterable, inplace=True):
+        self.clear()
+        self.add(__iterable)
+
+    def __str__(self, indent=2, step=2) -> str:
+        return '[\n'+',\n'.join([' '*indent+custom_str(__e, indent=indent, step=step)
+                for __e in map(dict, self)])+'\n'+' '*(indent-step)+']'
+
+
+class CustomRecords(CustomList):
+    def __init__(self, *args):
+        super().__init__(*[record for record in args if isinstance(record, Dict)])
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomRecords]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)
+
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
+            reorder=True, values_only=True) -> Union[Any,List,Dict,str]:
+        return vloc(list(self), __key, default, if_null, reorder, values_only)
+
+    def add(self, *args):
+        for arg in args:
+            if isinstance(arg, Dict): self.append(arg)
+
+    def copy_or_update(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomRecords, *args, inplace=False, **kwargs):
+            if not inplace: self = self.copy()
+            if inplace: self.update(func(self, *args, **kwargs))
+            else: self = self.__class__(*func(self, *args, **kwargs))
+            return notna_one(inplace, self)
+        return wrapper
+
+    @CustomList.copy_or_update
+    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
+        return [__func(__m, **kwargs) for __m in self]
+
+    @CustomList.copy_or_update
+    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
+        if isinstance(__match, Callable) or match_by_key:
+            all_keys = isinstance(__match, Callable)
+            return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
+        else: return self
+
+    @CustomList.copy_or_update
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
+        return drop_duplicates(self, keep=keep) if keep != True else self
 
 
 ###################################################################
@@ -354,7 +446,7 @@ class Iterator(CustomDict):
     def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if not_na(fromNow, strict=True) else self.fromNow
+        self.fromNow = fromNow if notna(fromNow, strict=True) else self.fromNow
         super().__init__()
 
     def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
@@ -462,7 +554,7 @@ class Iterator(CustomDict):
     def _from_pages(self, *args: Sequence, how: Literal["numeric","categorical"], iterateArgs: List[_KT],
                     pagination: Pagination=False, size: Optional[Unit]=None, **context) -> Tuple[List[List],Context]:
         if how == "numeric":
-            if is_na(size) and isinstance(pagination, str):
+            if isna(size) and isinstance(pagination, str):
                 size = args[iterateArgs.index(pagination)]
             return self._from_numeric_pages(*args, size=size, **context)
         base = list(args)
