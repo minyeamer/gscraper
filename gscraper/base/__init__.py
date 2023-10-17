@@ -6,11 +6,11 @@ UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, wher
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
                         root=None, groupby=None, rankby=None, schemaInfo=None, \
                         crawler=None, decryptedKey=None, auth=None, sessionCookies=None, dependencies=None, \
-                        self_var=None, prefix=None, rename=None, **context: context
+                        inplace=None, self_var=None, prefix=None, rename=None, **context: context
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        drop=None, index=None, count=None, **context: UNIQUE_CONTEXT(**context)
+                        drop=None, index=None, count=None, to=None, **context: UNIQUE_CONTEXT(**context)
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
@@ -39,14 +39,14 @@ SCHEMA_CONTEXT = lambda schema=None, root=None, by=None, count=None, discard=Non
 
 
 UPLOAD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
-                        default=None, head=None, headers=None, numericise_ignore=None, \
-                        table=None, project_id=None, schema=None, base_query=None, progress=None, \
-                        partition=None, prtition_by=None, base=None, **context: context
+                        default=None, head=None, headers=None, numericise_ignore=None, str_cols=None, arr_cols=None, \
+                        to=None, rename=None, table=None, project_id=None, schema=None, base_query=None, \
+                        progress=None, partition=None, prtition_by=None, base=None, **context: context
 
 
 PROXY_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, \
                         **context: context
 
 
-REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, renameMap=None, logFile=None, **context: \
+REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, **context: \
     PROXY_CONTEXT(**REQUEST_CONTEXT(**context))

@@ -1,7 +1,8 @@
 from gscraper.base import UPLOAD_CONTEXT
-from gscraper.base.session import TypedDict, BaseSession
+from gscraper.base.session import TypedDict, TypedRecords, BaseSession
+from gscraper.base.parser import Schema, Field, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.types import _KT, TypeHint, LogLevel, IndexLabel, Datetime, RenameMap
-from gscraper.base.types import TabularData, Account, PostData, is_records
+from gscraper.base.types import TabularData, Account, PostData, is_records, from_literal
 
 from gscraper.utils.cast import cast_str, cast_list, cast_float, cast_int, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
@@ -36,8 +37,17 @@ ENV_PATH = "env/"
 GCLOUD_ACCOUNT = ENV_PATH+"gcloud.json"
 GCLOUD_DATA = ENV_PATH+"data.json"
 
-KEY, SHEET, FIELDS = "key", "sheet", "fields"
-TABLE, PID = "table", "project_id"
+KEY = "key"
+SHEET = "sheet"
+FIELDS = "fields"
+
+TABLE = "table"
+QUERY = "query"
+PID = "project_id"
+
+MODE = "mode"
+DATA = "data"
+
 FROM_GS, TO_GBQ = ["from_key", "from_sheet"], ["to_table", "to_pid"]
 FROM_GBQ, TO_GS = ["from_query", "from_pid"], ["to_key", "to_sheet"]
 
@@ -57,6 +67,11 @@ INVALID_SCHEMA_MSG = "Please verify that the structure and data types in the Dat
 INVALID_UPSERT_KEY_MSG = "Please verify that a primary key exists and is in both DataFrame objects."
 
 BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery"
+
+BIGQUERY_FIELD = "BigQueryField"
+BIGQUERY_TYPE = "BigQueryType"
+BIGQUERY_MODE = "BigQueryMode"
+BIGQUERY_SCHEMA = "BigQuerySchema"
 
 
 ###################################################################
@@ -108,19 +123,63 @@ def request_gcloud(audience: str, data: Optional[PostData]=dict(), authorization
 
 
 ###################################################################
+######################### BigQuery Schema #########################
+###################################################################
+
+BigQueryNumericType = Literal["INTEGER","FLOAT","NUMERIC","BIGNUMERIC","BOOLEAN"]
+BigQUeryDatetimeType = Literal["TIMESTAMP","DATE","TIME","DATETIME"]
+BigQueryDataType = Literal["GEOGRAPHY","RECORD","JSON"]
+BigQueryType = Union[Literal["STRING","BYTES"],BigQueryNumericType,BigQUeryDatetimeType,BigQueryDataType]
+
+BigQueryMode = Literal["NULLABLE","REQUIRED","REPEATED"]
+
+class BigQueryField(Field):
+    def __init__(self, name: str, type: BigQueryType, mode: Optional[BigQueryMode]=None,
+                desc: Optional[str]=None, maxLength: Optional[int]=None, description: Optional[str]=None):
+        self.validate(type, mode)
+        TypedDict.__init__(self, name=name, type=type)
+        self.update_notna(mode=mode, description=(desc if desc else description), maxLength=maxLength)
+
+    def validate(self, type: BigQueryType, mode: BigQueryMode):
+        if type not in from_literal(BigQueryType):
+            raise ValueError(INVALID_OBJECT_MSG(type, BIGQUERY_TYPE))
+        if mode and (mode not in from_literal(BigQueryMode)):
+            raise ValueError(INVALID_OBJECT_MSG(type, BIGQUERY_TYPE))
+
+
+def validate_gbq_field(field: Any) -> BigQueryField:
+    if isinstance(field, BigQueryField): return field
+    elif isinstance(field, Dict): return BigQueryField(**field)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(field, BIGQUERY_FIELD))
+
+
+class BigQuerySchema(Schema):
+    def __init__(self, *args: BigQueryField):
+        TypedRecords.__init__(self, *[validate_gbq_field(field) for field in args])
+
+
+def validate_gbq_schema(schema: Any) -> BigQuerySchema:
+    if not schema: return
+    elif isinstance(schema, BigQuerySchema): return schema
+    elif isinstance(schema, List): return BigQuerySchema(*schema)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, BIGQUERY_SCHEMA))
+
+
+###################################################################
 ######################## Google Cloud Query #######################
 ###################################################################
 
 NumericiseIgnore = Union[Sequence[int], bool]
 
 class GspreadReadContext(TypedDict):
-    def __init__(self, key: str, sheet: str, fields: IndexLabel, axis: Optional[int]=None,
-                dropna: Optional[bool]=None, strict: Optional[bool]=None, unique: Optional[bool]=None,
-                default: Optional[Any]=None, head: Optional[int]=None, headers: Optional[IndexLabel]=None,
-                numericise_ignore: Optional[NumericiseIgnore]=None, arr_cols: Optional[IndexLabel]=None):
-        super().__init__(dict(key=key, sheet=sheet, fields=fields),
-            dropna=dropna, strict=strict, unique=unique, default=default, head=head, headers=headers,
-            numericise_ignore=numericise_ignore, arr_cols=arr_cols, axis=axis)
+    def __init__(self, key: str, sheet: str, fields: IndexLabel, axis=0, dropna=True, strict=True,
+                unique=False, default: Optional[Any]=None, head=1, headers: Optional[IndexLabel]=None,
+                str_cols: Optional[NumericiseIgnore]=None, arr_cols: Optional[IndexLabel]=None,
+                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
+        super().__init__(key=key, sheet=sheet, fields=fields)
+        self.update_default(dict(axis=0, dropna=True, strict=True, unique=False, head=1),
+            axis=axis, dropna=dropna, strict=strict, unique=unique, default=default, head=head,
+            headers=headers, str_cols=str_cols, arr_cols=arr_cols, to=to, rename=rename)
 
 
 GCloudQueryContext = GspreadReadContext
@@ -146,12 +205,13 @@ class GCloudQueryReader(BaseSession):
                 self.set_gs_query(**queryContext, name=name, account=account)
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, axis=0, dropna=True, strict=True, unique=False,
-                    default=None, head=1, headers=None, numericise_ignore: NumericiseIgnore=list(),
-                    arr_cols: IndexLabel=list(), name=str(), account: Account=dict()):
-        context = dict(default=default, head=head, headers=headers, numericise_ignore=numericise_ignore,
-                        return_type="dataframe", rename=self.get_rename_map())
+                    default=None, head=1, headers=None, str_cols: NumericiseIgnore=list(),
+                    arr_cols: IndexLabel=list(), to: Optional[Literal["desc","name"]]=None,
+                    rename: RenameMap=dict(), name=str(), account: Account=dict()):
+        context = dict(default=default, head=head, headers=headers, numericise_ignore=str_cols,
+                        return_type="dataframe", rename=self.get_rename_map(to=to, renameMap=rename))
         data = read_gspread(key, sheet, account, fields=cast_list(fields), if_null="drop", **context)
-        self.checkpoint(READ(name), where="set_gs_query", msg={"key":key, "sheet":sheet, "data":data}, save=data)
+        self.checkpoint(READ(name), where="set_gs_query", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         self.update(self.by_axis(data, axis, dropna, strict, unique, arr_cols))
 
@@ -174,43 +234,44 @@ class GCloudQueryReader(BaseSession):
 ###################################################################
 
 class GspreadUpdateContext(TypedDict):
-    def __init__(self, key: str, sheet: str, mode: Optional[Literal["replace","append","upsert"]]=None,
+    def __init__(self, key: str, sheet: str, mode: Literal["replace","append","upsert"]="append",
                 cell: Optional[str]=None, base_sheet: Optional[str]=None, default: Optional[Any]=None,
-                head: Optional[int]=None, headers: Optional[IndexLabel]=None,
-                numericise_ignore: Optional[NumericiseIgnore]=None):
-        super().__init__(dict(key=key, sheet=sheet),
+                head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
+                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
+        super().__init__(key=key, sheet=sheet)
+        self.update_default(dict(mode="append", head=1),
             mode=mode, cell=cell, base_sheet=base_sheet, default=default,
-            head=head, headers=headers, numericise_ignore=numericise_ignore)
+            head=head, headers=headers, str_cols=str_cols, to=to, rename=rename)
 
-
-BigQuerySchema = List[Dict[str,str]]
 
 class BigQueryContext(TypedDict):
-    def __init__(self, table: str, project_id: str, mode: Optional[Literal["fail","replace","append","upsert"]]=None,
+    def __init__(self, table: str, project_id: str, mode: Literal["fail","replace","append","upsert"]="append",
                 base_query: Optional[str]=None, schema: Optional[BigQuerySchema]=None,
-                progress: Optional[bool]=None, partition: Optional[str]=None,
-                partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]=None):
-        super().__init__(dict(table=table, project_id=project_id),
-            mode=mode, base_query=base_query, schema=schema, progress=progress,
+                progress=True, partition: Optional[str]=None,
+                partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto"):
+        super().__init__(table=table, project_id=project_id)
+        self.update_default(dict(mode="append", progress=True, partition_by="auto"),
+            mode=mode, base_query=base_query, schema=validate_gbq_schema(schema), progress=progress,
             partition=partition, partition_by=partition_by)
 
 
 class GsToGbqContext(TypedDict):
     def __init__(self, from_key: str, from_sheet: str, to_table: str, to_pid: str,
-                default: Optional[Any]=None, head: Optional[int]=None, headers: Optional[IndexLabel]=None,
-                numericise_ignore: Optional[NumericiseIgnore]=None,
-                mode: Optional[Literal["fail","replace","append","upsert"]]=None,
-                schema: Optional[BigQuerySchema]=None, progress: Optional[bool]=None):
-        super().__init__(dict(from_key=from_key, from_sheet=from_sheet, to_table=to_table, to_pid=to_pid),
-            default=default, head=head, headers=headers, numericise_ignore=numericise_ignore,
-            mode=mode, schema=schema, progress=progress)
+                mode: Literal["fail","replace","append","upsert"]="append", schema: Optional[BigQuerySchema]=None,
+                progress=True, default: Optional[Any]=None, head=1,
+                headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
+                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
+        super().__init__(from_key=from_key, from_sheet=from_sheet, to_table=to_table, to_pid=to_pid)
+        self.update_default(dict(mode="append", progress=True, head=1),
+            default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
+            mode=mode, schema=validate_gbq_schema(schema), progress=progress)
 
 
 class GbqToGsContext(TypedDict):
     def __init__(self, from_query: str, from_pid: str, to_key: str, to_sheet: str,
-                mode: Optional[Literal["fail","replace","append","upsert"]]=None, cell: Optional[str]=None):
-        super().__init__(dict(from_query=from_query, from_pid=from_pid, to_key=to_key, to_sheet=to_sheet),
-            mode=mode, cell=cell)
+                mode: Literal["fail","replace","append","upsert"]="append", cell: Optional[str]=None):
+        super().__init__(from_query=from_query, from_pid=from_pid, to_key=to_key, to_sheet=to_sheet)
+        self.update_default(dict(mode="append"), mode=mode, cell=cell)
 
 
 GCloudUploadMode = Literal["fail","replace","append","upsert"]
@@ -234,7 +295,7 @@ class GCloudUploader(BaseSession):
     def upload_data(self, data: TabularData, uploadInfo: GCloudUploadInfo=dict(), reauth=False,
                     audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         __exists = data_exists(data)
-        if __exists: data = to_dataframe(data)
+        if __exists: data = to_dataframe(data).copy()
         context = UPLOAD_CONTEXT(account=account, **context)
         gbq_auth = dict(reauth=reauth, audience=audience, credentials=credentials)
         for name, uploadContext in uploadInfo.items():
@@ -256,13 +317,14 @@ class GCloudUploader(BaseSession):
     @BaseSession.catch_exception
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["replace","append","upsert"]="append",
                         cell=str(), base_sheet=str(), default=None, head=1, headers=None,
-                        numericise_ignore: NumericiseIgnore=list(), name=str(), account: Account=dict(), **context) -> bool:
+                        str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]=None,
+                        rename: RenameMap=dict(), name=str(), account: Account=dict(), **context) -> bool:
         data = self.map_gs_data(data, name=name, **context)
         if base_sheet or (mode == "upsert"):
             base_sheet = sheet if mode == "upsert" else base_sheet
-            base = self.read_gs_base(key, base_sheet, name, account, default, head, headers, numericise_ignore)
+            base = self.read_gs_base(key, base_sheet, name, account, default, head, headers, str_cols, to, rename)
             data = self.map_gs_base(data, base, name=name, **context)
-        self.checkpoint(UPLOAD(name), where="upload_gspread", msg={"key":key, "sheet":sheet, "mode":mode, "data":data}, save=data)
+        self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
         update_gspread(key, sheet, data, account, cell=cell, clear=clear)
@@ -272,10 +334,11 @@ class GCloudUploader(BaseSession):
         return data
 
     def read_gs_base(self, key: str, sheet: str, name=str(), account: Account=dict(), default=None,
-                    head=1, headers=None, numericise_ignore: NumericiseIgnore=list()) -> pd.DataFrame:
+                    head=1, headers=None, str_cols: NumericiseIgnore=list(),
+                    to: Optional[Literal["desc","name"]]=None, rename: RenameMap=dict()) -> pd.DataFrame:
         data = read_gspread(key, sheet, account, default=default, head=head, headers=headers,
-                            numericise_ignore=numericise_ignore, rename=self.get_rename_map())
-        self.checkpoint(READ(name), where="read_gs_base", msg={"key":key, "sheet":sheet, "data":data}, save=data)
+                            numericise_ignore=str_cols, rename=self.get_rename_map(to=to, renameMap=rename))
+        self.checkpoint(READ(name), where="read_gs_base", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         return data
 
@@ -300,7 +363,7 @@ class GCloudUploader(BaseSession):
             base_query = table if mode == "upsert" else base_query
             base = self.read_gbq_base(base_query, project_id, name, **gbq_auth)
             data = self.map_gbq_base(data, base, name=name, schema=schema, **context)
-        self.checkpoint(UPLOAD(name), where="upload_gbq", msg={"table":table, "pid":project_id, "mode":mode, "data":data}, save=data)
+        self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, schema=schema, dump=self.logJson))
         to_gbq(table, project_id, data, if_exists=("replace" if mode == "upsert" else mode), schema=schema, progress=progress,
                 partition=partition, partition_by=partition_by, **gbq_auth)
@@ -318,7 +381,7 @@ class GCloudUploader(BaseSession):
     def read_gbq_base(self, query: str, project_id: str, name=str(), reauth=False, audience=str(),
                         account: Account=dict(), credentials: Optional[IDTokenCredentials]=None) -> pd.DataFrame:
         data = read_gbq(query, project_id, reauth, audience, account, credentials)
-        self.checkpoint(READ(name), where="read_gbq_base", msg={"query":query, "pid":project_id}, save=data)
+        self.checkpoint(READ(name), where="read_gbq_base", msg={QUERY:query, PID:project_id}, save=data)
         self.logger.info(log_table(data, name=name, query=query, pid=project_id, dump=self.logJson))
         return data
 
@@ -334,12 +397,12 @@ class GCloudUploader(BaseSession):
 
     @BaseSession.catch_exception
     def gspread_to_gbq(self, from_key: str, from_sheet: str, to_table: str, to_pid: str,
-                        default=None, head=1, headers=None, numericise_ignore: NumericiseIgnore=list(),
+                        default=None, head=1, headers=None, str_cols: NumericiseIgnore=list(),
                         mode: Literal["fail","replace","append","upsert"]="append",
                         schema: Optional[BigQuerySchema]=None, progress=True,
                         name=str(), reauth=False, audience=str(), account: Account=dict(),
                         credentials: Optional[IDTokenCredentials]=None, **context) -> bool:
-        data = self.read_gs_base(from_key, from_sheet, name, account, default, head, headers, numericise_ignore)
+        data = self.read_gs_base(from_key, from_sheet, name, account, default, head, headers, str_cols)
         return self.upload_gbq(to_table, to_pid, data, mode, schema, progress=progress, name=name,
                                 reauth=reauth, audience=audience, account=account, credentials=credentials, **context)
 
@@ -433,17 +496,17 @@ def update_gspread(key: str, sheet: str, data: TabularData, account: Account=dic
 ###################################################################
 
 BIGQUERY_TYPE_CAST = lambda __type, fillna=False: {
-    "STRING": lambda x: x if isinstance(x, str) else cast_str(x, default=(str() if fillna else None), match=pd.notna),
+    "STRING": lambda x: x if isinstance(x, str) else cast_str(x, default=(str() if fillna else None)),
     "BYTES": lambda x: x if isinstance(x, bytes) else None,
     "INTEGER": lambda x: x if isinstance(x, int) else cast_int(x, default=(0 if fillna else None)),
     "FLOAT": lambda x: x if isinstance(x, float) else cast_float(x, default=(0. if fillna else None)),
     "NUMERIC": lambda x: x if isinstance(x, int) else cast_int(x, default=(0 if fillna else None)),
     "BIGNUMERIC": lambda x: x if isinstance(x, int) else cast_int(x, default=(0 if fillna else None)),
     "BOOLEAN": lambda x: x if isinstance(x, bool) else bool(x),
-    "TIMESTAMP": lambda x: x if isinstance(x, int) else get_timestamp(x, default=(0 if fillna else None), tsUnit="ms"),
-    "DATE": lambda x: x if isinstance(x, dt.date) else get_date(x, default=(0 if fillna else None)),
-    "TIME": lambda x: x if isinstance(x, dt.time) else get_time(x, default=(0 if fillna else None)),
-    "DATETIME": lambda x: x if isinstance(x, dt.datetime) else get_datetime(x, default=(0 if fillna else None)),
+    "TIMESTAMP": lambda x: x if isinstance(x, int) else get_timestamp(x, if_null=(0 if fillna else None), tsUnit="ms"),
+    "DATE": lambda x: x if isinstance(x, dt.date) else get_date(x, if_null=(0 if fillna else None)),
+    "TIME": lambda x: x if isinstance(x, dt.time) else get_time(x, if_null=(0 if fillna else None)),
+    "DATETIME": lambda x: x if isinstance(x, dt.datetime) else get_datetime(x, if_null=(0 if fillna else None)),
 }.get(__type, lambda x: x)
 
 

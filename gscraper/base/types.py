@@ -472,3 +472,9 @@ def inspect_annotation(annotation, __type: Optional[TypeHint]=None) -> Dict:
     if is_iterable_annotation(annotation):
         info["iterable"] = True
     return info
+
+
+def from_literal(__literal) -> List[str]:
+    if get_origin(__literal) == Union:
+        return [__s for __l in get_args(__literal) for __s in get_args(__l)]
+    else: return list(get_args(__literal))

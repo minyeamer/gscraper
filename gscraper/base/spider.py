@@ -4,10 +4,10 @@ from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from gscraper.base.session import Iterator
 from gscraper.base.parser import Parser, SchemaInfo
 from gscraper.base.gcloud import GCloudQueryReader, GCloudUploader, GCloudQueryInfo, GCloudUploadInfo
-from gscraper.base.gcloud import fetch_gcloud_authorization, BigQuerySchema
+from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint
-from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
+from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, Timedelta, Timezone
 from gscraper.base.types import Records, Data, JsonData, RedirectData
 from gscraper.base.types import Account
 from gscraper.base.types import is_array, init_origin
@@ -228,12 +228,10 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
         self.delay = delay
         self.progress = progress
         self.cookies = cookies
-        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
+        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"), self_var=True)
         if queryInfo:
             self.set_query(queryInfo, account)
-        if uploadInfo:
-            gcloud_auth = dict(reauth=reauth, audience=audience, account=account, credentials=credentials)
-            self.update_exists(dict(uploadInfo=uploadInfo), **gcloud_auth)
+        self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
         self._disable_warnings()
 
     def _disable_warnings(self):
@@ -593,12 +591,10 @@ class AsyncSpider(Spider):
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
-        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"))
+        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"), self_var=True)
         if queryInfo:
             self.set_query(queryInfo, account)
-        if uploadInfo:
-            gcloud_auth = exists_dict(reauth=reauth, audience=audience, account=account, credentials=credentials)
-            self.update(uploadInfo=uploadInfo, **gcloud_auth)
+        self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
 
     ###################################################################
     ########################## Async Managers #########################
