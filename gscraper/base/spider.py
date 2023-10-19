@@ -6,8 +6,8 @@ from gscraper.base.parser import Parser, SchemaInfo
 from gscraper.base.gcloud import GCloudQueryReader, GCloudUploader, GCloudQueryInfo, GCloudUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
-from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint
-from gscraper.base.types import IndexLabel, EncryptedKey, Pagination, Status, Unit, Timedelta, Timezone
+from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
+from gscraper.base.types import IndexLabel, Pagination, Status, Unit, Timedelta, Timezone
 from gscraper.base.types import Records, Data, JsonData, RedirectData
 from gscraper.base.types import Account
 from gscraper.base.types import is_array, init_origin
@@ -1076,13 +1076,13 @@ class EncryptedSpider(Spider):
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
-                encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
+                encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)
 
-    def set_secrets(self, encryptedKey=str(), decryptedKey=str()):
-        if not self.decryptedKey and not isinstance(decryptedKey, Dict):
+    def set_secrets(self, encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None):
+        if isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
             try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
         self.update(decryptedKey=(decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey))
@@ -1188,7 +1188,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
-                encryptedKey: EncryptedKey=str(), decryptedKey=str(), **context):
+                encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:
             self.set_secrets(encryptedKey, decryptedKey)

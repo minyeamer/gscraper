@@ -126,12 +126,12 @@ def request_gcloud(audience: str, data: Optional[PostData]=dict(), authorization
 ######################### BigQuery Schema #########################
 ###################################################################
 
-BigQueryNumericType = Literal["INTEGER","FLOAT","NUMERIC","BIGNUMERIC","BOOLEAN"]
-BigQUeryDatetimeType = Literal["TIMESTAMP","DATE","TIME","DATETIME"]
-BigQueryDataType = Literal["GEOGRAPHY","RECORD","JSON"]
-BigQueryType = Union[Literal["STRING","BYTES"],BigQueryNumericType,BigQUeryDatetimeType,BigQueryDataType]
+BigQueryNumericType = Literal["INTEGER", "FLOAT", "NUMERIC", "BIGNUMERIC", "BOOLEAN"]
+BigQUeryDatetimeType = Literal["TIMESTAMP", "DATE", "TIME", "DATETIME"]
+BigQueryDataType = Literal["GEOGRAPHY", "RECORD", "JSON"]
+BigQueryType = Union[Literal["STRING", "BYTES"], BigQueryNumericType, BigQUeryDatetimeType, BigQueryDataType]
 
-BigQueryMode = Literal["NULLABLE","REQUIRED","REPEATED"]
+BigQueryMode = Literal["NULLABLE", "REQUIRED", "REPEATED"]
 
 class BigQueryField(Field):
     def __init__(self, name: str, type: BigQueryType, mode: Optional[BigQueryMode]=None,

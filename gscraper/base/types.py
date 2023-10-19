@@ -60,6 +60,7 @@ Id = Union[Sequence[str], str]
 Url = Union[Sequence[str], str]
 Token = Union[Sequence[str], str]
 EncryptedKey = str
+DecryptedKey = Union[Dict, str]
 
 Status = Union[Sequence[int], int]
 Shape = Union[Sequence[int], int]
@@ -67,7 +68,7 @@ Unit = Union[Sequence[int], int]
 
 KEY_TYPES = {
     "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
-    "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey,
+    "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey, "DecryptedKey":DecryptedKey,
     "Status":Status, "Shape":Shape, "Unit":Unit}
 
 
@@ -472,6 +473,18 @@ def inspect_annotation(annotation, __type: Optional[TypeHint]=None) -> Dict:
     if is_iterable_annotation(annotation):
         info["iterable"] = True
     return info
+
+
+def is_args_allowed(func: Callable) -> bool:
+    for name, parameter in inspect.signature(func).parameters.items():
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL: return True
+    return False
+
+
+def is_kwargs_allowed(func: Callable) -> bool:
+    for name, parameter in inspect.signature(func).parameters.items():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD: return True
+    return False
 
 
 def from_literal(__literal) -> List[str]:

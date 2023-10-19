@@ -13,7 +13,7 @@ def isna(__object, strict=True) -> Union[bool,Any]:
         try: return not __object
         except: return is_na(__object)
     _isna = is_na(__object)
-    return all(_isna) if isinstance(_isna, Iterable) else _isna
+    return False if isinstance(_isna, Iterable) else _isna
 
 
 def notna(__object, strict=True) -> bool:
@@ -21,7 +21,7 @@ def notna(__object, strict=True) -> bool:
         try: return bool(__object)
         except: return not_na(__object)
     _notna = not_na(__object)
-    return any(_notna) if isinstance(_notna, Iterable) else _notna
+    return True if isinstance(_notna, Iterable) else _notna
 
 
 def empty(__object, strict=False) -> Union[bool,Any]:

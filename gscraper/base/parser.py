@@ -11,11 +11,11 @@ from gscraper.utils import isna, notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_tuple
 from gscraper.utils.date import is_daily_frequency
 from gscraper.utils.logs import log_data
-from gscraper.utils.map import safe_apply, include_text, get_scala, exists_one, union
-from gscraper.utils.map import kloc, chain_dict, drop_dict, hier_get
+from gscraper.utils.map import exists_one, howin, safe_apply, get_scala, union
+from gscraper.utils.map import kloc, isin_dict, is_single_path, chain_dict, drop_dict, hier_get
 from gscraper.utils.map import vloc, groupby_records, drop_duplicates
-from gscraper.utils.map import concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data
-from gscraper.utils.map import select_one, hier_select, exists_source, include_source, groupby_source
+from gscraper.utils.map import cloc, concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data, isin_df, match_df
+from gscraper.utils.map import select_one, select_by, hier_select, isin_source, is_single_selector, groupby_source
 
 from abc import ABCMeta
 from ast import literal_eval
@@ -87,7 +87,7 @@ INVALID_APPLY_TYPE_MSG = lambda apply, name=str(): f"'{type(apply)}' is not a va
 INVALID_APPLY_SPECIAL_MSG = lambda func, name=str(): f"'{func}' is not a valid special apply function{FOR_NAME(name)}."
 INVALID_APPLY_RETURN_MSG = lambda ret, __t, name=str(): \
     f"'{type(ret)}' type is not a valid return type of apply function{FOR_NAME(name)}. '{__t}' type is desired."
-INVALID_MATCH_KEY_MSG = lambda name=str(): f"Match function{FOR_NAME(name)} requires at least one parameter: func, path, value, query"
+INVALID_MATCH_KEY_MSG = lambda name=str(): f"Match function{FOR_NAME(name)} requires at least one parameter: func, path, and query."
 
 EXCEPTION_ON_NAME_MSG = lambda name: f"Exception occured from '{name}'."
 
@@ -160,20 +160,21 @@ class Apply(TypedDict):
 
 
 class Match(TypedDict):
-    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                query: Optional[_KT]=None, value: Optional[Any]=None, text: Optional[_VT]=None,
-                flip=False, default=False, strict=False, exact=False,
-                how: Literal["any","all"]="any", **context):
+    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
+                query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
+                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+                hier=True, default=False, **context):
         self.validate(func, path, query, value)
         super().__init__()
-        self.update_default(dict(flip=False, default=False, strict=False, exact=False, how="any"),
-            func=func, path=path, query=query, value=value, text=text,
-            flip=flip, default=default, strict=strict, exact=exact, how=how)
+        self.update_default(dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False),
+            func=func, path=path, query=query, value=value, exact=exact, include=include, exclude=exclude,
+            flip=flip, strict=strict, how=how, if_null=if_null, hier=hier, default=default)
         self.update(context)
 
     def validate(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
                 query: Optional[_KT]=None, value: Optional[Any]=None):
-        if isna(func) and isna(path) and isna(query) and isna(value):
+        if isna(func) and isna(path) and isna(query):
             raise ValueError(INVALID_MATCH_KEY_MSG)
         elif notna(func) and not isinstance(func, Callable):
             raise TypeError(INVALID_OBJECT_TYPE_MSG(func, MATCH_FUNCTION))
@@ -540,7 +541,7 @@ def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=Fals
     if is_array(path): value = hier_get(__m, path, default, empty=False)
     elif isinstance(path, Callable): value = safe_apply(__m, path, default, **query)
     else: value = path
-    value = _apply_schema(value, **dict(query, **apply)) if apply else value
+    value = apply_schema(value, **dict(query, **apply)) if apply else value
     return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
@@ -577,29 +578,13 @@ def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Op
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if _match_dict(__m, **dict(query, **match)):
-        data = _apply_schema(__m, **dict(query, **apply))
+        data = apply_schema(__m, **dict(query, **apply))
         if name:
             __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast, **query)
         elif isinstance(data, Dict):
             __base = dict(__base, **data)
         else: raise TypeError(INVALID_APPLY_RETURN_MSG(data, DICTIONARY, "GLOBAL"))
     return __base
-
-
-def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
-                flip=False, default=False, strict=False, exact=False,
-                how: Literal["any","all"]="any", **context) -> bool:
-    if not (func or path or value or query): return True
-    elif query: __m = hier_get(context, query)
-    elif path: __m = hier_get(__m, path)
-
-    toggle = (lambda x: not x) if flip else (lambda x: bool(x))
-    if func: return toggle(_apply_schema(__m, func, default=default, **context))
-    elif isinstance(value, bool): return toggle(value)
-    elif notna(value): return toggle(__m == value)
-    elif notna(text): return toggle(include_text(__m, text, exact=exact, how=how))
-    else: return toggle(notna(__m, strict=strict))
 
 
 ###################################################################
@@ -719,26 +704,6 @@ def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=N
     return __base
 
 
-def _match_df(df: pd.DataFrame, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-            query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
-            flip=False, default=False, strict=False, exact=False,
-            how: Literal["any","all"]="any", **context) -> pd.DataFrame:
-    if not (func or path or value or query): return df
-    elif query: return _match_dict(context, func, query, value, flip, default, strict)
-    elif path: df = df[path]
-
-    if func: condition = safe_apply_df(df, func, **context)
-    elif isinstance(value, bool): return df if value else pd.DataFrame(columns=df.columns)
-    elif notna(value): condition = (df == value)
-    elif notna(text):
-        condition = safe_apply_df(df, include_text, value=text, exact=exact, how=how)
-    else: condition = safe_apply_df(df, lambda x: exists(x, strict=strict), by="cell")
-
-    if isinstance(condition, pd.DataFrame):
-        return df[~df.any(axis=1)] if flip else df[df.any(axis=1)]
-    else: return df[~condition] if flip else df[condition]
-
-
 ###################################################################
 ########################### Parse Source ##########################
 ###################################################################
@@ -748,7 +713,7 @@ def map_source(source: HtmlData, schemaInfo: SchemaInfo, groupby: Union[_KT,Dict
                 match: Optional[MatchFunction]=None, **context) -> MappingData:
     context = SCHEMA_CONTEXT(**context)
     if not is_array(source):
-        return _map_html(source, schemaInfo, **context)
+        return map_html(source, schemaInfo, **context)
     elif groupby:
         return _groupby_source(source, schemaInfo, groupby, groupSize, rankby, **context)
     data = list()
@@ -756,7 +721,7 @@ def map_source(source: HtmlData, schemaInfo: SchemaInfo, groupby: Union[_KT,Dict
     for __i, __t in enumerate(source, start=(start if start else 0)):
         if not isinstance(__t, Tag) or (match and not match(source, **context)): continue
         context[RANK] = __i
-        data.append(_map_html(__t, schemaInfo, count=len(source), **context))
+        data.append(map_html(__t, schemaInfo, count=len(source), **context))
     return data
 
 
@@ -764,13 +729,13 @@ def _groupby_source(source: List[Tag], schemaInfo: SchemaInfo, groupby: Union[_K
                     groupSize: Dict[bool,int]=dict(), rankby=str(),
                     group: _PASS=None, dataSize: _PASS=None, **context) -> Records:
     context = dict(context, schemaInfo=schemaInfo, rankby=rankby)
-    groups = groupby_source(source, groupby, how="exact")
+    groups = groupby_source(source, groupby, if_null="drop")
     return union(*[
         map_source(source, group=group, dataSize=hier_get(groupSize, group), **context)
             for group, source in groups.items()])
 
 
-def _map_html(source: Tag, schemaInfo: SchemaInfo, match: Optional[MatchFunction]=None, **context) -> Dict:
+def map_html(source: Tag, schemaInfo: SchemaInfo, match: Optional[MatchFunction]=None, **context) -> Dict:
     __base = dict()
     if match and not match(source, **context): return __base
     for __key, schema_context in schemaInfo.items():
@@ -818,7 +783,7 @@ def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=Fa
     if is_array(path): value = hier_select(source, path, default, empty=False)
     elif isinstance(path, Callable): value = safe_apply(source, path, default, **query)
     else: value = path
-    value = _apply_schema(value, **dict(query, **apply)) if apply else value
+    value = apply_schema(value, **dict(query, **apply)) if apply else value
     return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
@@ -855,7 +820,7 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if _match_html(source, **dict(query, **match)):
-        data = _apply_schema(source, **dict(query, **apply))
+        data = apply_schema(source, **dict(query, **apply))
         if name:
             __base[name] = _cast_value(data, type, default=default, strict=strict, cast=cast, **query)
         elif isinstance(data, Dict):
@@ -864,27 +829,11 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
     return __base
 
 
-def _match_html(source: Tag, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                query: Optional[_KT]=None, value: Optional[_VT]=None, text: Optional[_VT]=None,
-                flip=False, default=False, strict=False, exact=False,
-                how: Literal["any","all"]="any", **context) -> bool:
-    if not (func or path or value or query): return True
-    elif query: return _match_dict(context, func, query, value, flip, default, strict)
-
-    toggle = (lambda x: not x) if flip else (lambda x: bool(x))
-    if func: return toggle(_apply_schema(hier_select(source, path), func, default=default, **context))
-    elif isinstance(value, bool): return toggle(value)
-    elif notna(value) or notna(text):
-        by = "text" if notna(text) else "source"
-        return toggle(include_source(source, path, value=value, by=by, exact=exact, how=how))
-    else: return toggle(exists_source(source, path, strict=strict))
-
-
 ###################################################################
 ########################### Apply Schema ##########################
 ###################################################################
 
-def _apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, name=str(), **context) -> Any:
+def apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, name=str(), **context) -> Any:
     if not func: return __object
     if isinstance(func, Callable): return safe_apply(__object, func, default, **context)
     elif isinstance(func, str): return _special_apply(__object, func, name, **context)
@@ -947,3 +896,85 @@ def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[
     elif isinstance(__object, Dict):
         return map_dict(__object, schemaInfo, **context)
     else: return __object
+
+
+###################################################################
+########################### Match Schema ##########################
+###################################################################
+
+def toggle(__bool: bool, flip=False) -> bool:
+    return (not __bool) if flip else bool(__bool)
+
+
+def _match_dict(__m: Dict, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
+                query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
+                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+                hier=True, default=False, **context) -> bool:
+    if isna(func) and isna(path) and isna(query): return True
+    elif query: return _match_query(**locals())
+    elif func:
+        if notna(path): __m = hier_get(__m, path) if hier else kloc(__m, path)
+        return toggle(apply_schema(__m, func, default=default, **context), flip=flip)
+    elif isna(exact) and isna(include) and isna(exclude):
+        if not is_single_path(path, hier=hier):
+            return howin([_match_dict(**dict(locals(), path=__k)) for __k in path], how=how)
+        __value = hier_get(__m, path) if hier else kloc(__m, path)
+        if isna(__value): return toggle(if_null, flip=flip)
+        elif notna(value): return toggle((__value == value), flip=flip)
+        else: return toggle(exists(__value, strict=strict), flip=flip)
+    exact = value if notna(value) else exact
+    return toggle(isin_dict(__m, path, exact, include, exclude, how=how, if_null=if_null, hier=hier), flip=flip)
+
+
+def _match_query(context: Context, query: _KT, __m: _PASS=None, source: _PASS=None, path: _PASS=None, **kwargs) -> bool:
+    return _match_dict(context, query, **kwargs)
+
+
+def toggle_df(df: pd.DataFrame, __bool: Union[pd.DataFrame,pd.Series,bool], flip=False) -> pd.DataFrame:
+    if isinstance(__bool, bool):
+        return pd.DataFrame(columns=df.columns) if flip else df
+    if isinstance(__bool, pd.DataFrame): __bool = __bool.any(axis=1)
+    return df[~__bool] if flip else df[__bool]
+
+
+def _match_df(df: pd.DataFrame, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
+            query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
+            exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+            flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+            default=False, **context) -> pd.DataFrame:
+    if isna(func) and isna(path) and isna(query): return df
+    elif query: return toggle_df(df, _match_query(**locals()))
+    elif func:
+        if notna(path): df = cloc(df, path)
+        return toggle_df(df, safe_apply_df(df, func, default=default, **context), flip=flip)
+    elif isna(exact) and isna(include) and isna(exclude):
+        df = cloc(df, path, if_null="drop") if path else df
+        if df.empty: return toggle_df(df, if_null, flip=flip)
+        elif notna(value): return toggle_df(df, (df == value), filp=flip)
+        else: return toggle_df(df, match_df(df, match=(lambda x: exists(x, strict=strict)), all_cols=True), flip=flip)
+    exact = value if notna(value) else exact
+    return toggle_df(df, isin_df(df, path, exact, include, exclude, how=how, if_null=if_null, filter=False), flip=flip)
+
+
+def _match_html(source: Tag, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
+                query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
+                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+                hier=True, default=False, **context) -> bool:
+    if isna(func) and isna(path) and isna(query): return True
+    elif query: return _match_query(**locals())
+    elif func:
+        if notna(path): source = hier_select(source, path) if hier else select_by(source, path)
+        return toggle(apply_schema(source, func, default=default, **context), flip=flip)
+    elif isna(exact) and isna(include) and isna(exclude):
+        if not is_single_selector(path, hier=hier):
+            __locals = drop_dict(locals(), "path", inplace=False)
+            return howin([_match_html(path=__s, **__locals) for __s in path], how=how)
+        __value = hier_select(source, path) if hier else select_by(source, path)
+        if isna(__value): return toggle(if_null, flip=flip)
+        elif is_array(__value): return toggle((value in __value), flip=flip)
+        elif notna(value): return toggle((__value == value), flip=flip)
+        else: return toggle(exists(__value, strict=strict), flip=flip)
+    exact = value if notna(value) else exact
+    return toggle(isin_source(source, path, exact, include, exclude, how=how, if_null=if_null, hier=hier), flip=flip)

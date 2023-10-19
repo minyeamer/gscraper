@@ -2,7 +2,7 @@ from gscraper.base.types import TypeHint, DateFormat, Timedelta, Timezone, CastE
 from gscraper.base.types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from gscraper.utils.cast import cast_datetime, cast_date, get_timezone
-from gscraper.utils.map import include_text, drop_dict
+from gscraper.utils.map import isin, drop_dict
 
 from typing import List, Literal, Optional, Sequence, Tuple, Union
 from pandas.tseries.frequencies import to_offset
@@ -236,7 +236,7 @@ def flip_pandas_frequency(freq: str, sep='') -> str:
 
 def map_pandas_frequency(freq: str, repl: Optional[str]=None, upper=False, flip=False) -> str:
     if isinstance(repl, str): freq = re.sub(r"[1-9]+", repl, freq).strip()
-    if upper and not include_text(freq, ("min","ms","us"), how="any"): freq = freq.upper()
+    if upper and not isin(freq, include=("min","ms","us"), how="any"): freq = freq.upper()
     if flip: freq = flip_pandas_frequency(freq, sep=('-' if '-' in freq else ''))
     return freq
 
