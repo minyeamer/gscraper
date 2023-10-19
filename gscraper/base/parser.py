@@ -4,18 +4,18 @@ from gscraper.base.session import TypedDict, TypedRecords, BaseSession, custom_s
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
-from gscraper.base.types import get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type
+from gscraper.base.types import get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type, is_float_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
 from gscraper.utils import isna, notna, exists
-from gscraper.utils.cast import cast_object, cast_str, cast_tuple
+from gscraper.utils.cast import cast_object, cast_list, cast_str, cast_tuple, cast_float, cast_int
 from gscraper.utils.date import is_daily_frequency
 from gscraper.utils.logs import log_data
 from gscraper.utils.map import exists_one, howin, safe_apply, get_scala, union
 from gscraper.utils.map import kloc, isin_dict, is_single_path, chain_dict, drop_dict, hier_get
 from gscraper.utils.map import vloc, groupby_records, drop_duplicates
 from gscraper.utils.map import cloc, concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data, isin_df, match_df
-from gscraper.utils.map import select_one, select_by, hier_select, isin_source, is_single_selector, groupby_source
+from gscraper.utils.map import sloc, select_one, select_by, hier_select, isin_source, is_single_selector, groupby_source
 
 from abc import ABCMeta
 from ast import literal_eval
@@ -65,6 +65,7 @@ __EXISTS__ = "__EXISTS__"
 __JOIN__ = "__JOIN__"
 __RENAME__ = "__RENAME__"
 __SPLIT__ = "__SPLIT__"
+__SUM__ = "__SUM__"
 __MAP__ = "__MAP__"
 
 
@@ -205,6 +206,14 @@ class Split(Apply):
         super().__init__(func=__SPLIT__, sep=sep)
         self.update_default(dict(maxsplit=-1, strict=True),
             maxsplit=maxsplit, default=default, strict=strict, index=index, type=type)
+
+
+class Sum(Apply):
+    def __init__(self, keys: _KT=list(), type: Optional[Type]=None, strict=False,
+                trunc: Optional[int]=None):
+        super().__init__(func=__SUM__)
+        self.update_default(dict(keys=list(), strict=False),
+            keys=keys, type=type, strict=strict, trunc=trunc)
 
 
 class Map(Apply):
@@ -845,6 +854,7 @@ def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     elif func == __JOIN__: return __join__(__object, **context)
     elif func == __RENAME__: return __rename__(__object, **context)
     elif func == __SPLIT__: return __split__(__object, **context)
+    elif func == __SUM__: return __sum__(__object, **context)
     elif func == __MAP__: return __map__(__object, **context)
     else: raise ValueError(INVALID_OBJECT_MSG(func, name))
 
@@ -884,6 +894,16 @@ def __split__(__object, sep=',', maxsplit=-1, default=None, strict=True,
     __s = cast_str(__object, strict=True).split(sep, maxsplit)
     if type: __s = list(map(lambda x: _cast_value(x, type, default=default, strict=strict, **context), __s))
     return get_scala(__s, index) if isinstance(index, int) else __s
+
+
+def __sum__(__object, keys: _KT=list(), type: Optional[Type]=None, strict=False,
+            trunc: Optional[int]=None, **context) -> Union[int,float]:
+    if isinstance(__object, Dict): __object = kloc(__object, keys, values_only=True)
+    elif isinstance(__object, Tag): __object = sloc(__object, keys, values_only=True)
+    is_float = type and is_float_type(type)
+    __cast = cast_float if is_float else cast_int
+    context = dict(strict=strict, trunc=trunc) if is_float else dict(strict=strict)
+    return sum(map(lambda x: __cast(x, **context), cast_list(__object)))
 
 
 def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None,
