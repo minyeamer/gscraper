@@ -232,19 +232,11 @@ def init_origin(__object: Union[Type,TypeHint,Any], argidx=0, default=None) -> A
         else: return default
 
 
-def is_comparable(__object) -> bool:
-    try: __object > __object
-    except TypeError: return False
-    return True
-
-
 def is_type(__type: TypeHint, __types: TypeList) -> bool:
     return (__type.lower() if isinstance(__type, str) else __type) in __types
 
-def is_supported_type(__type: TypeHint) -> bool:
-    for __types in TYPE_LIST.values():
-        if is_type(__type, __types): return True
-    return False
+def is_object_type(__object, __types: TypeList) -> bool:
+    return type(__object) in __types
 
 def is_bool_type(__type: TypeHint) -> bool:
     return is_type(__type, BOOLEAN_TYPES)
@@ -299,6 +291,24 @@ def is_json_type(__type: TypeHint) -> bool:
 
 def is_dataframe_type(__type: TypeHint) -> bool:
     return is_type(__type, DATAFRAME_TYPES)
+
+
+def is_comparable(__object) -> bool:
+    try: __object > __object
+    except TypeError: return False
+    return True
+
+
+def is_supported_type(__type: TypeHint) -> bool:
+    for __types in TYPE_LIST.values():
+        if is_type(__type, __types): return True
+    return False
+
+
+def get_type_list(__type: TypeHint) -> TypeList:
+    for __types in TYPE_LIST.values():
+        if is_type(__type, __types): return __types
+    return list()
 
 
 ###################################################################

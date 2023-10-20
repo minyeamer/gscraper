@@ -2,20 +2,22 @@ from __future__ import annotations
 from gscraper.base import SCHEMA_CONTEXT
 from gscraper.base.session import TypedDict, TypedRecords, BaseSession, custom_str
 
-from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList, IndexLabel, Timezone, RenameMap
+from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
+from gscraper.base.types import IndexLabel, Timezone, RenameMap, RegexFormat
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
-from gscraper.base.types import get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type, is_float_type
+from gscraper.base.types import get_type, init_origin, is_type, is_float_type
+from gscraper.base.types import is_numeric_type, is_numeric_or_date_type, is_bool_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
 
 from gscraper.utils import isna, notna, exists
-from gscraper.utils.cast import cast_object, cast_list, cast_str, cast_tuple, cast_float, cast_int
+from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int
 from gscraper.utils.date import is_daily_frequency
 from gscraper.utils.logs import log_data
-from gscraper.utils.map import exists_one, howin, safe_apply, get_scala, union
+from gscraper.utils.map import exists_one, howin, safe_apply, get_scala, re_get, union
 from gscraper.utils.map import kloc, isin_dict, is_single_path, chain_dict, drop_dict, hier_get
 from gscraper.utils.map import vloc, groupby_records, drop_duplicates
 from gscraper.utils.map import cloc, concat_df, fillna_each, safe_apply_df, groupby_df, filter_data, set_data, isin_df, match_df
-from gscraper.utils.map import sloc, select_one, select_by, hier_select, isin_source, is_single_selector, groupby_source
+from gscraper.utils.map import select_one, select_by, hier_select, isin_source, is_single_selector, groupby_source
 
 from abc import ABCMeta
 from ast import literal_eval
@@ -63,8 +65,10 @@ OPTIONAL = "OPTIONAL"
 FUNC = "func"
 __EXISTS__ = "__EXISTS__"
 __JOIN__ = "__JOIN__"
+__REGEX__ = "__REGEX__"
 __RENAME__ = "__RENAME__"
 __SPLIT__ = "__SPLIT__"
+__STAT__ = "__STAT__"
 __SUM__ = "__SUM__"
 __MAP__ = "__MAP__"
 
@@ -183,14 +187,26 @@ class Match(TypedDict):
 
 
 class Exists(Apply):
-    def __init__(self, keys: _KT=list(), default: Optional[Any]=None, type: Optional[Type]=None, strict=False):
+    def __init__(self, keys: _KT=list(), default: Optional[Any]=None, hier=False):
         super().__init__(func=__EXISTS__, keys=keys)
-        self.update_default(dict(strict=False), default=default, type=type, strict=strict)
+        self.update_default(dict(hier=False), default=default, hier=hier)
 
 
 class Join(Apply):
-    def __init__(self, keys: _KT=list(), sep=',', split=','):
-        super().__init__(func=__JOIN__, keys=keys, sep=sep, split=split)
+    def __init__(self, keys: _KT=list(), sep=',', default: Optional[Any]=None,
+                hier=False, strip=True, split: Optional[str]=None):
+        super().__init__(func=__JOIN__, keys=keys, sep=sep)
+        self.update_default(dict(hier=False, strip=True),
+            default=default, hier=hier, strip=strip, split=split)
+
+
+class Regex(Apply):
+    def __init__(self, pattern: RegexFormat, how: Literal["search","findall","sub"]="search",
+                default=None, index: Optional[int]=0, repl: Optional[str]=None):
+        if notna(repl): how = "sub"
+        elif not isinstance(index, int): how = "findall"
+        super().__init__(func=__REGEX__, pattern=pattern, how=how)
+        self.update_default(dict(index=0), default=default, index=index, repl=repl)
 
 
 class Rename(Apply):
@@ -201,19 +217,26 @@ class Rename(Apply):
 
 
 class Split(Apply):
-    def __init__(self, sep=',', maxsplit=-1, default: Optional[bool]=None,
-                strict=True, index: Optional[int]=None, type: Optional[Type]=None):
+    def __init__(self, sep=',', maxsplit=-1, default: Optional[Any]=None,
+                strict=True, index: Optional[int]=None, type: Optional[TypeHint]=None):
         super().__init__(func=__SPLIT__, sep=sep)
         self.update_default(dict(maxsplit=-1, strict=True),
             maxsplit=maxsplit, default=default, strict=strict, index=index, type=type)
 
 
-class Sum(Apply):
-    def __init__(self, keys: _KT=list(), type: Optional[Type]=None, strict=False,
-                trunc: Optional[int]=None):
-        super().__init__(func=__SUM__)
-        self.update_default(dict(keys=list(), strict=False),
-            keys=keys, type=type, strict=strict, trunc=trunc)
+class Stat(Apply):
+    def __init__(self, stat: Callable, keys: _KT=list(), default: Optional[Any]=None,
+                hier=False, type: Optional[TypeHint]=None, strict=True):
+        super().__init__(func=__STAT__, stat=stat, keys=keys)
+        self.update_default(dict(hier=False, strict=True),
+            default=default, hier=hier, type=type, strict=strict)
+
+
+class Sum(Stat):
+    def __init__(self, keys: _KT=list(), default: Optional[Any]=None,
+                hier=False, type: Optional[TypeHint]=None, strict=True):
+        super().__init__(func=__STAT__, stat=sum, keys=keys,
+            default=default, hier=hier, type=type, strict=strict)
 
 
 class Map(Apply):
@@ -530,7 +553,7 @@ def _map_dict_schema(__m: Dict, __base: Dict, schema: Schema, **context) -> Dict
 
 
 def _map_dict_field(__m: Dict, __base: Dict, name: _KT, path: SchemaPath, how: Optional[PathType]=None,
-                    type: Optional[Type]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True,
+                    type: Optional[TypeHint]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True,
                     default=None, apply: Apply=dict(), match: Match=dict(), **context) -> Dict:
     path_type = how if how else get_path_type(path)
     context = dict(type=type, cast=cast, strict=strict, default=default, apply=apply, match=match, query=context)
@@ -542,13 +565,13 @@ def _map_dict_field(__m: Dict, __base: Dict, name: _KT, path: SchemaPath, how: O
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _cast_value(value: _VT, type: Optional[Type]=None, default=None, strict=True,
+def _cast_value(value: _VT, type: Optional[TypeHint]=None, default=None, strict=True,
                 cast=True, trunc=2, **context) -> _VT:
     context = dict(context, default=default, strict=strict, trunc=trunc)
     return cast_object(value, type, **context) if type and cast else value
 
 
-def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+def _from_dict(__m: Dict, path: SchemaPath, type: Optional[TypeHint]=None, cast=False, strict=True,
                 default=None, apply: Apply=dict(), query: Context=dict()) -> _VT:
     default = _from_dict(__m, default) if notna(default) else default
     if is_array(path): value = hier_get(__m, path, default, empty=False)
@@ -558,7 +581,7 @@ def _from_dict(__m: Dict, path: SchemaPath, type: Optional[Type]=None, cast=Fals
     return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
-def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
+def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if not _match_dict(__m, **dict(query, **match)): return __base
@@ -566,7 +589,7 @@ def _set_dict_value(__m: Dict, __base: Dict, name: _KT, path: _KT, type: Optiona
     return __base
 
 
-def _set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, type: Optional[Type]=None,
+def _set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     __match = int(_match_dict(__m, **dict(query, **match)))-1
@@ -575,7 +598,7 @@ def _set_dict_tuple(__m: Dict, __base: Dict, name: _KT, path: Tuple, type: Optio
     return __base
 
 
-def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[Type]=None,
+def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     value = hier_get(__m, path[:-1])
@@ -587,7 +610,7 @@ def _set_dict_iterate(__m: Dict, __base: Dict, name: _KT, path: Sequence[_KT], t
     return __base
 
 
-def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Optional[Type]=None,
+def _set_dict_global(__m: Dict, __base: Dict, name: Optional[_KT]=None, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if _match_dict(__m, **dict(query, **match)):
@@ -651,7 +674,7 @@ def _map_df_schema(df: pd.DataFrame, __base: pd.DataFrame, schema: Schema, **con
 
 
 def _map_df_field(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: SchemaPath, how: Optional[PathType]=None,
-                type: Optional[Type]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True, default=None,
+                type: Optional[TypeHint]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True, default=None,
                 apply: Apply=dict(), match: Match=dict(), **context) -> Dict:
     path_type = how if how else get_path_type(path)
     context = dict(type=type, cast=cast, strict=strict, default=default, apply=apply, match=match, query=context)
@@ -664,13 +687,13 @@ def _map_df_field(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Schem
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _cast_df(df: Union[pd.DataFrame,pd.Series], type: Optional[Type]=None, default=None, strict=True,
+def _cast_df(df: Union[pd.DataFrame,pd.Series], type: Optional[TypeHint]=None, default=None, strict=True,
             cast=True, trunc=2, **context) -> Union[pd.DataFrame,pd.Series]:
     context = dict(context, default=default, strict=strict, trunc=trunc)
     df = safe_apply_df(df, cast_object, default, **context) if type and cast else df
 
 
-def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[TypeHint]=None, cast=False, strict=True,
             default=None, apply: Apply=dict(), query: Context=dict()) -> pd.Series:
     default = _from_df(df, default) if is_array(default) else default
     if is_array(path): series = fillna_each(df[path[0]], default)
@@ -680,7 +703,7 @@ def _from_df(df: pd.DataFrame, path: SchemaPath, type: Optional[Type]=None, cast
     return _cast_df(df, type, default=default, strict=strict, cast=cast, **query)
 
 
-def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, type: Optional[Type]=None,
+def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, type: Optional[TypeHint]=None,
                 cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                 query: Context=dict()) -> pd.DataFrame:
     if _match_df(df, **dict(query, **match)).empty: return __base
@@ -691,7 +714,7 @@ def _set_df_value(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: _KT, 
     return __base
 
 
-def _set_df_tuple(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Tuple, type: Optional[Type]=None,
+def _set_df_tuple(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Tuple, type: Optional[TypeHint]=None,
                 cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                 query: Context=dict()) -> pd.DataFrame:
     matches = _match_df(df, **dict(query, **match)).index
@@ -704,7 +727,7 @@ def _set_df_tuple(df: pd.DataFrame, __base: pd.DataFrame, name: _KT, path: Tuple
     return __base
 
 
-def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=None, type: Optional[Type]=None,
+def _set_df_global(df: pd.DataFrame, __base: pd.DataFrame, name: Optional[_KT]=None, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> pd.DataFrame:
     df = _match_df(df, **dict(query, **match))
@@ -778,7 +801,7 @@ def _map_html_schema(source: Tag, __base: Dict, schema: Schema, **context) -> Di
 
 
 def _map_html_field(source: Tag, __base: Dict, name: _KT, path: SchemaPath, how: Optional[PathType]=None,
-                    type: Optional[Type]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True,
+                    type: Optional[TypeHint]=None, mode: _PASS=None, description: _PASS=None, cast=False, strict=True,
                     default=None, apply: Apply=dict(), match: Match=dict(), **context) -> Dict:
     path_type = how if how else get_path_type(path)
     context = dict(type=type, cast=cast, strict=strict, default=default, apply=apply, match=match, query=context)
@@ -790,7 +813,7 @@ def _map_html_field(source: Tag, __base: Dict, name: _KT, path: SchemaPath, how:
     else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
 
 
-def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=False, strict=True,
+def _from_html(source: Tag, path: SchemaPath, type: Optional[TypeHint]=None, cast=False, strict=True,
                 default=None, apply: Apply=dict(), query: Context=dict()) -> Union[Tag,Any]:
     default = _from_html(source, default) if notna(default) else default
     if is_array(path): value = hier_select(source, path, default, empty=False)
@@ -800,7 +823,7 @@ def _from_html(source: Tag, path: SchemaPath, type: Optional[Type]=None, cast=Fa
     return _cast_value(value, type, default=default, strict=strict, cast=cast, **query)
 
 
-def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, type: Optional[Type]=None,
+def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if not _match_html(source, **dict(query, **match)): return __base
@@ -808,7 +831,7 @@ def _set_html_value(source: Tag, __base: Dict, name: _KT, path: _KT, type: Optio
     return __base
 
 
-def _set_html_tuple(source: Tag, __base: Dict, name: _KT, path: Tuple, type: Optional[Type]=None,
+def _set_html_tuple(source: Tag, __base: Dict, name: _KT, path: Tuple, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     __match = int(_match_html(source, **dict(query, **match)))-1
@@ -817,7 +840,7 @@ def _set_html_tuple(source: Tag, __base: Dict, name: _KT, path: Tuple, type: Opt
     return __base
 
 
-def _set_html_iterate(source: Tag, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[Type]=None,
+def _set_html_iterate(source: Tag, __base: Dict, name: _KT, path: Sequence[_KT], type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     source = hier_select(source, path[:-1])
@@ -829,7 +852,7 @@ def _set_html_iterate(source: Tag, __base: Dict, name: _KT, path: Sequence[_KT],
     return __base
 
 
-def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: Optional[Type]=None,
+def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: Optional[TypeHint]=None,
                     cast=False, strict=True, default=None, apply: Apply=dict(), match: Match=dict(),
                     query: Context=dict()) -> Dict:
     if _match_html(source, **dict(query, **match)):
@@ -848,7 +871,7 @@ def _set_html_global(source: Tag, __base: Dict, name: Optional[_KT]=None, type: 
 
 def apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, name=str(), **context) -> Any:
     if not func: return __object
-    if isinstance(func, Callable): return safe_apply(__object, func, default, **context)
+    elif isinstance(func, Callable): return safe_apply(__object, func, default, **context)
     elif isinstance(func, str): return _special_apply(__object, func, name, **context)
     else: raise TypeError(INVALID_APPLY_TYPE_MSG(func, name))
 
@@ -856,32 +879,36 @@ def apply_schema(__object, func: Optional[ApplyFunction]=None, default=None, nam
 def _special_apply(__object, func: str, name=str(), **context) -> _VT:
     if func == __EXISTS__: return __exists__(__object, **context)
     elif func == __JOIN__: return __join__(__object, **context)
+    elif func == __REGEX__: return __regex__(__object, **context)
     elif func == __RENAME__: return __rename__(__object, **context)
     elif func == __SPLIT__: return __split__(__object, **context)
-    elif func == __SUM__: return __sum__(__object, **context)
+    elif func == __STAT__: return __stat__(__object, **context)
+    elif func == __SUM__: return __stat__(__object, **context)
     elif func == __MAP__: return __map__(__object, **context)
     else: raise ValueError(INVALID_OBJECT_MSG(func, name))
 
 
-def __exists__(__object, keys: _KT=list(), default=None, type: Optional[Type]=None, strict=False, **context) -> Any:
-    value = exists_one(*kloc(__object, keys, if_null="drop", values_only=True))
-    return _cast_value(value, type, default=default, strict=strict, **context)
+def __exists__(__object, keys: _KT=list(), default=None, hier=False, **context) -> Any:
+    if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+    return exists_one(*__object, default) if is_array(__object) else default
 
 
-def __join__(__object, keys: _KT=list(), sep=',', split=',', **context) -> str:
-    if isinstance(__object, Sequence):
-        __iterable = [cast_str((hier_get(__e, keys) if keys else __e), strict=True) for __e in __object]
-        return str(sep).join([__e for __e in __iterable if __e])
-    elif isinstance(__object, Dict):
-        if isinstance(keys, str): __object = __object.get(keys)
-        elif isinstance(keys, Sequence):
-            if_null = "pass" if not keys else "drop"
-            __object = kloc(__object, keys, if_null=if_null, values_only=True)
-        else: return str()
-        return __join__(__object, sep=sep, split=split)
-    elif isinstance(__object, str):
-        return __join__(list(map(lambda x: x.strip(), __object.split(split))), sep=sep)
-    else: return str()
+def __join__(__object, keys: _KT=list(), sep=',', default=None, hier=False,
+            strip=True, split: Optional[str]=None, **context) -> str:
+    if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+    if split: __object = cast_str(__object).split(split)
+    if not is_array(__object): return default
+    __object = [__s for __s in [cast_str(__e, strict=True, strip=strip) for __e in __object] if __s]
+    return sep.join(__object) if __object else default
+
+
+def __regex__(__object, pattern: RegexFormat, how: Literal["search","findall","sub"]="search",
+                default=None, index: Optional[int]=0, repl: Optional[str]=None, **context) -> str:
+    __object = cast_str(__object, strict=True)
+    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
+    if how == "sub": return __pattern.sub(repl, __object)
+    elif how == "findall": index = None
+    return re_get(pattern, __object, default=default, index=index)
 
 
 def __rename__(__object, rename: RenameMap, path: _KT=list(),
@@ -893,21 +920,22 @@ def __rename__(__object, rename: RenameMap, path: _KT=list(),
     return hier_get(value, path) if path else value
 
 
-def __split__(__object, sep=',', maxsplit=-1, default=None, strict=True,
-                index: Optional[int]=None, type: Optional[Type]=None, **context) -> Union[List,_VT]:
-    __s = cast_str(__object, strict=True).split(sep, maxsplit)
-    if type: __s = list(map(lambda x: _cast_value(x, type, default=default, strict=strict, **context), __s))
-    return get_scala(__s, index) if isinstance(index, int) else __s
+def __split__(__object, sep=',', maxsplit=-1, default=None, strict=True, index: Optional[int]=None,
+                type: Optional[TypeHint]=None, cast: _PASS=True, **context) -> Union[List,_VT]:
+    __object = cast_str(__object, strict=True).split(sep, maxsplit)
+    if type: __object = [_cast_value(__e, type, default=default, strict=strict, **context) for __e in __object]
+    return get_scala(__object, index) if isinstance(index, int) else __object
 
 
-def __sum__(__object, keys: _KT=list(), type: Optional[Type]=None, strict=False,
-            trunc: Optional[int]=None, **context) -> Union[int,float]:
-    if isinstance(__object, Dict): __object = kloc(__object, keys, values_only=True)
-    elif isinstance(__object, Tag): __object = sloc(__object, keys, values_only=True)
-    is_float = type and is_float_type(type)
-    __cast = cast_float if is_float else cast_int
-    context = dict(strict=strict, trunc=trunc) if is_float else dict(strict=strict)
-    return sum(map(lambda x: __cast(x, **context), cast_list(__object)))
+def __stat__(__object, stat: Callable, keys: _KT=list(), default=None, hier=False,
+            type: Optional[TypeHint]=None, strict=True, cast: _PASS=True, **context) -> Union[Any,int,float]:
+    if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+    if not is_array(__object): return default
+    elif is_numeric_type(type):
+        __cast = cast_float if is_float_type(type) else cast_int
+        __object = [__cast(__e, strict=strict) for __e in __object]
+    else: __object = [__n for __n in __object if isinstance(__n, (float,int))]
+    return stat(__object) if __object else default
 
 
 def __map__(__object, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None,

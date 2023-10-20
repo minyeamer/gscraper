@@ -25,7 +25,7 @@ def isfloat(__object) -> bool:
 
 def cast_float(__object, default=0., strict=False, trunc: Optional[int]=None) -> float:
     try:
-        __object = float(__object) if strict else float(re.sub("[^\d.-]",'',str(__object)))
+        __object = float(__object) if strict else float(re.sub(r"[^\d.-]",'',str(__object)))
         return round(__object, trunc) if isinstance(trunc, int) else __object
     except CastError: return default
 
@@ -173,17 +173,20 @@ def cast_datetime_format(__object: DateFormat, default=None, strict=False) -> Da
 ############################ Array Type ###########################
 ###################################################################
 
-def cast_str(__object, default=str(), strict=True, match: Optional[Union[RegexFormat,MatchFunction]]=None) -> str:
+def cast_str(__object, default=str(), strict=True, strip=False,
+            match: Optional[Union[RegexFormat,MatchFunction]]=None) -> str:
     if match:
         if isinstance(match, Callable) and match(__object): pass
         elif isinstance(match, re.Pattern) and match.search(str(__object)): pass
         elif isinstance(match, str) and re.search(match, str(__object)): pass
         else: return default
-    return str(__object) if notna(__object, strict=strict) else default
+    if notna(__object, strict=strict):
+        return str(__object).strip() if strip else str(__object)
+    else: return default
 
 
 def cast_id(__object, default=str()) -> str:
-    return cast_str(cast_int(__object, default=__object), default, match="^((?!nan).)*$")
+    return cast_str(cast_int(__object, default=__object), default, match=r"^((?!nan).)*$")
 
 
 def cast_list(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> List:
@@ -211,12 +214,12 @@ def cast_set(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> Set:
 ############################ Multitype ############################
 ###################################################################
 
-def cast_object(__object, __type: TypeHint, default=None, strict=True,
+def cast_object(__object, __type: TypeHint, default=None, strict=True, strip=False,
                 match: Optional[Union[RegexFormat,MatchFunction]]=None, trunc: Optional[int]=None,
                 tzinfo: Optional[Timezone]=None, astimezone: Optional[Timezone]=None,
                 droptz=False, tsUnit: Literal["ms","s"]="ms", from_ordinal=False,
                 iter_type: _TYPE=(List,Set,Tuple), **kwargs) -> Any:
-    if is_str_type(__type): return cast_str(__object, default=default, strict=strict, match=match)
+    if is_str_type(__type): return cast_str(__object, default=default, strict=strict, strip=strip, match=match)
     elif is_int_type(__type): return cast_int(__object, default=default, strict=strict)
     elif is_float_type(__type): return cast_float(__object, default=default, strict=strict, trunc=trunc)
     elif is_bool_type(__type): return notna(__object, strict=strict)

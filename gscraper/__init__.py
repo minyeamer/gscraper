@@ -11,4 +11,4 @@ from .utils.date import *
 from .utils.logs import *
 from .utils.map import *
 
-__version__ = "3.1.9"
+__version__ = "3.2.0"

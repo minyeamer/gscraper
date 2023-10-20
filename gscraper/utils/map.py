@@ -25,9 +25,6 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 
 
-INCLUDE = 0
-EXCLUDE = 1
-
 BETWEEN_RANGE_TYPE_MSG = "Between condition must be an iterable or a dictionary."
 INVALID_ISIN_MSG = "Isin function requires at least one parameter: exact, include, and exclude."
 SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
@@ -147,7 +144,8 @@ def iloc(__s: IndexedSequence, indices: Index, default=None, if_null: Literal["d
 
 def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="drop",
         reorder=True, values_only=False, hier=False, alias: Sequence[_KT]=list(), sep=' > ') -> Union[_VT,Dict]:
-    if hier: return hloc(__m, keys, default, if_null=if_null, values_only=values_only, alias=alias, sep=sep)
+    if hier:
+        return hloc(__m, keys, default, if_null=if_null, values_only=values_only, alias=alias, sep=sep)
     elif not is_array(keys):
         return __m.get(keys, default)
     elif keys:
@@ -180,14 +178,18 @@ def vloc(__r: List[Dict], keys: _KT, default=None, if_null: Literal["drop","pass
 
 
 def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
-        reorder=True) -> pd.DataFrame:
+        reorder=True, values_only=False) -> Union[pd.DataFrame,pd.Series,_VT]:
     __inter = inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))
-    if not __inter: return pd.DataFrame() if if_null == "drop" else df
+    if not __inter:
+        return pd.DataFrame() if if_null == "drop" else df
+    elif not is_array(columns): df = df[columns]
     elif (if_null == "pass") and (len(columns) != len(__inter)):
         if reorder: df = pd.concat([pd.DataFrame(columns=columns),df])
         else: df = pd.concat([pd.DataFrame(columns=unique(*__inter,*columns)),df])
-        return df.where(pd.notna(df), default)
-    else: return df[__inter]
+    else: df = df[__inter]
+    if notna(default): df = df.where(pd.notna(df), default)
+    if isinstance(df, pd.Series): return df.tolist() if values_only else df
+    else: return list(df.to_dict("list").values()) if values_only else df
 
 
 def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["drop","pass"]="drop",
@@ -210,24 +212,27 @@ def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["
 @multitype_allowed
 @multitype_rename
 def filter_data(data: Data, fields: Optional[Union[_KT,Index]]=list(), default=None,
-                if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameMap=dict(), convert_first=False, rename_first=False) -> Data:
+                if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
+                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
+                convert_first=False, rename_first=False) -> Data:
     if not fields: return data if if_null != "drop" else list()
-    if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
-    elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder)
-    elif isinstance(data, Dict): return kloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder)
+    if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only, hier=hier)
+    elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
+    elif isinstance(data, Dict): return kloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only, hier=hier)
     elif is_array(data): return iloc(data, indices=fields, default=default, if_null=if_null)
+    elif isinstance(data, Tag): return sloc(data, indices=fields, default=default, if_null=if_null, values_only=values_only, hier=hier)
     else: return list()
 
 
 def multitype_filter(func):
     @functools.wraps(func)
     def wrapper(data: Data, *args, fields: Optional[Union[_KT,Index]]=list(), default=None,
-                if_null: Literal["drop","pass"]="pass", reorder=True, filter_first=False, **kwargs):
+                if_null: Literal["drop","pass"]="pass", reorder=True, values_only=False, hier=False,
+                filter_first=False, **kwargs):
         if not fields: return func(data, *args, **kwargs) if if_null != "drop" else list()
         if filter_first: data = filter_data(data, fields, default, if_null, reorder)
         data = func(data, *args, **kwargs)
-        if not filter_first: data = filter_data(data, fields, default, if_null, reorder)
+        if not filter_first: data = filter_data(data, fields, default, if_null, reorder, values_only, hier)
         return data
     return wrapper
 
@@ -544,8 +549,8 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
 @multitype_filter
 def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first",
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False, filter_first=False) -> Data:
+                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None,
+                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False) -> Data:
     if is_dfarray(data): return concat_df([df for df in data if df_exists(df)])
     elif is_2darray(data): return list(chain.from_iterable([__s for __s in data if is_array(__s)]))
     elif data_type and is_dict_type(data_type) and is_records(data, how="any"):
@@ -668,13 +673,14 @@ def safe_apply_df(__object: Union[pd.DataFrame,pd.Series], __applyFunc: ApplyFun
 @multitype_filter
 def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFunc: Optional[ApplyFunction]=list(),
                 apply: Optional[ApplyFunction]=None, all_keys=False, fields: Optional[Union[_KT,Index]]=list(),
-                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
+                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
+                convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
     if is_records(data): return apply_records(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, apply=apply, all_cols=all_keys, **context)
     elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     elif is_array(data): return apply_array(data, __keys, __applyFunc, apply=apply, all_indices=all_keys, **context)
-    else: return data
+    else: return safe_apply(data, apply, default=default, **context)
 
 
 ###################################################################
@@ -738,13 +744,13 @@ def match_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __matchFu
 def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFunc: Optional[MatchFunction]=list(),
                 match: Optional[MatchFunction]=None, all_keys=False, how: Literal["filter","all","indexer"]="filter",
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
+                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
     if is_records(data): return match_records(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     elif isinstance(data, pd.DataFrame): return match_df(data, __keys, __matchFunc, match=match, all_cols=all_keys, how=how, **context)
     elif isinstance(data, Dict): return match_dict(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     elif is_array(data): return match_array(data, __keys, __matchFunc, match=match, all_indices=all_keys, how=how, **context)
-    else: return data
+    else: return safe_apply(data, match, default=default, **context)
 
 
 ###################################################################
@@ -1001,12 +1007,12 @@ def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __range
 @multitype_filter
 def between_data(data: MappingData, inclusive: Literal["both","neither","left","right"]="both", null=False,
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(), convert_first=False,
-                rename_first=False, filter_first=False, **context) -> MappingData:
+                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
+                convert_first=False, rename_first=False, filter_first=False, **context) -> MappingData:
     if is_records(data): return between_records(data, inclusive=inclusive, null=null, **context)
-    elif isinstance(data, pd.DataFrame): return between_df(data, inclusive=inclusive, null=null)
-    elif isinstance(data, Dict): return data if between_dict(data, inclusive=inclusive, null=null) else dict()
-    else: return data
+    elif isinstance(data, pd.DataFrame): return between_df(data, inclusive=inclusive, null=null, **context)
+    elif isinstance(data, Dict): return data if between_dict(data, inclusive=inclusive, null=null, **context) else dict()
+    else: return between(data, inclusive=inclusive, **context)
 
 
 ###################################################################
@@ -1095,30 +1101,30 @@ def flip_dict(__m: Dict) -> Dict:
 def sort_records(__r: Records, by: _KT, ascending=True) -> Records:
     return sorted(__r, key=lambda x: kloc(x, cast_tuple(by), values_only=True), reverse=(not ascending))
 
+
 @multitype_allowed
 @multitype_rename
 @multitype_filter
 def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True, fields: Optional[Union[_KT,Index]]=list(),
-                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, return_type: Optional[TypeHint]=None,
-                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
-    if is_records(data):
-        ascending = bool(iloc(ascending, 0)) if isinstance(ascending, Sequence) else ascending
-        return sort_records(data, by=by, ascending=ascending)
+                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
+                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(), convert_first=False, rename_first=False,
+                filter_first=False, **context) -> Data:
+    asc = ascending if isinstance(ascending, bool) else bool(get_scala(ascending))
+    if is_records(data): return sort_records(data, by=by, ascending=asc)
     elif isinstance(data, pd.DataFrame): return data.sort_values(by, ascending=ascending)
-    elif isinstance(data, Dict): return {__key: data[__key] for __key in sorted(data.keys())}
-    elif is_array(data): return sorted(data)
-    else: return data
+    elif isinstance(data, Dict): return dict(sorted(data.items(), key=lambda x: x[0], reverse=(not asc)))
+    else: return sorted(data, reverse=(not asc))
 
 
 ###################################################################
 ############################## String #############################
 ###################################################################
 
-def re_get(pattern: RegexFormat, string: str, default=str(), groups=False) -> Union[str,List[str]]:
+def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:
     __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
-    if groups: return __pattern.findall(string)
+    if not isinstance(index, int): return __pattern.findall(string)
     catch = __pattern.search(string)
-    return __pattern.search(string).groups()[0] if catch else default
+    return __pattern.search(string).groups()[index] if catch else default
 
 
 def replace_map(__string: str, strip=False, **context) -> str:
