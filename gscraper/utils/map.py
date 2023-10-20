@@ -840,6 +840,8 @@ def select_date(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=No
 def is_single_selector(selector: _KT, hier=False, index: Optional[Index]=None) -> bool:
     if (not selector) or isinstance(index, int): return True
     elif not hier: return not is_2darray(selector, how="any")
+    elif not is_array(selector): return True
+    elif len(selector) == 1: return not is_array(selector[0])
     else: return all(
         [(not is_2darray(__s, how="any")) and isinstance(_get_selector(__s)[1], int) for __s in selector[:-1]])
 
@@ -859,11 +861,12 @@ def _get_selector_by(selector: _KT, key=str(), by: Literal["source","text"]="sou
 
 def _get_selector_name(selector: _KT, key=str(), by: Literal["source","text"]="source", sep=' > ', hier=False) -> str:
     path = (sep.join([_get_selector_name(__s, sep=sep) if is_array(__s) else str(__s)
-                    for __s in selector[:-1]])+sep if hier else str())
+                    for __s in selector[:-1]]) if hier else str())
     if hier: selector = selector[-1]
     selector, key, by = _get_selector_by(selector, key, by)
     selector, index = _get_selector(selector, sep=sep)
-    return path + selector + (f"[{index}]" if notna(index) else str()) + (f"[@{key}]" if key else str())
+    if path: selector = sep.join(path, selector) if selector else path
+    return selector + (f"[{index}]" if notna(index) else str()) + (f"[@{key}]" if key else str())
 
 
 def select_by(source: Tag, selector: _KT, default=None, key=str(), sep=' > ', index: Optional[Unit]=None,

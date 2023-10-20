@@ -2,7 +2,7 @@ from __future__ import annotations
 from gscraper.base import SCHEMA_CONTEXT
 from gscraper.base.session import TypedDict, TypedRecords, BaseSession, custom_str
 
-from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, IndexLabel, Timezone, RenameMap
+from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList, IndexLabel, Timezone, RenameMap
 from gscraper.base.types import Records, NestedDict, MappingData, Data, JsonData, HtmlData, ApplyFunction, MatchFunction
 from gscraper.base.types import get_type, init_origin, is_type, is_numeric_or_date_type, is_bool_type, is_float_type
 from gscraper.base.types import is_array, is_records, is_json_object, is_df, is_df_sequence
@@ -356,9 +356,13 @@ class SchemaInfo(TypedDict):
         schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)))
         return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
 
-    def get_schema_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]],
-                            keys: _KT=list(), values_only=False, schema_names: _KT=list(),
+    def get_schema_by_name(self, name: _KT, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
                             keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
+        match = lambda __name: __name in cast_tuple(name)
+        return self.get_schema(keys, values_only=values_only, schema_names=schema_names, keep=keep, name=match)
+
+    def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(), values_only=False,
+                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
         __types = tuple(map(get_type, cast_tuple(__type)))
         match = lambda __type: is_type(__type, __types)
         return self.get_schema(keys, values_only=values_only, schema_names=schema_names, keep=keep, type=match)
