@@ -2,7 +2,7 @@ from __future__ import annotations
 from gscraper.base import REQUEST_CONTEXT
 
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, Index, IndexLabel
-from gscraper.base.types import Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, Data, ResponseData, MatchFunction
 from gscraper.base.types import init_origin, is_dataframe_type
 from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
@@ -11,7 +11,7 @@ from gscraper.utils import isna, notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, set_date, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
-from gscraper.utils.map import data_exists, unique, get_scala, exists_one, diff
+from gscraper.utils.map import data_exists, unique, get_scala, exists_one, startswith, endswith, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
 from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data
@@ -36,26 +36,56 @@ PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
 DATE_ITERATOR = ["startDate", "endDate"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
+ITER_INDEX = "__index"
+ITER_SUFFIX = lambda context: f"_{context[ITER_INDEX]}" if ITER_INDEX in context else str()
+ITER_MSG = lambda context: {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in context else dict()
+
 START, END = 0, 1
 
 CHECKPOINT = [
     "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count", "redirect",
-    "request", "response", "parse", "login", "api", "exception"]
+    "request", "response", "parse", "schema", "field", "group", "apply", "match", "login", "api", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 
 
-###################################################################
-########################### Custom Dict ###########################
-###################################################################
+def to_default(__object) -> Any:
+    if isinstance(__object, Dict):
+        return {__key: to_default(__value) for __key, __value in __object.items()}
+    elif isinstance(__object, List):
+        return [to_default(__e) for __e in __object]
+    else: return __object
 
-def custom_str(__object, indent=0, step=2) -> str:
-    if isinstance(__object, (CustomDict,CustomList)):
-        return __object.__str__(indent=indent+step, step=step)
+
+def pretty_str(__object, indent=2, step=2) -> str:
+    if isinstance(__object, CustomDict):
+        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {pretty_str(__v, indent=indent+step, step=step)}"
+                    for __k, __v in __object.items()])+'\n'+' '*(indent-step)+'}'
+    elif isinstance(__object, CustomList):
+        return '[\n'+',\n'.join([' '*indent+pretty_str(__e, indent=indent, step=step)
+                for __e in __object])+'\n'+' '*(indent-step)+']'
     elif isinstance(__object, str): return f"'{__object}'"
     else: return str(__object)
 
+
+def pretty_print(__object, drop: Optional[_KT]=None):
+    if drop and isinstance(__object, Dict):
+        print(pretty_str(CustomDict(**drop_dict(__object, drop))))
+    if isinstance(__object, (CustomDict,CustomList)):
+        print(pretty_str(__object))
+    elif isinstance(__object, Dict):
+        print(pretty_str(CustomDict(**__object)))
+    elif is_records(__object, how="all"):
+        print(pretty_str(CustomList(*__object)))
+    elif isinstance(__object, pd.DataFrame):
+        print("pd.DataFrame("+pretty_str(CustomList(*__object.to_dict("records")))+")")
+    else: print(pretty_str(__object))
+
+
+###################################################################
+########################### Custom Dict ###########################
+###################################################################
 
 class CustomDict(dict):
     def __init__(self, __m: Dict=dict(), **kwargs):
@@ -69,6 +99,9 @@ class CustomDict(dict):
     def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
             reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
         return kloc(dict(self), __key, default, if_null, reorder, values_only)
+
+    def print(self, __object, drop: Optional[_KT]=None):
+        pretty_print(__object, drop=drop)
 
     def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
         if not inplace: self = self.copy()
@@ -113,10 +146,6 @@ class CustomDict(dict):
                 setattr(self, __k, __v)
         else: setattr(self, __key, __value)
 
-    def __str__(self, indent=2, step=2) -> str:
-        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {custom_str(__v, indent=indent, step=step)}"
-                for __k, __v in self.items()])+'\n'+' '*(indent-step)+'}'
-
 
 class TypedDict(CustomDict):
     def update_default(self, __default: Dict=dict(), __how: Literal["notna","exists"]="notna",
@@ -141,6 +170,9 @@ class CustomList(list):
     def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
         return iloc(list(self), __key, default, if_null)
 
+    def print(self, __object, drop: Optional[_KT]=None):
+        pretty_print(__object, drop=drop)
+
     def add(self, __iterable: Iterable):
         for __i in __iterable:
             self.append(__i)
@@ -164,10 +196,6 @@ class CustomList(list):
             if not inplace: self = self.copy()
             return self.update(func(self, *args, inplace=inplace, **kwargs), inplace=inplace)
         return wrapper
-
-    def __str__(self, indent=2, step=2) -> str:
-        return '[\n'+',\n'.join([' '*indent+custom_str(__e, indent=indent, step=step)
-                for __e in map(dict, self)])+'\n'+' '*(indent-step)+']'
 
 
 ###################################################################
@@ -222,7 +250,7 @@ class TypedRecords(CustomRecords):
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
-    by = str()
+    host = str()
     fields = list()
     tzinfo = None
     datetimeUnit = "second"
@@ -232,8 +260,7 @@ class BaseSession(CustomDict):
     def __init__(self, fields: IndexLabel=list(),
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                **context):
+                debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False, **context):
         self.operation = self.operation
         self.fields = fields if fields else self.fields
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
@@ -241,10 +268,10 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
         self.returnType = returnType if returnType else returnType
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
-        super().__init__(context)
+        super().__init__(**context)
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                    debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False):
+                    debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
@@ -267,19 +294,12 @@ class BaseSession(CustomDict):
     def get_rename_map(self, to: Optional[str]=None, renameMap: RenameMap=dict(), **context) -> RenameMap:
         return renameMap
 
-    def rename(self, string: str, **context) -> str:
-        renameMap = self.get_rename_map(**context)
+    def rename(self, string: str, to: Optional[str]=None, **context) -> str:
+        renameMap = self.get_rename_map(to=to, **context)
         return renameMap[string] if renameMap and (string in renameMap) else string
 
     def match(self, data: ResponseData, **context) -> bool:
         return True
-
-    def print(self, data: Data):
-        if isinstance(data, Dict): print(CustomDict(**data))
-        elif is_records(data, how="all"): print(CustomRecords(*data))
-        elif isinstance(data, pd.DataFrame):
-            print("pd.DataFrame("+str(CustomRecords(*data.to_dict("records")))+")")
-        else: print(data)
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -287,17 +307,17 @@ class BaseSession(CustomDict):
 
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
-        if (point in self.debug) or ("all" in self.debug):
+        if self.debug and self._isin_log_list(point, self.debug):
             self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg, limit=0)))
-        if ((point in self.extraSave) or ("all" in self.extraSave)) and data_exists(save):
+        if self.extraSave and self._isin_log_list(point, self.extraSave) and data_exists(save):
             if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
             self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
-        if self.interrupt == point:
+        if self.interrupt and self._isin_log_list(point, self.interrupt):
             raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
 
     def save_data(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
-        prefix = self.rename(prefix if prefix else self.operation)
+        prefix = self.rename(prefix if prefix else self.operation, to="ko")
         file = prefix+'_'+self.now("%Y%m%d%H%M%S")
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
@@ -315,7 +335,7 @@ class BaseSession(CustomDict):
     def save_dataframe(self, data: Data, file: str):
         file = self._validate_file(file)
         data = convert_data(data, return_type="dataframe")
-        data.rename(columns=self.get_rename_map()).to_excel(file, index=False)
+        data.rename(columns=self.get_rename_map(to="ko")).to_excel(file, index=False)
 
     def save_source(self, data: Union[str,Tag], file: str):
         file = self._validate_file(file)
@@ -323,6 +343,26 @@ class BaseSession(CustomDict):
             data = BeautifulSoup(data, "html.parser")
         with open(file, "w", encoding="utf-8") as f:
             f.write(str(data))
+
+    def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
+        log_list = cast_list(log_list)
+        if ("all" in log_list) or (point in log_list): return True
+        __match = True
+        __startswith = [name for name in log_list if endswith(name, ['_','-'])]
+        __endswith = [name for name in log_list if startswith(name, ['_','-'])]
+        __match &= startswith(point, __startswith) if __startswith else True
+        __match &= endswith(point, __endswith) if __endswith else True
+        return __match
+
+    def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
+        if isinstance(response, str) and response:
+            try: return json.loads(response), "json"
+            except: return response, "html"
+        elif isinstance(response, pd.DataFrame):
+            return response, "dataframe"
+        elif isinstance(response, Tag):
+            return response, "html"
+        else: return response, "json"
 
     def _validate_dir(self, dir: str):
         if not os.path.exists(dir):
@@ -337,14 +377,6 @@ class BaseSession(CustomDict):
             else: break
         return file+suffix+ext
 
-    def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
-        if isinstance(response, str) and response:
-            try: return json.loads(response), "json"
-            except: return response, "html"
-        elif isinstance(response, pd.DataFrame):
-            return response, "dataframe"
-        else: return response, "json"
-
     ###################################################################
     ########################### Log Managers ##########################
     ###################################################################
@@ -356,7 +388,7 @@ class BaseSession(CustomDict):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if "exception" in self.debug:
+                if ("exception" in self.debug) or ("all" in self.debug):
                     self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
                     raise exception
                 self.log_errors(*args, **context)
@@ -415,7 +447,7 @@ class Iterator(CustomDict):
     def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if notna(fromNow, strict=True) else self.fromNow
+        self.fromNow = fromNow if notna(fromNow) else self.fromNow
         super().__init__()
 
     def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
@@ -445,19 +477,20 @@ class Iterator(CustomDict):
     ########################### Set Iterator ##########################
     ###################################################################
 
-    def get_iterator(self, _args=True, _page=True, _date=True, _product=True, _params=False,
+    def get_iterator(self, _args=True, _page=True, _date=True, _product=True, _params=False, _index=False,
                     keys_only=False, values_only=False, if_null: Literal["drop","pass"]="drop",
                     **context) -> Union[Context,_KT,_VT]:
         iterateArgs = self.iterateArgs * int(_args)
         iteratePage = (PAGE_PARAMS if _params else PAGE_ITERATOR) * int(bool(self.pagination)) * int(_page)
         iterateDate = (DATE_PARAMS if _params else DATE_ITERATOR) * int(bool(self.interval)) * int(_date)
         iterateProduct = self.iterateProduct * int(_product)
-        query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateProduct)
+        index = [ITER_INDEX] if _index else []
+        query = unique(*iterateArgs, *iteratePage, *iterateDate, *iterateProduct, *index)
         if keys_only: return query
         else: return kloc(context, query, if_null=if_null, values_only=values_only)
 
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
-                    iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(), index=True,
+                    iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(), indexing=True,
                     **context) -> Tuple[List[Context],Context]:
         arguments, periods, ranges, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
         args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
@@ -469,7 +502,7 @@ class Iterator(CustomDict):
             periods, context = self._from_date(interval=interval, **context)
             iterateProduct = diff(iterateProduct, DATE_ITERATOR+["date"])
         ranges, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
-        iterator = self._product_iterator(arguments, periods, ranges, index=index)
+        iterator = self._product_iterator(arguments, periods, ranges, indexing=indexing)
         return iterator, context
 
     ###################################################################
@@ -624,8 +657,8 @@ class Iterator(CustomDict):
         return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
                 for indices in combinations]
 
-    def _product_iterator(self, *ranges: Sequence[Context], index=True) -> List[Context]:
+    def _product_iterator(self, *ranges: Sequence[Context], indexing=True) -> List[Context]:
         if sum(map(len, ranges)) == 0: return list()
         ranges_array = map((lambda x: x if x else [{}]), ranges)
-        indexing = lambda __i: dict(index=__i) if index else dict()
-        return [dict(**indexing(__i), **chain_dict(query)) for __i, query in enumerate(product(*ranges_array))]
+        __indexing = lambda __i: {ITER_INDEX: __i} if indexing else dict()
+        return [dict(**__indexing(__i), **chain_dict(query)) for __i, query in enumerate(product(*ranges_array))]

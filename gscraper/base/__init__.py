@@ -1,12 +1,12 @@
 UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, by=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
-                        pagination=None, pageUnit=None, pageLimit=None, fromNow=None, \
+                        pagination=None, pageUnit=None, pageLimit=None, fromNow=None, responseType=None, \
                         debug=None, localSave=None, extraSave=None, interrupt=None, \
-                        logger=None, logJson=None, errors=None, ssl=None, \
+                        logger=None, logJson=None, errors=None, ssl=None, match=None, hier=None, \
                         redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
-                        root=None, groupby=None, rankby=None, schemaInfo=None, \
+                        root=None, groupby=None, countby=None, schemaInfo=None, schema=None, field=None, \
                         crawler=None, decryptedKey=None, auth=None, sessionCookies=None, dependencies=None, \
-                        inplace=None, self_var=None, prefix=None, rename=None, **context: context
+                        func=None, inplace=None, self_var=None, prefix=None, rename=None, **context: context
 
 
 TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
@@ -31,11 +31,6 @@ RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile
                         delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, \
                         redirectUnit=None, index=0, **context: \
                         dict(REQUEST_CONTEXT(**context), index=index)
-
-
-SCHEMA_CONTEXT = lambda schema=None, root=None, by=None, count=None, discard=None, name=None, path=None, \
-                        type=None, mode=None, description=None, cast=None, strict=None, default=None, \
-                        apply=None, match=None, how=None, query=None, **context: context
 
 
 UPLOAD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \

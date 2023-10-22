@@ -1,7 +1,7 @@
 from __future__ import annotations
 from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
 from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
-from gscraper.base.session import Iterator
+from gscraper.base.session import Iterator, ITER_INDEX, ITER_SUFFIX, ITER_MSG
 from gscraper.base.parser import Parser, SchemaInfo
 from gscraper.base.gcloud import GCloudQueryReader, GCloudUploader, GCloudQueryInfo, GCloudUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
@@ -15,9 +15,8 @@ from gscraper.base.types import is_array, init_origin
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
-from gscraper.utils.map import re_get, unique, to_array, align_array
-from gscraper.utils.map import kloc, chain_dict, drop_dict, exists_dict, apply_df
-from gscraper.utils.map import exists_one, rename_data, filter_data, chain_exists
+from gscraper.utils.map import kloc, exists_dict, chain_dict, apply_records, drop_dict, re_get
+from gscraper.utils.map import rename_data, filter_data, chain_exists, exists_one, unique, to_array, align_array
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
@@ -258,7 +257,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
 
     def local_request(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         context = self.from_locals(locals, drop, **context)
-        keys = unique("index", *self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
+        keys = unique(ITER_INDEX, *self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
         return kloc(context, keys, if_null="drop")
 
     def local_response(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
@@ -339,13 +338,13 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
     def validate_context(self, locals: Dict=dict(), default=None, dropna=False, strict=False, unique=True,
                         drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
         if locals: context = self.local_context(locals, **context, drop=drop)
-        sequence_keys = self.inspect("crawl", "iterable").keys()
         dateformat_keys = self.inspect("crawl", annotation="DateFormat").keys()
+        sequence_keys = self.inspect("crawl", "iterable").keys()
         for __key in list(context.keys()):
-            if __key in sequence_keys:
-                context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
-            elif __key in dateformat_keys:
+            if __key in dateformat_keys:
                 context[__key] = self.get_date(context[__key], index=int(str(__key).lower().endswith("enddate")))
+            elif (__key in sequence_keys) and notna(context[__key]):
+                context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
             if __key in rename:
                 context[__key] = rename_data(context[__key], rename=rename[__key])
         return context
@@ -372,10 +371,10 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
 
     def _init_iterator(self, args: Arguments, context: Context,
                     iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
-                    pagination: Pagination=False, index=True, count=False) -> Tuple[List[Context],Context]:
+                    pagination: Pagination=False, indexing=True, count=False) -> Tuple[List[Context],Context]:
         iterate_params = dict(iterateArgs=iterateArgs, iterateProduct=iterateProduct, pagination=pagination)
-        iterator, context = self.set_iterator(*args, **iterate_params, index=index, **context)
-        self.checkpoint("iterator"+("_count" if count else str()), where="_init_iterator", msg={"iterator":iterator})
+        iterator, context = self.set_iterator(*args, **iterate_params, indexing=indexing, **context)
+        self.checkpoint("iterator"+("_count" if count else str()), where="init_iterator", msg={"iterator":iterator})
         return iterator, context
 
     def _init_count(self, *args, count: Pagination, progress=True, **context) -> Tuple[List[Context],Context]:
@@ -390,7 +389,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
 
     def _gather_count(self, *args, progress=True, **context) -> List[int]:
         count_context = self.get_count_context(**context)
-        iterator, context = self._init_iterator(args, count_context, self.iterateArgs, index=False, count=True)
+        iterator, context = self._init_iterator(args, count_context, self.iterateArgs, indexing=False, count=True)
         message = self.get_count_message(*args, **context)
         size = [self.fetch(*__i, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         self.checkpoint("gather_count", where="gather_count", msg={"size":size})
@@ -398,9 +397,9 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
 
     def _gather_count_by_date(self, *args, progress=True, size: _PASS=None, **context) -> Tuple[List[Context],Context]:
         size = self._gather_count(*args, progress=progress, **context)
-        arguments, context = self._init_iterator(args, context, self.iterateArgs, index=False, count=True)
+        arguments, context = self._init_iterator(args, context, self.iterateArgs, indexing=False, count=True)
         args_pages, context = self._init_iterator(
-            (arguments, size), context, ["args","size"], pagination="size", index=False, count=True)
+            (arguments, size), context, ["args","size"], pagination="size", indexing=False, count=True)
         map_iterator = lambda args, **pages: chain_dict([args, pages], keep="first")
         ranges, context = self._from_context(iterateProduct=self.iterateProduct, **context)
         iterator = self._product_iterator([map_iterator(**__i) for __i in args_pages], ranges)
@@ -434,16 +433,15 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
         @functools.wraps(func)
         def wrapper(self: Spider, method: str, url: str, session: Optional[requests.Session]=None,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, index=0, **context):
+                    data=None, json=None, headers=None, cookies=str(), *args, **context):
             session = session if session else requests
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            suffix = f"_{index}" if index else str()
-            self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
-            self.logger.debug(log_messages(**messages, dump=self.logJson))
+            self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
             response = func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
 
@@ -453,7 +451,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                 allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                 valid: Optional[Status]=None, invalid: Optional[Status]=None, close=True, **context) -> requests.Response:
         response = session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl)
-        self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+        self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
         if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
 
@@ -463,7 +461,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                         allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status_code
 
@@ -473,7 +471,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                         allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.content
 
@@ -483,7 +481,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                     allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.text
 
@@ -493,7 +491,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                     allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.json()
 
@@ -503,7 +501,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                         allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
 
@@ -513,7 +511,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                         allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None, features="html.parser", **context) -> Tag:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(response.text, features)
 
@@ -524,7 +522,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                     valid: Optional[Status]=None, invalid: Optional[Status]=None, html=True, table_header=0, table_idx=0,
                     engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
-            self.logger.info(log_response(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             if html: return pd.read_html(response.text, header=table_header)[table_idx]
             else: return pd.read_excel(response.content, engine=engine)
@@ -698,7 +696,7 @@ class AsyncSpider(Spider):
 
     async def _gather_count(self, *args, progress=True, **context) -> List[int]:
         count_context = self.get_count_context(**context)
-        iterator, context = self._init_iterator(args, count_context, self.iterateArgs, index=False, count=True)
+        iterator, context = self._init_iterator(args, count_context, self.iterateArgs, indexing=False, count=True)
         message = self.get_count_message(*args, **context)
         size = await tqdm.gather(*[
                 self.fetch(**__i, **context) for __i in iterator], desc=message, disable=(not progress))
@@ -707,9 +705,9 @@ class AsyncSpider(Spider):
 
     async def _gather_count_by_date(self, *args, progress=True, size: _PASS=None, **context) -> Tuple[List[Context],Context]:
         size = await self._gather_count(*args, progress=progress, **context)
-        arguments, context = self._init_iterator(args, context, self.iterateArgs, index=False, count=True)
+        arguments, context = self._init_iterator(args, context, self.iterateArgs, indexing=False, count=True)
         args_pages, context = self._init_iterator(
-            (arguments, size), context, ["args","size"], pagination="size", index=False, count=True)
+            (arguments, size), context, ["args","size"], pagination="size", indexing=False, count=True)
         map_iterator = lambda args, **pages: chain_dict([args, pages], keep="first")
         ranges, context = self._from_context(iterateProduct=self.iterateProduct, **context)
         iterator = self._product_iterator([map_iterator(**__i) for __i in args_pages], ranges)
@@ -731,16 +729,15 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                        data=None, json=None, headers=None, cookies=str(), *args, index=0, **context):
+                        data=None, json=None, headers=None, cookies=str(), *args, **context):
             session = session if session else aiohttp
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            suffix = f"_{index}" if index else str()
-            self.checkpoint("request"+suffix, where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
-            self.logger.debug(log_messages(**messages, dump=self.logJson))
+            self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
+            self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
             response = await func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+suffix, where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response, ext="response")
             return response
         return wrapper
 
@@ -750,7 +747,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context):
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
 
     @encode_messages
@@ -759,7 +756,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status
 
@@ -769,7 +766,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt", 
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.read()
 
@@ -779,7 +776,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> str:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.text(encoding=encoding)
 
@@ -789,7 +786,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> JsonData:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.json(encoding=encoding, content_type=None)
 
@@ -799,7 +796,7 @@ class AsyncSpider(Spider):
                             allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
 
@@ -810,7 +807,7 @@ class AsyncSpider(Spider):
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None,
                             features="html.parser", **context) -> Tag:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(await response.text(encoding=encoding), features)
 
@@ -821,7 +818,7 @@ class AsyncSpider(Spider):
                             valid: Optional[Status]=None, invalid: Optional[Status]=None, html=False, table_header=0, table_idx=0,
                             engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context)))
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             if html: return pd.read_html(await response.text(), header=table_header)[table_idx]
             else: return pd.read_excel(await response.read(), engine=engine)
@@ -868,9 +865,22 @@ class AsyncSpider(Spider):
     async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
                             account: Account=dict(), **context) -> Records:
         data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
-        response = self.request_json(POST, redirectUrl, session, json=data, headers=dict(Authorization=authorization))
-        self.checkpoint("redirect", where="fetch_redirect", msg={"response":response}, save=response, ext="json")
-        return self._parse_redirect(response, **context)
+        messages = dict(json=data, headers=dict(Authorization=authorization))
+        self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
+        async with session.post(redirectUrl, **messages) as response:
+            self.checkpoint("redirect"+ITER_SUFFIX(context), where="fetch_redirect", msg={"response":response}, save=response, ext="json")
+            self.logger.info(await log_client(response, url=redirectUrl, **self.get_iterator(**context, _index=True)))
+            return self._parse_redirect(response.json(), **context)
+
+    @encode_messages
+    async def request_json(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
+                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
+                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
+                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> JsonData:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
+            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
+            return await response.json(encoding=encoding, content_type=None)
 
     def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(
@@ -883,7 +893,7 @@ class AsyncSpider(Spider):
     def _parse_redirect(self, data: RedirectData, **context) -> Records:
         data = self._log_redirect_errors(data)
         results = self._map_redirect(data, **context)
-        self.logger.debug(log_data(results))
+        self.logger.debug(log_data(results, **context))
         return results
 
     def _log_redirect_errors(self, data: RedirectData, **context) -> Records:
@@ -896,7 +906,7 @@ class AsyncSpider(Spider):
     def _map_redirect(self, data: Records, **context) -> Records:
         if not isinstance(data, List): return list()
         cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
-        return [apply_df(__m, apply=cast_datetime_or_keep, all_cols=True) for __m in data]
+        return apply_records(data, apply=cast_datetime_or_keep, all_keys=True)
 
 
 ###################################################################

@@ -131,6 +131,9 @@ JSON_DATA = (Dict, List)
 RedirectData = Dict[str,Records]
 REDIRECT_DATA = (str, Dict, List)
 
+PandasData = Union[DataFrame, Series]
+PANDAS_DATA = (DataFrame, Series)
+
 HtmlData = Union[str, Tag, List[str], List[Tag]]
 HTML_DATA = (str, Tag, List)
 
@@ -141,9 +144,9 @@ ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict,
 
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
-    "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
-    "JsonData":JsonData, "RedirectData":RedirectData, "HtmlData":HtmlData,
-    "Account":Account, "PostData":PostData, "ResponseData":ResponseData}
+    "TabularData":TabularData, "MappingData":MappingData, "Data":Data, "JsonData":JsonData,
+    "RedirectData":RedirectData, "HtmlData":HtmlData, "Account":Account, "PostData":PostData,
+    "PandasData":PandasData, "ResponseData":ResponseData}
 
 
 ###################################################################
@@ -190,6 +193,7 @@ SET_TYPES = [set, Set, "set"]
 DICT_TYPES = [Dict, dict, "dict", "dictionary"]
 RECORDS_TYPES = [Records, "records"]
 DATAFRAME_TYPES = [DataFrame, "dataframe", "df", "pandas", "pd"]
+TAG_TYPES = [Tag, "source", "tag", "bs4"]
 
 TYPE_LIST = {
     bool: BOOLEAN_TYPES,
@@ -204,6 +208,7 @@ TYPE_LIST = {
     set: SET_TYPES,
     dict: DICT_TYPES,
     DataFrame: DATAFRAME_TYPES,
+    Tag: TAG_TYPES,
 }
 
 abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
@@ -291,6 +296,9 @@ def is_json_type(__type: TypeHint) -> bool:
 
 def is_dataframe_type(__type: TypeHint) -> bool:
     return is_type(__type, DATAFRAME_TYPES)
+
+def is_tag_type(__type: TypeHint) -> bool:
+    return is_type(__type, TAG_TYPES)
 
 
 def is_comparable(__object) -> bool:
@@ -388,6 +396,9 @@ def is_df_sequence(__object) -> bool:
 def is_df_object(__object) -> bool:
     return isinstance(__object, (DataFrame, Series))
 
+def is_tag_array(__object, how: Literal["any","all"]="any", empty=True) -> bool:
+    return is_nested_in(__object, Tag, how=how, empty=empty)
+
 
 ###################################################################
 ############################# Inspect #############################
@@ -423,7 +434,7 @@ def get_annotation_typehint(annotation, custom_type=True) -> str:
 
 def get_annotation_type(annotation, custom_type=True) -> str:
     name = get_annotation_typehint(annotation, custom_type=custom_type)
-    if isinstance(name, List): return list({__name for __name in map(get_annotation_type, name) if __name})
+    if isinstance(name, List): return [__name for __name in map(get_annotation_type, name) if __name]
     name = name.replace("datetime.","").lower()
     for annotation in AVAILABLE_ANNOTATIONS:
         if annotation in name:

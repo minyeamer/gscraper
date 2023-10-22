@@ -1,8 +1,8 @@
 from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint
-from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence
-from gscraper.base.types import Records, MappingData, TabularData, Data, HtmlData, RenameMap
+from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence, RenameMap
+from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
 from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RegexFormat
-from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray
+from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
 from gscraper.base.types import is_comparable, is_list_type, is_dict_type, is_records_type, is_dataframe_type
 from gscraper.base.types import is_kwargs_allowed
 
@@ -28,6 +28,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 BETWEEN_RANGE_TYPE_MSG = "Between condition must be an iterable or a dictionary."
 INVALID_ISIN_MSG = "Isin function requires at least one parameter: exact, include, and exclude."
 SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
+LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are mismatched: [{left}, {right}]"
 
 
 arg_or = lambda *args: functools.reduce(lambda x,y: x|y, args)
@@ -35,6 +36,38 @@ arg_and = lambda *args: functools.reduce(lambda x,y: x&y, args)
 union = lambda *arrays: functools.reduce(lambda x,y: x+y, arrays)
 inter = lambda *arrays: functools.reduce(lambda x,y: [e for e in x if e in y], arrays)
 diff = lambda *arrays: functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
+
+
+def isna_plus(__object, strict=True) -> bool:
+    if is_array(__object):
+        if not __object: return True
+        elif strict: return all(pd.isna(__object))
+        else: return empty(__object)
+    if isinstance(__object, pd.Series):
+        if __object.empty: return True
+        elif strict: return __object.isna().all()
+        else: return __object.apply(empty).all()
+    if isinstance(__object, pd.DataFrame):
+        if __object.empty: return True
+        elif strict: return __object.isna().all().all()
+        else: return apply_df(__object, empty, all_cols=True).all().all()
+    else: return isna(__object, strict=strict)
+
+
+def notna_plus(__object, strict=True) -> bool:
+    if is_array(__object):
+        if not __object: return False
+        elif strict: return any(pd.notna(__object))
+        else: return exists(__object)
+    if isinstance(__object, pd.Series):
+        if __object.empty: return False
+        elif strict: return __object.notna().any()
+        else: return __object.apply(exists).any()
+    if isinstance(__object, pd.DataFrame):
+        if __object.empty: return False
+        elif strict: return __object.notna().any().any()
+        else: return apply_df(__object, exists, all_cols=True).any().any()
+    else: return notna(__object, strict=strict)
 
 
 ###################################################################
@@ -64,14 +97,24 @@ def to_records(__object: MappingData) -> Records:
     else: return list()
 
 
-def to_dataframe(__object: MappingData) -> pd.DataFrame:
-    if isinstance(__object, pd.DataFrame): return __object
-    elif is_records(__object, empty=True): return pd.DataFrame(align_records(__object)).convert_dtypes()
-    elif isinstance(__object, dict): return pd.DataFrame([__object])
+def to_dataframe(__object: MappingData, index: Optional[Sequence]=None) -> pd.DataFrame:
+    if isinstance(__object, pd.DataFrame): pass
+    elif is_records(__object, empty=True): __object = pd.DataFrame(align_records(__object)).convert_dtypes()
+    elif isinstance(__object, dict): __object = pd.DataFrame([__object])
     else: return pd.DataFrame()
+    if safe_len(index, -1) == len(__object): __object.index = index
+    return __object
 
 
-def convert_data(data: Data, return_type: Optional[TypeHint]=None) -> Data:
+def to_series(__object: Union[pd.Series,Sequence,Any], index: Optional[Sequence]=None) -> pd.Series:
+    if isinstance(__object, pd.Series): pass
+    elif is_array(__object): __object = pd.Series(__object)
+    else: __object = pd.Series([__object]*safe_len(index, 1))
+    if safe_len(index, -1) == len(__object): __object.index = index
+    return __object
+
+
+def convert_data(data: Data, return_type: Optional[TypeHint]=None, **kwargs) -> Data:
     if not return_type: return data
     elif is_records_type(return_type): return to_records(data)
     elif is_dataframe_type(return_type): return to_dataframe(data)
@@ -106,11 +149,11 @@ def rename_records(__r: Records, rename: RenameMap) -> Records:
 
 @multitype_allowed
 def rename_data(data: MappingData, rename: RenameMap,
-                return_type: Optional[TypeHint]=None, convert_first=False) -> MappingData:
+                return_type: Optional[TypeHint]=None, convert_first=False, **kwargs) -> MappingData:
     if not rename: return data
+    elif isinstance(data, Dict): return rename_dict(data, rename)
     elif is_records(data): return rename_records(data, rename)
     elif isinstance(data, pd.DataFrame): return data.rename(columns=rename)
-    elif isinstance(data, Dict): return rename_dict(data, rename)
     elif is_array(data): return [rename.get(__value,__value) for __value in data]
     else: return rename.get(data,data)
 
@@ -135,7 +178,7 @@ def iloc(__s: IndexedSequence, indices: Index, default=None, if_null: Literal["d
     if isinstance(__indices, int):
         return __s[__indices] if abs_idx(__indices) < __length else default
     elif not __indices:
-        if if_null != "drop": return __s
+        if if_null == "pass": return __s
         else: return list() if is_array(__indices) else default
     elif if_null == "drop":
         return [__s[__i] for __i in __indices if abs_idx(__i) < __length]
@@ -152,7 +195,7 @@ def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="dr
         keys = keys if reorder else unique(*__m.keys(), *keys)
         if if_null == "drop": __m = {__key: __m[__key] for __key in keys if __key in __m}
         else: __m = {__key: __m.get(__key, default) for __key in keys}
-    else: __m = __m if if_null != "drop" else dict()
+    else: __m = __m if if_null == "pass" else dict()
     return list(__m.values()) if values_only else __m
 
 
@@ -165,7 +208,7 @@ def hloc(__m: Dict, keys: Sequence[_KT], default=None, if_null: Literal["drop","
             alias = [sep.join(map(str, cast_list(__path))) for __path in keys]
         __m = {__key: hier_get(__m, __path, default) for __key, __path in zip(alias, keys)}
         if if_null == "drop": __m = notna_dict(__m)
-    else: return __m if if_null != "drop" else dict()
+    else: return __m if if_null == "pass" else dict()
     return list(__m.values()) if values_only else __m
 
 
@@ -178,7 +221,7 @@ def vloc(__r: List[Dict], keys: _KT, default=None, if_null: Literal["drop","pass
 
 
 def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
-        reorder=True, values_only=False) -> Union[pd.DataFrame,pd.Series,_VT]:
+        reorder=True, values_only=False) -> Union[PandasData,_VT]:
     __inter = inter(cast_tuple(columns), df.columns) if reorder else inter(df.columns, cast_tuple(columns))
     if not __inter:
         return pd.DataFrame() if if_null == "drop" else df
@@ -197,7 +240,7 @@ def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["
         by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
         strip=True, replace: RenameMap=dict()) -> Union[_VT,Dict]:
     if not (allin(map(exists, selectors)) if hier else selectors):
-        return source if if_null != "drop" else default
+        return source if if_null == "pass" else default
     loc = hier_select if hier else select_by
     context = dict(default=default, sep=sep, index=index, by=by, lines=lines, strip=strip, replace=replace)
     if is_single_selector(selectors, hier=hier, index=index):
@@ -209,24 +252,39 @@ def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["
     return list(__m.values()) if values_only else __m
 
 
+def get_value(data: ResponseData, field: Union[_KT,Index], default=None, **kwargs) -> _VT:
+    if not field: return default
+    elif isinstance(data, Dict): return hier_get(data, field, default, **kwargs)
+    elif is_records(data): return [hier_get(__m, field, default, **kwargs) for __m in data]
+    elif isinstance(data, pd.DataFrame):
+        column = get_scala(field)
+        return fillna_each(data[column], default) if column in data else default
+    elif isinstance(data, Tag): return hier_select(data, field, default, **kwargs)
+    elif is_array(data):
+        index = get_scala(field)
+        return data[index] if index < len(data) else default
+    else: return default
+
+
 @multitype_allowed
 @multitype_rename
-def filter_data(data: Data, fields: Optional[Union[_KT,Index]]=list(), default=None,
+def filter_data(data: ResponseData, fields: Optional[Union[_KT,Index]]=list(), default=None,
                 if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
                 return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False) -> Data:
-    if not fields: return data if if_null != "drop" else list()
-    if is_records(data): return vloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only, hier=hier)
-    elif isinstance(data, pd.DataFrame): return cloc(data, columns=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
-    elif isinstance(data, Dict): return kloc(data, keys=fields, default=default, if_null=if_null, reorder=reorder, values_only=values_only, hier=hier)
-    elif is_array(data): return iloc(data, indices=fields, default=default, if_null=if_null)
-    elif isinstance(data, Tag): return sloc(data, indices=fields, default=default, if_null=if_null, values_only=values_only, hier=hier)
-    else: return list()
+                convert_first=False, rename_first=False, **kwargs) -> Data:
+    context = dict(default=default, if_null=if_null, values_only=values_only)
+    if not fields: return data if if_null == "pass" else list()
+    elif isinstance(data, Dict): return kloc(data, fields, reorder=reorder, hier=hier, **context)
+    elif is_records(data): return vloc(data, fields, reorder=reorder, hier=hier, **context)
+    elif isinstance(data, pd.DataFrame): return cloc(data, fields, reorder=reorder, **context)
+    elif isinstance(data, Tag): return sloc(data, fields, hier=hier, **context)
+    elif is_array(data): return iloc(data, fields, default=default, if_null=if_null)
+    else: return data if if_null == "pass" else list()
 
 
 def multitype_filter(func):
     @functools.wraps(func)
-    def wrapper(data: Data, *args, fields: Optional[Union[_KT,Index]]=list(), default=None,
+    def wrapper(data: ResponseData, *args, fields: Optional[Union[_KT,Index]]=list(), default=None,
                 if_null: Literal["drop","pass"]="pass", reorder=True, values_only=False, hier=False,
                 filter_first=False, **kwargs):
         if not fields: return func(data, *args, **kwargs) if if_null != "drop" else list()
@@ -374,11 +432,11 @@ def howin(__iterable: Sequence[bool], how: Literal["any","all"]="all") -> bool:
 
 def isin(__iterable: Iterable, exact: Optional[_VT]=None, include: Optional[_VT]=None,
         exclude: Optional[_VT]=None, how: Literal["any","all"]="any", **kwargs) -> bool:
-    match, __all = (True, (how == "all"))
-    if notna(exact): match &= _isin(__iterable, exact, how="exact", all=__all)
-    if match and notna(include): match &= _isin(__iterable, include, how="include", all=__all)
-    if match and notna(exclude): match &= _isin(__iterable, exclude, how="exclude", all=True)
-    return match
+    __match, __all = (True, (how == "all"))
+    if notna(exact): __match &= _isin(__iterable, exact, how="exact", all=__all)
+    if __match and notna(include): __match &= _isin(__iterable, include, how="include", all=__all)
+    if __match and notna(exclude): __match &= _isin(__iterable, exclude, how="exclude", all=True)
+    return __match
 
 
 def _isin(__iterable: Iterable, __values: Optional[_VT]=None,
@@ -397,7 +455,7 @@ def _isin(__iterable: Iterable, __values: Optional[_VT]=None,
 
 def isin_dict(__m: Dict, keys: Optional[_KT]=None,
                 exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                how: Literal["any","all"]="any", if_null=False, hier=False, **kwargs) -> bool:
+                how: Literal["any","all"]="any", if_null=False, hier=False) -> bool:
     if isna(exact) and isna(include) and isna(exclude): return True
     keys = keys if keys or hier else list(__m.keys())
     __values = kloc(__m, keys, if_null="drop", values_only=True, hier=hier)
@@ -409,8 +467,7 @@ def isin_dict(__m: Dict, keys: Optional[_KT]=None,
 
 def isin_records(__r: Records, keys: Optional[_KT]=None,
                 exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                how: Literal["any","all"]="any", if_null=False, hier=False,
-                filter=True, **kwargs) -> Union[Records,List[bool]]:
+                how: Literal["any","all"]="any", if_null=False, hier=False, filter=True) -> Union[Records,List[bool]]:
     if isna(exact) and isna(include) and isna(exclude): return __r
     __matches = [isin_dict(__m, keys, exact, include, exclude, how, if_null, hier) for __m in __r]
     return [__m for __match, __m in zip(__matches, __r) if __match] if filter else __matches
@@ -423,8 +480,7 @@ def keyin_records(__r: Records, keys: _KT) -> Union[bool,Dict[_KT,bool]]:
 
 def isin_df(df: pd.DataFrame, columns: Optional[IndexLabel]=None,
             exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-            how: Literal["any","all"]="any", if_null=False,
-            filter=True, **kwargs) -> Union[pd.DataFrame,pd.Series]:
+            how: Literal["any","all"]="any", if_null=False, filter=True) -> PandasData:
     if isna(exact) and isna(include) and isna(exclude): return df
     __matches, _all = pd.Series([True] * len(df), index=df.index), (how == "all")
     for __column in (cast_tuple(columns) if columns else df.columns):
@@ -445,7 +501,7 @@ def isin_df(df: pd.DataFrame, columns: Optional[IndexLabel]=None,
     return df[__matches] if filter else __matches
 
 
-def _isin_series(series: pd.Series, __values: Optional[_VT]=None,
+def _isin_series(series: pd.Series, __values: Optional[IndexLabel]=None,
                 how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> pd.Series:
     if is_array(__values):
         __op = arg_and if all else arg_or
@@ -460,8 +516,7 @@ def _isin_series(series: pd.Series, __values: Optional[_VT]=None,
 
 def isin_source(source: Union[Tag,Sequence[Tag]], selectors: _KT, exact: Optional[_VT]=None,
                 include: Optional[_VT]=None, exclude: Optional[_VT]=None, how: Literal["any","all"]="any",
-                if_null=False, sep=' > ', index: Optional[Unit]=None, hier=False,
-                filter=True, **kwargs) -> Union[bool,List[Tag],List[bool]]:
+                if_null=False, sep=' > ', index: Optional[Unit]=None, hier=False, filter=True) -> Union[bool,List[Tag],List[bool]]:
     if is_array(source):
         __matches = [isin_source(__s, selectors, exact, include, exclude, how, if_null, index, hier) for __s in source]
         return [__s for __match, __s in zip(__matches, source) if __match] if filter else __matches
@@ -480,6 +535,18 @@ def isin_source(source: Union[Tag,Sequence[Tag]], selectors: _KT, exact: Optiona
 def _get_class_name(selector: _KT) -> str:
     tag = str(get_scala(selector, -1))
     return tag[1:] if tag.startswith('.') or tag.startswith('#') else str()
+
+
+def isin_data(data: ResponseData, path: Optional[Union[_KT,IndexLabel]]=None,
+                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+                how: Literal["any","all"]="any", if_null=False, hier=False, filter=False,
+                index: Optional[Unit]=None, **kwargs) -> Union[bool,List[bool],pd.Series]:
+    context = dict(exact=exact, include=include, exclude=exclude, how=how, if_null=if_null)
+    if isinstance(data, Dict): return isin_dict(data, path, hier=hier, **context)
+    elif is_records(data): return isin_records(data, path, filter=filter, **context)
+    elif isinstance(data, pd.DataFrame): return isin_df(data, path, filter=filter, **context)
+    elif isinstance(data, Tag): return isin_source(data, hier=hier, index=index, **context)
+    else: return isin(data, **context)
 
 
 ###################################################################
@@ -550,7 +617,7 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
 def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first",
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
                 reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None,
-                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False) -> Data:
+                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **kwargs) -> Data:
     if is_dfarray(data): return concat_df([df for df in data if df_exists(df)])
     elif is_2darray(data): return list(chain.from_iterable([__s for __s in data if is_array(__s)]))
     elif data_type and is_dict_type(data_type) and is_records(data, how="any"):
@@ -593,6 +660,14 @@ def groupby_source(source: Sequence[Tag], by: Union[Dict[_KT,_KT],_KT],
         source = [__s for __i, __s in enumerate(source) if not __matches[__i]]
     if (if_null == "pass") and source: groups[None] = source
     return groups
+
+
+def groupby_data(data: Data, by: _KT, if_null: Literal["drop","pass"]="drop",
+                hier=False, sep=' > ', **kwargs) -> Dict[_KT,Data]:
+    if is_records(data): return groupby_records(data, by, if_null=if_null, hier=hier)
+    elif is_dfarray(data): return groupby_df(data, by, if_null=if_null)
+    elif is_tag_array(data): return groupby_source(data, by, if_null=if_null, hier=hier, sep=sep)
+    else: dict()
 
 
 ###################################################################
@@ -653,9 +728,8 @@ def apply_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __applyFu
     return df.apply(context)
 
 
-def safe_apply_df(__object: Union[pd.DataFrame,pd.Series], __applyFunc: ApplyFunction,
-                    default: Union[pd.DataFrame,pd.Series,Sequence,Any]=None, by: Literal["row","cell"]="row",
-                    **context) -> Union[pd.DataFrame,pd.Series]:
+def safe_apply_df(__object: PandasData, __applyFunc: ApplyFunction, default: Union[PandasData,Sequence,Any]=None,
+                    by: Literal["row","cell"]="row", **context) -> PandasData:
     __object = __object.copy()
     if isinstance(__object, pd.Series):
         __object = __object.apply(lambda x: safe_apply(x, __applyFunc, **context))
@@ -676,9 +750,9 @@ def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFun
                 default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
                 return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+    if isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     if is_records(data): return apply_records(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     elif isinstance(data, pd.DataFrame): return apply_df(data, __keys, __applyFunc, apply=apply, all_cols=all_keys, **context)
-    elif isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     elif is_array(data): return apply_array(data, __keys, __applyFunc, apply=apply, all_indices=all_keys, **context)
     else: return safe_apply(data, apply, default=default, **context)
 
@@ -746,9 +820,9 @@ def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFun
                 fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
                 reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+    if isinstance(data, Dict): return match_dict(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     if is_records(data): return match_records(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     elif isinstance(data, pd.DataFrame): return match_df(data, __keys, __matchFunc, match=match, all_cols=all_keys, how=how, **context)
-    elif isinstance(data, Dict): return match_dict(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     elif is_array(data): return match_array(data, __keys, __matchFunc, match=match, all_indices=all_keys, how=how, **context)
     else: return safe_apply(data, match, default=default, **context)
 
@@ -951,10 +1025,9 @@ def align_dict(__m: Dict[_KT,Sequence], how: Literal["min","max"]="min", default
     else: return {__key: iloc(__value, indices, default=default, if_null="pass") for __key, __value in __m.items()}
 
 
-def align_records(__r: Records, default=None, forward=True, reorder=True) -> Records:
+def align_records(__r: Records, default=None, forward=True) -> Records:
     keys = unique_keys(__r, forward=forward)
-    return [kloc(__m, keys, default=default, if_null="pass", reorder=reorder)
-            for __m in __r if isinstance(__m, Dict)]
+    return [kloc(__m, keys, default=default, if_null="pass") for __m in __r if isinstance(__m, Dict)]
 
 
 ###################################################################
@@ -1037,7 +1110,7 @@ def drop_df(df: pd.DataFrame, columns: IndexLabel) -> pd.DataFrame:
 
 @multitype_allowed
 def drop_data(data: MappingData, __keys: Optional[_KT]=list(),
-            return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
+            return_type: Optional[TypeHint]=None, convert_first=False, **kwargs) -> Data:
     if is_records(data): return drop_records(data, __keys)
     elif isinstance(data, pd.DataFrame): return drop_df(data, __keys)
     elif isinstance(data, Dict): return drop_dict(data, __keys, inplace=False)
@@ -1108,7 +1181,7 @@ def sort_records(__r: Records, by: _KT, ascending=True) -> Records:
 def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True, fields: Optional[Union[_KT,Index]]=list(),
                 default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
                 return_type: Optional[TypeHint]=None, rename: RenameMap=dict(), convert_first=False, rename_first=False,
-                filter_first=False, **context) -> Data:
+                filter_first=False, **kwargs) -> Data:
     asc = ascending if isinstance(ascending, bool) else bool(get_scala(ascending))
     if is_records(data): return sort_records(data, by=by, ascending=asc)
     elif isinstance(data, pd.DataFrame): return data.sort_values(by, ascending=ascending)
@@ -1136,6 +1209,18 @@ def replace_map(__string: str, strip=False, **context) -> str:
 def match_keyword(__string: str, __keyword: Keyword) -> bool:
     pattern = re.compile('|'.join(map(re.escape, cast_list(__keyword))))
     return bool(pattern.search(__string))
+
+
+def startswith(__string: str, __keyword: Keyword) -> bool:
+    for __s in __keyword:
+        if __string.startswith(__s): return True
+    else: return False
+
+
+def endswith(__string: str, __keyword: Keyword) -> bool:
+    for __s in __keyword:
+        if __string.endswith(__s): return True
+    else: return False
 
 
 ###################################################################
@@ -1242,18 +1327,31 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
     return apply_df(df, **{__column: __round for __column in cast_tuple(columns)})
 
 
-def fillna_each(__object: Union[pd.DataFrame,pd.Series],
-                default: Union[pd.DataFrame,pd.Series,Sequence,Any]=None) -> Union[pd.DataFrame,pd.Series]:
-    if isna(default): return __object
-    elif isinstance(default, (pd.DataFrame, pd.Series)): default.index = __object.index
-    elif is_array(default): default = pd.Series(default, index=__object.index)
+def fillna_each(__object: PandasData, default: Union[PandasData,Sequence,Any]=None) -> PandasData:
+    if isna_plus(default): return __object
+    elif isinstance(__object, pd.Series): return _fillna_series(__object, default)
+    else: return _fillna_df(__object, default)
+
+
+def _fillna_series(__object: pd.Series, default: Union[pd.Series,Sequence,Any]=None) -> pd.Series:
+    __object = __object.copy()
+    if isinstance(default, (pd.Series,Sequence)):
+        default = to_series(default, index=__object.index)
+        if len(__object) != len(default):
+            raise ValueError(LENGTH_MISMATCH_MSG(__object.shape, default.shape))
+        else: return __object.combine_first(default)
     else: return __object.fillna(default)
 
-    if isinstance(__object, pd.Series):
-        return __object.combine_first(default)
-    elif isinstance(__object, pd.DataFrame):
-        if isinstance(default, pd.Series):
+
+def _fillna_df(__object: pd.DataFrame, default: Union[PandasData,Sequence,Any]=None) -> pd.DataFrame:
+    __object = __object.copy()
+    if isinstance(default, (pd.DataFrame,pd.Series,Sequence)):
+        if len(__object) != len(default):
+            raise ValueError(LENGTH_MISMATCH_MSG(__object.shape, default.shape))
+        elif isinstance(default, (pd.Series,Sequence)):
+            default = to_series(default, index=__object.index)
             for __column in __object.columns:
                 __object[__column] = __object[__column].combine_first(default)
-        else: return __object.combine_first(default)
-    return __object
+            return __object
+        else: return __object.combine_first(to_dataframe(default, index=__object.index))
+    else: return __object.where(pd.notna(__object), default)
