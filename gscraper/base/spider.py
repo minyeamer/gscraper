@@ -3,7 +3,7 @@ from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_C
 from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from gscraper.base.session import Iterator, ITER_INDEX, ITER_SUFFIX, ITER_MSG
 from gscraper.base.parser import Parser, SchemaInfo
-from gscraper.base.gcloud import GCloudQueryReader, GCloudUploader, GCloudQueryInfo, GCloudUploadInfo
+from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
@@ -185,7 +185,7 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
 ############################## Spider #############################
 ###################################################################
 
-class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
+class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "spider"
@@ -205,11 +205,12 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
     tzinfo = None
     datetimeUnit = "second"
     ssl = None
+    responseType = "records"
     returnType = "records"
     root = list()
     groupby = list()
     groupSize = dict()
-    rankby = str()
+    countby = str()
     schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
@@ -219,7 +220,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(), **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
         Parser.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ITERATOR_UNIQUE+SPIDER_UNIQUE+GLOUD_UNIQUE))
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
@@ -292,7 +293,7 @@ class Spider(Parser, Iterator, GCloudQueryReader, GCloudUploader):
             return data
         return wrapper
 
-    def _with_data(self, data: Data, uploadInfo: Optional[GCloudUploadInfo]=dict(),
+    def _with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(),
                     alertMessage=False, alertName=str(), nateonUrl=str(), **context):
         if self.localSave: self.save_data(data, ext="dataframe")
         self.upload_data(data, uploadInfo, **context)
@@ -569,11 +570,12 @@ class AsyncSpider(Spider):
     tzinfo = None
     datetimeUnit = "second"
     ssl = None
+    responseType = "records"
     returnType = "records"
     root = list()
     groupby = list()
     groupSize = dict()
-    rankby = str()
+    countby = str()
     schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
@@ -584,7 +586,7 @@ class AsyncSpider(Spider):
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
                 numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(), **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ASYNC_UNIQUE+GLOUD_UNIQUE))
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
@@ -1068,11 +1070,12 @@ class EncryptedSpider(Spider):
     tzinfo = None
     datetimeUnit = "second"
     ssl = None
+    responseType = "records"
     returnType = "records"
     root = list()
     groupby = list()
     groupSize = dict()
-    rankby = str()
+    countby = str()
     schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
@@ -1085,7 +1088,7 @@ class EncryptedSpider(Spider):
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:
@@ -1179,11 +1182,12 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     tzinfo = None
     datetimeUnit = "second"
     ssl = None
+    responseType = "records"
     returnType = "records"
     root = list()
     groupby = list()
     groupSize = dict()
-    rankby = str()
+    countby = str()
     schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
@@ -1197,7 +1201,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
                 numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GCloudQueryInfo=dict(), uploadInfo: GCloudUploadInfo=dict(),
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         if not self.cookies:

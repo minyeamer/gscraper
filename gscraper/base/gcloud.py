@@ -182,24 +182,24 @@ class GspreadReadContext(TypedDict):
             headers=headers, str_cols=str_cols, arr_cols=arr_cols, to=to, rename=rename)
 
 
-GCloudQueryContext = GspreadReadContext
+GoogleQueryContext = GspreadReadContext
 
-class GCloudQueryInfo(TypedDict):
-    def __init__(self, **context: GCloudQueryContext):
+class GoogleQueryInfo(TypedDict):
+    def __init__(self, **context: GoogleQueryContext):
         super().__init__(context)
 
 
-class GCloudQueryReader(BaseSession):
+class GoogleQueryReader(BaseSession):
     __metaclass__ = ABCMeta
     operation = "gcloudQuery"
 
-    def __init__(self, queryInfo: GCloudQueryInfo=dict(), account: Account=dict(),
+    def __init__(self, queryInfo: GoogleQueryInfo=dict(), account: Account=dict(),
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False, **context):
         BaseSession.__init__(self, **self.from_locals(locals(), drop=["queryInfo","account"]))
         self.set_query(queryInfo, account)
 
-    def set_query(self, queryInfo: GCloudQueryInfo=dict(), account: Account=dict()):
+    def set_query(self, queryInfo: GoogleQueryInfo=dict(), account: Account=dict()):
         for name, queryContext in queryInfo.items():
             if len(kloc(queryContext, [KEY, SHEET, FIELDS], if_null="drop")) == 3:
                 self.set_gs_query(**queryContext, name=name, account=account)
@@ -274,25 +274,25 @@ class GbqToGsContext(TypedDict):
         self.update_default(dict(mode="append"), mode=mode, cell=cell)
 
 
-GCloudUploadMode = Literal["fail","replace","append","upsert"]
-GCloudUploadContext = Union[GspreadUpdateContext, BigQueryContext, GsToGbqContext, GbqToGsContext]
+GoogleUploadMode = Literal["fail","replace","append","upsert"]
+GoogleUploadContext = Union[GspreadUpdateContext, BigQueryContext, GsToGbqContext, GbqToGsContext]
 
-class GCloudUploadInfo(TypedDict):
-    def __init__(self, **context: GCloudUploadContext):
+class GoogleUploadInfo(TypedDict):
+    def __init__(self, **context: GoogleUploadContext):
         super().__init__(context)
 
 
-class GCloudUploader(BaseSession):
+class GoogleUploader(BaseSession):
     __metaclass__ = ABCMeta
     operation = "gcloudUploader"
     uploadStatus = defaultdict(bool)
 
-    def __init__(self, uploadInfo: GCloudUploadInfo=dict(), reauth=False, audience=str(), account: Account=dict(),
+    def __init__(self, uploadInfo: GoogleUploadInfo=dict(), reauth=False, audience=str(), account: Account=dict(),
                 logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False, **context):
         BaseSession.__init__(self, **self.from_locals(locals()))
 
-    def upload_data(self, data: TabularData, uploadInfo: GCloudUploadInfo=dict(), reauth=False,
+    def upload_data(self, data: TabularData, uploadInfo: GoogleUploadInfo=dict(), reauth=False,
                     audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         __exists = data_exists(data)
         if __exists: data = to_dataframe(data).copy()
