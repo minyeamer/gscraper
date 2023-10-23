@@ -269,8 +269,7 @@ class Stat(Apply):
 class Sum(Stat):
     def __init__(self, keys: _KT=list(), default: Optional[Any]=None,
                 hier=False, type: Optional[TypeHint]=None, strict=True):
-        super().__init__(func=__STAT__, stat=sum, keys=keys,
-            default=default, hier=hier, type=type, strict=strict)
+        super().__init__(stat=sum, keys=keys, default=default, hier=hier, type=type, strict=strict)
 
 
 class Map(Apply):
@@ -442,9 +441,9 @@ def pretty_schema(__object, indent=2, step=2) -> str:
     else: return str(__object)
 
 
-def pretty_print(__object, drop: Optional[_KT]=None):
-    if drop and isinstance(__object, Dict):
-        print(pretty_schema(TypedDict(**drop_dict(__object, drop))))
+def pretty_print(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+    if notna(path): __object = hier_get(__object, path)
+    if notna(drop): __object = drop_dict(__object, drop)
     if isinstance(__object, (TypedDict,TypedRecords)):
         print(pretty_schema(__object))
     elif isinstance(__object, Dict):
@@ -478,8 +477,11 @@ class Mapper(BaseSession):
 
     def map(self, data: ResponseData, schemaInfo: Optional[SchemaInfo]=None, responseType: Optional[TypeHint]=None,
             root: Optional[_KT]=None, discard=True, updateTime=True, fields: IndexLabel=list(), **context) -> Data:
-        if notna(root) or self.root: data = get_value(data, (root if notna(root) else self.root))
+        if notna(root) or self.root:
+            root = root if notna(root) else self.root
+            data = get_value(data, root)
         schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo})
         data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
         if updateTime:
             updateDate = context.get("startDate") if is_daily_frequency(context.get("interval")) else self.today()
@@ -581,11 +583,11 @@ class Mapper(BaseSession):
                 data = data[self.match_data(data, match, context=context, field=field, name=name, log=log)]
                 if data.empty: return __MISMATCH__
         elif not self.match_data(data, match, context=context, name=name, log=log): return __MISMATCH__
+        default = self._get_value_by_path(data, default) if notna(default) else None
         __value = self._get_value_by_path(data, path, default, context)
         return self._apply_value(__value, apply, type, default, strict, cast, context, name, log, **field)
 
     def _get_value_by_path(self, data: ResponseData, path=list(), default=None, context: Context=dict()) -> _VT:
-        default = self._get_value_by_path(data, default) if notna(default) else None
         if is_array(path):
             return get_value(data, path, default=default) if path else data
         elif isinstance(path, Callable):
@@ -635,12 +637,12 @@ class Mapper(BaseSession):
         def wrapper(self: Mapper, data: ResponseData, apply: Union[Apply,Sequence[Apply]], context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False):
             if not (isinstance(apply, (Dict,List,Tuple)) and apply): return data
+            log_context = dict(context=context, field=field, name=name, log=log)
+            self._log_origin(data, apply, point="apply", where=func.__name__, **log_context)
             apply, __result = cast_list(apply), data
             for __apply in apply:
-                __result = func(self, data=__result, apply=__apply, context=context, field=field, name=name)
-            if log:
-                log_msg = {"result":__result, "apply":apply}
-                self.checkpoint("apply"+SUFFIX(context, field, name), where=func.__name__, msg=log_msg)
+                __result = func(self, data=__result, apply=__apply, **log_context)
+            self._log_result(__result, apply, point="apply", where=func.__name__, **log_context)
             return __result
         return wrapper
 
@@ -675,15 +677,17 @@ class Mapper(BaseSession):
         context = dict(context, default=default, strict=strict)
         if isinstance(__object, PANDAS_DATA):
             return safe_apply_df(__object, cast_object, by="cell", **context)
+        elif isinstance(__object, List):
+            return [cast_object(__e, type, **context) for __e in __object]
         else: return cast_object(__object, type, **context)
 
     def __exists__(self, __object, keys: _KT=list(), default=None, hier=False, **kwargs) -> Any:
-        if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+        if keys: __object = filter_data(__object, keys, if_null="drop", values_only=True, hier=hier)
         return exists_one(*__object, default) if is_array(__object) else default
 
     def __join__(self, __object, keys: _KT=list(), sep=',', default=None, hier=False,
                 strip=True, split: Optional[str]=None, **kwargs) -> str:
-        if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+        if keys: __object = filter_data(__object, keys, if_null="drop", values_only=True, hier=hier)
         if split: __object = cast_str(__object).split(split)
         if not is_array(__object): return default
         __object = [__s for __s in [cast_str(__e, strict=True, strip=strip) for __e in __object] if __s]
@@ -713,7 +717,7 @@ class Mapper(BaseSession):
 
     def __stat__(self, __object, stat: Callable, keys: _KT=list(), default=None, hier=False,
                 type: Optional[TypeHint]=None, strict=True, **kwargs) -> Union[Any,int,float]:
-        if keys: __object = filter_data(__object, cast_list(keys), if_null="drop", values_only=True, hier=hier)
+        if keys: __object = filter_data(__object, keys, if_null="drop", values_only=True, hier=hier)
         if not is_array(__object): return default
         elif is_numeric_type(type):
             __cast = cast_float if is_float_type(type) else cast_int
@@ -737,42 +741,65 @@ class Mapper(BaseSession):
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False):
             if not (isinstance(match, Dict) and match): return True
             elif (QUERY not in match) and (PATH not in match) and (FUNC not in match): return True
-            __match = func(self, data, match=match, context=context, field=field, name=name)
-            if log:
-                log_msg = {"result":__match, "match":match}
-                self.checkpoint("match"+SUFFIX(context, field, name), where="match", msg=log_msg)
+            log_context = dict(context=context, field=field, name=name, log=log)
+            __match = func(self, data, match=match, **log_context)
+            if QUERY not in match:
+                self._log_result(__match, match, point="match", where=func.__name__, **log_context)
             return __match
         return wrapper
 
     @validate_match
     def match_data(self, data: ResponseData, match: Match, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False) -> Union[bool,pd.Series]:
-        if QUERY in match: return self._match_query(context, **match)
-        elif FUNC in match: return self._match_function(data, **match, context=context)
+        if QUERY in match: return self._match_query(context, **match, log=log)
+        elif FUNC in match: return self._match_function(data, **match, context=context, field=field, name=name, log=log)
         elif (EXACT in match) or (INCLUDE in match) or (EXCLUDE in match):
+            msg = kloc(match, [EXACT, INCLUDE, EXCLUDE], if_null="drop")
+            self._log_origin(data, match, point="match", where="isin_data", msg=msg, context=context, field=field, name=name, log=log)
             return toggle(isin_data(data, **match), filp=match[FLIP])
-        else: return self._match_value(data, **match)
+        else: return self._match_value(data, **match, context=context, field=field, name=name, log=log)
 
-    def _match_query(self, context: Context, query: _KT, **kwargs) -> bool:
+    def _match_query(self, context: Context, query: _KT, log=False, **kwargs) -> bool:
         return self.match_data(context, match=dict(kwargs, path=query), context=context, log=False)
 
     def _match_function(self, data: ResponseData, func: Callable, path: Optional[_KT]=None, default=False,
-                        flip=False, hier=True, context: Context=dict(), **kwargs) -> Union[bool,pd.Series]:
+                        flip=False, hier=True, context: Context=dict(), log=False, **kwargs) -> Union[bool,pd.Series]:
         if not isinstance(func, Callable): return default
         if notna(path): data = filter_data(data, path, hier=hier)
+        if log:
+            match = dict(func=func, path=path, default=default, flip=flip, hier=hier)
+            log_context = kloc(kwargs, ["field","name"], if_null="drop")
+            self._log_origin(data, match, point="match", where="match_function", context=context, **log_context, log=True)
         __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
         return toggle(__apply(data, func, default, **context), flip=flip)
 
     def _match_value(self, data: ResponseData, path: _KT, value: Optional[Any]=None, flip=False, strict=False,
-                    how: Literal["any","all"]="any", if_null=False, hier=True, **kwargs) -> Union[bool,pd.Series]:
+                    how: Literal["any","all"]="any", if_null=False, hier=True, log=False, **kwargs) -> Union[bool,pd.Series]:
         if not is_single_path_by_data(data, path, hier=hier):
-            return howin([self._match_value(data, __k, value, flip, strict, how, hier) for __k in path], how=how)
+            args = (value, flip, strict, how, if_null, hier)
+            return howin([self._match_value(data, __k, args, log=log, **kwargs) for __k in path], how=how)
         __value = get_value(data, path)
-        if isna(__value): return if_null
+        if log:
+            match = dict(path=path, flip=flip, strict=strict, how=how, if_null=if_null, hier=hier)
+            log_context = kloc(kwargs, ["context","field","name"], if_null="drop")
+            self._log_origin(__value, match, point="match", where="match_value", **log_context, log=True)
+        if isna(__value): return toggle(if_null, flip=flip)
         elif notna(value): return toggle((__value == value), flip=flip)
         elif isinstance(data, pd.DataFrame):
             return toggle(match_df(data, match=(lambda x: exists(x, strict=strict)), all_cols=True), flip=flip)
         else: return toggle(exists(__value, strict=strict), flip=flip)
+
+    def _log_origin(self, __value: _VT, __object: Any, point: str, where: str, msg=dict(), context: Context=dict(),
+                    field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs):
+        if not log: return
+        msg = dict({"value":__value, point:__object}, **msg)
+        self.checkpoint(f"[origin]_{point}"+SUFFIX(context, field, name), where=where, msg=msg)
+
+    def _log_result(self, __result: _VT, __object: Any, point: str, where: str, msg=dict(), context: Context=dict(),
+                    field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs):
+        if not log: return
+        msg = dict({"result":__result, point:__object}, **msg)
+        self.checkpoint(point+SUFFIX(context, field, name), where=where, msg=msg)
 
 
 def get_response_type(responseType: TypeHint) -> Type:
@@ -824,8 +851,11 @@ class SequenceMapper(Mapper):
             root: Optional[_KT]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
             countby: Optional[Literal["page","start"]]=None, discard=True, updateTime=True,
             fields: IndexLabel=list(), **context) -> Data:
-        if notna(root) or self.root: data = get_value(data, (root if notna(root) else self.root))
+        if notna(root) or self.root:
+            root = root if notna(root) else self.root
+            data = get_value(data, root)
         schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo})
         if isinstance(data, (Sequence,pd.DataFrame)):
             groupby = dict(groupby=(groupby if notna(groupby) else self.groupby))
             groupSize = dict(groupSize=(groupSize if notna(groupSize) else self.groupSize))
@@ -947,8 +977,8 @@ class Parser(SequenceMapper):
             return {field[__from]: field[__to] for field in schema}
         else: return renameMap
 
-    def print(self, __object, drop: Optional[_KT]=None):
-        pretty_print(__object, drop=drop)
+    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        pretty_print(__object, path=path, drop=drop)
 
     ###################################################################
     ######################## Response Validator #######################

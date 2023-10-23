@@ -273,7 +273,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             data = func(self, *args, **PROXY_CONTEXT(**context))
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
             self._with_data(data, **context)
@@ -284,7 +284,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **context):
             context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with requests.Session() as session:
                 data = func(self, *args, session=session, **PROXY_CONTEXT(**context))
             time.sleep(.25)
@@ -604,7 +604,7 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**PROXY_CONTEXT(**context))
             data = await func(self, *args, semaphore=semaphore, **context)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
@@ -616,7 +616,7 @@ class AsyncSpider(Spider):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
             context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))
@@ -1109,7 +1109,7 @@ class EncryptedSpider(Spider):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
                 self.login(session, **context)
                 if not self.sessionCookies: context["cookies"] = self.cookies
@@ -1137,7 +1137,7 @@ class EncryptedSpider(Spider):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = API_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with requests.Session() as session:
                 data = func(self, *args, session=session,
                     **self.validate_secret(**dict(PROXY_CONTEXT(**context), **self.decryptedKey)))
@@ -1211,7 +1211,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, **context):
             context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**context)
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as auth:
@@ -1230,7 +1230,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
         @functools.wraps(func)
         async def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             context = API_CONTEXT(**(dict(self, **context) if self_var else context))
-            self.checkpoint("context", where=func.__name__, msg={"context":context})
+            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             async with aiohttp.ClientSession(**ssl) as session:
                 data = await func(self, *args, session=session,

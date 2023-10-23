@@ -3,7 +3,7 @@ from gscraper.base import REQUEST_CONTEXT
 
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, Index, IndexLabel
 from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
-from gscraper.base.types import RenameMap, Data, ResponseData, MatchFunction
+from gscraper.base.types import RenameMap, Records, Data, ResponseData, MatchFunction
 from gscraper.base.types import init_origin, is_dataframe_type
 from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
 
@@ -11,12 +11,13 @@ from gscraper.utils import isna, notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, set_date, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
-from gscraper.utils.map import data_exists, unique, get_scala, exists_one, startswith, endswith, diff
+from gscraper.utils.map import data_exists, unique, get_scala, exists_one, startswith, endswith, arg_and, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
-from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data
+from gscraper.utils.map import kloc, hier_get, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
+from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data, re_get, replace_map
 
 from abc import ABCMeta
+from ast import literal_eval
 from itertools import product
 import functools
 import logging
@@ -43,8 +44,9 @@ ITER_MSG = lambda context: {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in co
 START, END = 0, 1
 
 CHECKPOINT = [
-    "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count", "redirect",
-    "request", "response", "parse", "schema", "field", "group", "apply", "match", "login", "api", "exception"]
+    "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count",
+    "redirect", "request", "response", "parse", "map", "schema", "field", "group",
+    "apply", "[origin]_apply" "match", "[origin]_match", "login", "api", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
@@ -69,9 +71,9 @@ def pretty_str(__object, indent=2, step=2) -> str:
     else: return str(__object)
 
 
-def pretty_print(__object, drop: Optional[_KT]=None):
-    if drop and isinstance(__object, Dict):
-        print(pretty_str(CustomDict(**drop_dict(__object, drop))))
+def pretty_print(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+    if notna(path): __object = hier_get(__object, path)
+    if notna(drop): __object = drop_dict(__object, drop)
     if isinstance(__object, (CustomDict,CustomList)):
         print(pretty_str(__object))
     elif isinstance(__object, Dict):
@@ -100,8 +102,8 @@ class CustomDict(dict):
             reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
         return kloc(dict(self), __key, default, if_null, reorder, values_only)
 
-    def print(self, __object, drop: Optional[_KT]=None):
-        pretty_print(__object, drop=drop)
+    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        pretty_print(__object, path=path, drop=drop)
 
     def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
         if not inplace: self = self.copy()
@@ -170,8 +172,8 @@ class CustomList(list):
     def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
         return iloc(list(self), __key, default, if_null)
 
-    def print(self, __object, drop: Optional[_KT]=None):
-        pretty_print(__object, drop=drop)
+    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        pretty_print(__object, path=path, drop=drop)
 
     def add(self, __iterable: Iterable):
         for __i in __iterable:
@@ -308,7 +310,7 @@ class BaseSession(CustomDict):
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
         if self.debug and self._isin_log_list(point, self.debug):
-            self.logger.warning(dict(point=f"[{str(point).upper()}]", **dumps_data(msg, limit=0)))
+            self.logger.warning(dict(point=f"({point})", **dumps_data(msg, limit=0)))
         if self.extraSave and self._isin_log_list(point, self.extraSave) and data_exists(save):
             if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
@@ -344,15 +346,31 @@ class BaseSession(CustomDict):
         with open(file, "w", encoding="utf-8") as f:
             f.write(str(data))
 
+    def eval_log(self, log_string: str, func="checkpoint") -> Records:
+        log_string = re_get(f"(?<={func} - )"+r"({.*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
+        log_list = f"[{','.join(log_string)}]"
+        func_objects = re_get(r"\<[^>]+\>", log_list, index=None)
+        if func_objects: log_list = replace_map(log_list, **{__o: f"\"{__o}\"" for __o in func_objects})
+        try: return literal_eval(log_list)
+        except: return list()
+
+    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        log_object = self.eval_log(log_string, func=func)
+        self.print(log_object, path=path, drop=drop)
+
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
-        if ("all" in log_list) or (point in log_list): return True
-        __match = True
-        __startswith = [name for name in log_list if endswith(name, ['_','-'])]
-        __endswith = [name for name in log_list if startswith(name, ['_','-'])]
-        __match &= startswith(point, __startswith) if __startswith else True
-        __match &= endswith(point, __endswith) if __endswith else True
-        return __match
+        if point in log_list: return True
+        elif ("all" in log_list) and (not point.startswith('[')): return True
+        for log_name in log_list:
+            if self._isin_log_name(point, log_name): return True
+        return False
+
+    def _isin_log_name(self, point: str, log_name: Keyword) -> bool:
+        if is_array(log_name): return arg_and(*[self._isin_log_name(point, name) for name in log_name])
+        elif endswith(log_name, ['_','-',']']): return point.startswith(log_name)
+        elif startswith(log_name, ['_','-','[']): return point.endswith(log_name)
+        else: return False
 
     def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
         if isinstance(response, str) and response:
