@@ -6,6 +6,7 @@ from aiohttp import ClientResponse
 from requests import Response
 import logging
 
+from bs4 import Tag
 from pandas import DataFrame, Series
 import json
 import os
@@ -110,6 +111,9 @@ def _info_data(__object, limit=3000, depth=3) -> Union[Tuple[Shape,Any],Any]:
     if isinstance(__object, Series):
         shape = __object.shape
         __object = __object.tolist()
+    elif isinstance(__object, Tag):
+        __object = str(__object).replace('\n', ' ')
+        shape = (len(__object),)
     elif is_records(__object, empty=False):
         shape = (len(__object), len(__object[0]))
     elif (not limit) or (__object == None) or ((limit > 0) and (len(str(__object)) < limit)):

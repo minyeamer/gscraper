@@ -2,7 +2,7 @@ from __future__ import annotations
 from gscraper.base.session import TypedDict, TypedRecords, BaseSession, ITER_INDEX, ITER_SUFFIX, to_default
 
 from gscraper.base.types import _KT, _VT, Context, LogLevel, TypeHint, TypeList, PANDAS_DATA
-from gscraper.base.types import IndexLabel, RenameMap, RegexFormat, ResponseData, PandasData
+from gscraper.base.types import IndexLabel, Timedelta, RenameMap, RegexFormat, ResponseData, PandasData
 from gscraper.base.types import Records, NestedDict, Data, JsonData, ApplyFunction, MatchFunction
 from gscraper.base.types import get_type, init_origin, is_type, is_float_type
 from gscraper.base.types import is_numeric_type, is_numeric_or_date_type, is_bool_type
@@ -23,6 +23,7 @@ import functools
 
 from typing import Any, Dict, Callable, List, Literal, Optional, Sequence, Tuple, Type, Union
 from bs4.element import Tag
+import datetime as dt
 import json
 import pandas as pd
 import re
@@ -483,10 +484,12 @@ class Mapper(BaseSession):
         schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
         self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo})
         data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
-        if updateTime:
-            updateDate = context.get("startDate") if is_daily_frequency(context.get("interval")) else self.today()
-            data = set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
+        if updateTime: data = self.set_update_time(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
+
+    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval=str(), **context) -> Data:
+        updateDate = date if date and is_daily_frequency(interval) else self.today()
+        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
 
     ###################################################################
     ######################### Map Schema Info #########################
@@ -522,7 +525,7 @@ class Mapper(BaseSession):
 
     def map_context(self, data: ResponseData, __base: Data, schemaContext: SchemaContext,
                     responseType: Optional[TypeHint]=None, **context) -> Data:
-        data = filter_data(data, schemaContext[ROOT], hier=True) if ROOT in schemaContext else data
+        data = get_value(data, schemaContext[ROOT]) if ROOT in schemaContext else data
         self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":schemaContext[SCHEMA]})
         if not isinstance(data, get_response_type(responseType if responseType else self.responseType)):
             if not data: return __base
@@ -540,10 +543,8 @@ class Mapper(BaseSession):
         for field in schema:
             if not isinstance(field, Dict): continue
             elif field[MODE] in (QUERY, INDEX):
-                if field[NAME] not in context: pass
-                elif not self.match_data(data, field.get(MATCH), context=context, name=field[NAME], log=True): pass
-                else: __base[field[NAME]] = (
-                    self.apply_data(context[field[NAME]], field.get(APPLY), context=context, name=field[NAME], log=True))
+                __value = self.get_value(context, **field, context=context, log=True)
+                __base[field[NAME]] = __value if __value != __MISMATCH__ else None
                 continue
             data = self._merge_base(data, __base)
             try: __base = self.map_field(data, __base, field, **context)
@@ -740,49 +741,54 @@ class Mapper(BaseSession):
         def wrapper(self: Mapper, data: ResponseData, match: Match, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False):
             if not (isinstance(match, Dict) and match): return True
-            elif (QUERY not in match) and (PATH not in match) and (FUNC not in match): return True
+            elif (MATCH_QUERY not in match) and (PATH not in match) and (FUNC not in match): return True
             log_context = dict(context=context, field=field, name=name, log=log)
             __match = func(self, data, match=match, **log_context)
-            if QUERY not in match:
-                self._log_result(__match, match, point="match", where=func.__name__, **log_context)
+            self._log_result(__match, match, point="match", where=func.__name__, **log_context)
             return __match
         return wrapper
 
     @validate_match
     def match_data(self, data: ResponseData, match: Match, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False) -> Union[bool,pd.Series]:
-        if QUERY in match: return self._match_query(context, **match, log=log)
-        elif FUNC in match: return self._match_function(data, **match, context=context, field=field, name=name, log=log)
+        log_context = dict(context=context, field=field, name=name, log=log)
+        if MATCH_QUERY in match: return self._match_query(**log_context, **match)
+        elif FUNC in match: return self._match_function(data, **match, **log_context)
         elif (EXACT in match) or (INCLUDE in match) or (EXCLUDE in match):
             msg = kloc(match, [EXACT, INCLUDE, EXCLUDE], if_null="drop")
-            self._log_origin(data, match, point="match", where="isin_data", msg=msg, context=context, field=field, name=name, log=log)
-            return toggle(isin_data(data, **match), filp=match[FLIP])
-        else: return self._match_value(data, **match, context=context, field=field, name=name, log=log)
+            self._log_origin(data, match, point="match", where="isin_data", msg=msg, **log_context)
+            return toggle(isin_data(data, **match), flip=match.get(FLIP, False))
+        else: return self._match_value(data, **match, **log_context)
 
-    def _match_query(self, context: Context, query: _KT, log=False, **kwargs) -> bool:
-        return self.match_data(context, match=dict(kwargs, path=query), context=context, log=False)
+    def _match_query(self, context: Context, query: _KT, field: Optional[Field]=dict(),
+                    name: Optional[str]=str(), log=False, **match) -> bool:
+        match = dict(match, path=query)
+        if log:
+            __value = filter_data(context, query, hier=match.get("hier", True))
+            self._log_origin(__value, match, point="match", where="match_query", context=context, field=field, name=name, log=log)
+        return self.match_data(context, match, context=context, field=field, name=name, log=False)
 
     def _match_function(self, data: ResponseData, func: Callable, path: Optional[_KT]=None, default=False,
-                        flip=False, hier=True, context: Context=dict(), log=False, **kwargs) -> Union[bool,pd.Series]:
+                        flip=False, hier=True, context: Context=dict(), field: Optional[Field]=dict(),
+                        name: Optional[str]=str(), log=False, **kwargs) -> Union[bool,pd.Series]:
         if not isinstance(func, Callable): return default
         if notna(path): data = filter_data(data, path, hier=hier)
         if log:
             match = dict(func=func, path=path, default=default, flip=flip, hier=hier)
-            log_context = kloc(kwargs, ["field","name"], if_null="drop")
-            self._log_origin(data, match, point="match", where="match_function", context=context, **log_context, log=True)
+            self._log_origin(data, match, point="match", where="match_function", context=context, field=field, name=name, log=True)
         __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
         return toggle(__apply(data, func, default, **context), flip=flip)
 
     def _match_value(self, data: ResponseData, path: _KT, value: Optional[Any]=None, flip=False, strict=False,
-                    how: Literal["any","all"]="any", if_null=False, hier=True, log=False, **kwargs) -> Union[bool,pd.Series]:
+                    how: Literal["any","all"]="any", if_null=False, hier=True, context: Context=dict(),
+                    field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs) -> Union[bool,pd.Series]:
         if not is_single_path_by_data(data, path, hier=hier):
             args = (value, flip, strict, how, if_null, hier)
             return howin([self._match_value(data, __k, args, log=log, **kwargs) for __k in path], how=how)
         __value = get_value(data, path)
         if log:
             match = dict(path=path, flip=flip, strict=strict, how=how, if_null=if_null, hier=hier)
-            log_context = kloc(kwargs, ["context","field","name"], if_null="drop")
-            self._log_origin(__value, match, point="match", where="match_value", **log_context, log=True)
+            self._log_origin(__value, match, point="match", where="match_value", context=context, field=field, name=name, log=True)
         if isna(__value): return toggle(if_null, flip=flip)
         elif notna(value): return toggle((__value == value), flip=flip)
         elif isinstance(data, pd.DataFrame):
@@ -864,7 +870,7 @@ class SequenceMapper(Mapper):
             data = self.map_sequence(data, schemaInfo, responseType, discard=discard, **context)
         else: data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
         if updateTime:
-            updateDate = context.get("startDate") if is_daily_frequency(context.get("interval")) else self.today()
+            updateDate = context.get("date") if is_daily_frequency(context.get("interval")) else self.today()
             data = set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
         return filter_data(data, fields=fields, if_null="pass")
 

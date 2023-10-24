@@ -7,16 +7,16 @@ from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryI
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
-from gscraper.base.types import IndexLabel, Pagination, Status, Unit, Timedelta, Timezone
+from gscraper.base.types import IndexLabel, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
 from gscraper.base.types import Records, Data, JsonData, RedirectData
 from gscraper.base.types import Account
 from gscraper.base.types import is_array, init_origin
 
 from gscraper.utils import notna
-from gscraper.utils.cast import cast_tuple, cast_int, cast_datetime_format
+from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
-from gscraper.utils.map import kloc, exists_dict, chain_dict, apply_records, drop_dict, re_get
-from gscraper.utils.map import rename_data, filter_data, chain_exists, exists_one, unique, to_array, align_array
+from gscraper.utils.map import to_array, align_array, kloc, exists_dict, chain_dict, apply_records, drop_dict
+from gscraper.utils.map import exists_one, unique, rename_data, filter_data, chain_exists, between_data, re_get
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
@@ -31,6 +31,7 @@ import time
 from typing import Dict, List, Literal, Optional, Tuple, Type, Union
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
+import datetime as dt
 import json
 import pandas as pd
 
@@ -219,6 +220,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
         Parser.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ITERATOR_UNIQUE+SPIDER_UNIQUE+GLOUD_UNIQUE))
@@ -228,11 +230,17 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         self.delay = delay
         self.progress = progress
         self.cookies = cookies
+        if byDate:
+            self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"), self_var=True)
         if queryInfo:
             self.set_query(queryInfo, account)
         self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
         self._disable_warnings()
+
+    def set_date_filter(self, byDate: IndexLabel, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None):
+        self.byDate = cast_list(byDate)
+        self.fromDate, self.toDate = self.get_date_pair(fromDate, toDate, fromNow=(None, None))
 
     def _disable_warnings(self):
         if self.ssl == False:
@@ -360,15 +368,16 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         args, context = self.validate_params(locals())
         return self.gather(*args, **context)
 
-    def gather(self, *args, count: Optional[Pagination]=None, progress=True,
-                fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, *args, count: Optional[Pagination]=None, progress=True, fields: IndexLabel=list(),
+                byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+                returnType: Optional[TypeHint]=None, **context) -> Data:
         self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
         if count: iterator, context = self._init_count(*args, count=count, progress=progress, **context)
         else: iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         message = self.get_gather_message(*args, **context)
         data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
     def _init_iterator(self, args: Arguments, context: Context,
                     iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
@@ -416,9 +425,17 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     def get_count_message(self, *args, which=str(), by=str(), **context) -> str:
         return GATHER_MSG(which, self.where, by)
 
-    def reduce(self, data: List[Data], fields: IndexLabel=list(),
-                    returnType: Optional[TypeHint]=None, **context) -> Data:
-        return filter_data(chain_exists(data), fields=fields, if_null="pass", return_type=returnType)
+    def reduce(self, data: List[Data], fields: IndexLabel=list(), byDate: IndexLabel=list(),
+                fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+                returnType: Optional[TypeHint]=None, **context) -> Data:
+        data = chain_exists(data)
+        if byDate: data = self.filter_date(data, byDate, fromDate, toDate)
+        return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
+
+    def filter_date(self, data: Data, byDate: IndexLabel,
+                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None) -> Data:
+        between_context = {field: (fromDate, toDate) for field in cast_tuple(byDate)}
+        return between_data(data, **between_context)
 
     ###################################################################
     ########################## Fetch Request ##########################
@@ -584,6 +601,7 @@ class AsyncSpider(Spider):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
@@ -674,8 +692,9 @@ class AsyncSpider(Spider):
         args, context = self.validate_params(locals())
         return await self.gather(*args, **context)
 
-    async def gather(self, *args, count: Optional[Pagination]=None, progress=True,
-                    fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, *args, count: Optional[Pagination]=None, progress=True, fields: IndexLabel=list(),
+                    byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+                    returnType: Optional[TypeHint]=None, **context) -> Data:
         self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
         if count: iterator, context = await self._init_count(*args, count=count, progress=progress, **context)
         else: iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
@@ -683,7 +702,7 @@ class AsyncSpider(Spider):
         data = await tqdm.gather(*[
                 self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
     async def _init_count(self, *args, count: Pagination, progress=True,
                         **context) -> Tuple[List[Context],Context]:
@@ -846,8 +865,9 @@ class AsyncSpider(Spider):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, redirectUnit: Unit=1, progress=True,
-                        fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def redirect(self, *args, redirectUnit: Unit=1, progress=True, fields: IndexLabel=list(),
+                        byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+                        returnType: Optional[TypeHint]=None, **context) -> Data:
         self.checkpoint("params", where="gather", msg=dict(zip(["args","context"], self.local_params(locals()))))
         redirectArgs = redirectArgs if is_array(self.redirectArgs) else self.iterateArgs
         context["iterateUnit"] = redirectUnit
@@ -856,7 +876,7 @@ class AsyncSpider(Spider):
         data = await tqdm.gather(*[
                 self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
     def get_redirect_message(self, *args, **context) -> str:
         return REDIRECT_MSG(self.operation)
@@ -1087,6 +1107,7 @@ class EncryptedSpider(Spider):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1199,6 +1220,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
                 delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),

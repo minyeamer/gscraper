@@ -406,16 +406,14 @@ def df_exists(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") 
     return isinstance(df, pd.DataFrame) and not (df.dropna(axis=0, how=how) if drop_na else df).empty
 
 
-def data_exists(data: Data, drop_na=False, how: Literal["any","all"]="all") -> bool:
-    if isinstance(data, (Dict,List,pd.DataFrame)):
-        return df_exists(data, drop_na, how) if isinstance(data, pd.DataFrame) else bool(data)
-    else: return False
+def data_exists(data: Data, strict=False) -> bool:
+    if isinstance(data, (pd.DataFrame, pd.Series)): return not data.empty
+    else: return exists(data, strict=strict)
 
 
-def data_empty(data: Data, drop_na=False, how: Literal["any","all"]="all") -> bool:
-    if isinstance(data, (Dict,List,pd.DataFrame)):
-        return df_empty(data, drop_na, how) if isinstance(data, pd.DataFrame) else (not data)
-    else: return False
+def data_empty(data: Data, strict=False) -> bool:
+    if isinstance(data, (pd.DataFrame, pd.Series)): return data.empty
+    else: return empty(data, strict=strict)
 
 
 ###################################################################
@@ -973,7 +971,8 @@ def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', inde
     path = cast_tuple(path)
     try:
         for selector in path[:-1]:
-            source = select_one(source, selector, sep=sep)
+            selector, index = _get_selector(selector, sep=sep)
+            source = select(source, selector, sep=sep, index=index)
         selector = path[-1] if path else str()
         data = _select_by(source, selector, default, key, sep, index, by, lines, strip, replace)
     except: return default

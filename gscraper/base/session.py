@@ -11,7 +11,7 @@ from gscraper.utils import isna, notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
 from gscraper.utils.date import now, get_date, get_busdate, set_date, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
-from gscraper.utils.map import data_exists, unique, get_scala, exists_one, startswith, endswith, arg_and, diff
+from gscraper.utils.map import unique, get_scala, exists_one, startswith, endswith, arg_and, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, hier_get, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
 from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data, re_get, replace_map
@@ -311,7 +311,7 @@ class BaseSession(CustomDict):
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
         if self.debug and self._isin_log_list(point, self.debug):
             self.logger.warning(dict(point=f"({point})", **dumps_data(msg, limit=0)))
-        if self.extraSave and self._isin_log_list(point, self.extraSave) and data_exists(save):
+        if self.extraSave and self._isin_log_list(point, self.extraSave) and notna(save):
             if (ext == "response"): save, ext = self._check_response(save)
             self._validate_dir(CHECKPOINT_PATH)
             self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
@@ -324,7 +324,7 @@ class BaseSession(CustomDict):
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
             self.save_dataframe(data, file+".xlsx")
-        elif ext == "html" and isinstance(data, str):
+        elif ext == "html":
             self.save_source(data, file+".html")
         else: self.save_json(data, file+".json")
 
@@ -344,7 +344,7 @@ class BaseSession(CustomDict):
         if not isinstance(data, Tag):
             data = BeautifulSoup(data, "html.parser")
         with open(file, "w", encoding="utf-8") as f:
-            f.write(str(data))
+            f.write(str(data.prettify()))
 
     def eval_log(self, log_string: str, func="checkpoint") -> Records:
         log_string = re_get(f"(?<={func} - )"+r"({.*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
@@ -363,12 +363,16 @@ class BaseSession(CustomDict):
         if point in log_list: return True
         elif ("all" in log_list) and (not point.startswith('[')): return True
         for log_name in log_list:
+            if point.startswith('['):
+                if any([str(name).startswith('[') for name in cast_list(log_name)]): pass
+                else: continue
             if self._isin_log_name(point, log_name): return True
         return False
 
     def _isin_log_name(self, point: str, log_name: Keyword) -> bool:
         if is_array(log_name): return arg_and(*[self._isin_log_name(point, name) for name in log_name])
-        elif endswith(log_name, ['_','-',']']): return point.startswith(log_name)
+        elif log_name.startswith('_') and log_name.endswith('_'): return log_name in point
+        elif endswith(log_name, ['_','-']): return point.startswith(log_name)
         elif startswith(log_name, ['_','-','[']): return point.endswith(log_name)
         else: return False
 
