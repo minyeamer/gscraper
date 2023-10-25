@@ -452,7 +452,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         def wrapper(self: Spider, method: str, url: str, session: Optional[requests.Session]=None,
                     messages: Dict=dict(), params=None, encode: Optional[bool]=None,
                     data=None, json=None, headers=None, cookies=str(), *args, **context):
-            session = session if session else requests
+            session = session if session is not None else requests
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
@@ -751,7 +751,7 @@ class AsyncSpider(Spider):
         async def wrapper(self: AsyncSpider, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
                         messages: Dict=dict(), params=None, encode: Optional[bool]=None,
                         data=None, json=None, headers=None, cookies=str(), *args, **context):
-            session = session if session else aiohttp
+            session = session if session is not None else aiohttp
             url, params = self.encode_params(url, params, encode=encode)
             if headers and cookies: headers["Cookie"] = str(cookies)
             messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
@@ -893,16 +893,6 @@ class AsyncSpider(Spider):
             self.checkpoint("redirect"+ITER_SUFFIX(context), where="fetch_redirect", msg={"response":response}, save=response, ext="json")
             self.logger.info(await log_client(response, url=redirectUrl, **self.get_iterator(**context, _index=True)))
             return self._parse_redirect(response.json(), **context)
-
-    @encode_messages
-    async def request_json(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> JsonData:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
-            self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
-            if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return await response.json(encoding=encoding, content_type=None)
 
     def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(

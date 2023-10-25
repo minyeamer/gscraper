@@ -3,9 +3,9 @@ from gscraper.base import REQUEST_CONTEXT
 
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, Index, IndexLabel
 from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
-from gscraper.base.types import RenameMap, Records, Data, ResponseData, MatchFunction
-from gscraper.base.types import init_origin, is_dataframe_type
-from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, inspect_function
+from gscraper.base.types import RenameMap, Records, Data, MatchFunction
+from gscraper.base.types import init_origin, is_dataframe_type, allin_instance
+from gscraper.base.types import is_array, is_str_array, is_records, is_dfarray, inspect_function
 
 from gscraper.utils import isna, notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int1
@@ -14,7 +14,7 @@ from gscraper.utils.logs import CustomLogger, dumps_data, log_exception
 from gscraper.utils.map import unique, get_scala, exists_one, startswith, endswith, arg_and, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, hier_get, chain_dict, drop_dict, apply_dict, notna_dict, exists_dict
-from gscraper.utils.map import vloc, match_records, drop_duplicates, convert_data, re_get, replace_map
+from gscraper.utils.map import vloc, match_records, drop_duplicates, to_dataframe, re_get, replace_map
 
 from abc import ABCMeta
 from ast import literal_eval
@@ -300,9 +300,6 @@ class BaseSession(CustomDict):
         renameMap = self.get_rename_map(to=to, **context)
         return renameMap[string] if renameMap and (string in renameMap) else string
 
-    def match(self, data: ResponseData, **context) -> bool:
-        return True
-
     ###################################################################
     ############################ Checkpoint ###########################
     ###################################################################
@@ -336,7 +333,8 @@ class BaseSession(CustomDict):
 
     def save_dataframe(self, data: Data, file: str):
         file = self._validate_file(file)
-        data = convert_data(data, return_type="dataframe")
+        if is_dfarray(data): data = data[0]
+        else: data = to_dataframe(data)
         data.rename(columns=self.get_rename_map(to="ko")).to_excel(file, index=False)
 
     def save_source(self, data: Union[str,Tag], file: str):

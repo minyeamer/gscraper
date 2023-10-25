@@ -487,7 +487,7 @@ class Mapper(BaseSession):
         if updateTime: data = self.set_update_time(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
 
-    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval=str(), **context) -> Data:
+    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval: Timedelta=str(), **context) -> Data:
         updateDate = date if date and is_daily_frequency(interval) else self.today()
         return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
 
@@ -503,7 +503,8 @@ class Mapper(BaseSession):
         for __key, schemaContext in schemaInfo.items():
             if not (isinstance(schemaContext, Dict) and (SCHEMA in schemaContext)): continue
             __base = self.map_context(data, __base, schemaContext, responseType, __key=__key, **context)
-        return __base if discard or isinstance(data, Tag) else self._merge_base(data, __base)
+        if discard or isinstance(data, Tag): return self.map_base_data(__base, **context)
+        else: return self.map_merged_data(self._merge_base(data, __base), **context)
 
     def _match_schema(self, data: ResponseData,
                     match: Optional[Union[MatchFunction,bool]]=None, **context) -> bool:
@@ -512,12 +513,21 @@ class Mapper(BaseSession):
             else: return bool(match)
         else: return self.match(data, **context)
 
+    def match(self, data: ResponseData, **context) -> bool:
+        return True
+
     def _merge_base(self, data: ResponseData, __base: Data) -> Data:
         if isinstance(data, Dict):
             return chain_dict([__base, data], keep="first")
         elif isinstance(data, pd.DataFrame) and df_exists(__base):
             return concat_df([__base, data], axis=1, keep="first")
         else: return data
+
+    def map_base_data(self, data: Data, **context) -> Data:
+        return data
+
+    def map_merged_data(self, data: Data, **context) -> Data:
+        return data
 
     ###################################################################
     ######################## Map Schema Context #######################
@@ -869,9 +879,7 @@ class SequenceMapper(Mapper):
             context = dict(context, **groupby, **groupSize, **countby)
             data = self.map_sequence(data, schemaInfo, responseType, discard=discard, **context)
         else: data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
-        if updateTime:
-            updateDate = context.get("date") if is_daily_frequency(context.get("interval")) else self.today()
-            data = set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
+        if updateTime: data = self.set_update_time(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
 
     ###################################################################
