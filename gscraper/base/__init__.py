@@ -1,3 +1,17 @@
+from __future__ import annotations
+from gscraper.base.types import _KT, _VT, ClassInstance, Index, MatchFunction, is_array
+
+from gscraper.utils.map import iloc, kloc, notna_dict, exists_dict
+from gscraper.utils.map import vloc, match_records, drop_duplicates, exists_one
+
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Union
+import functools
+
+
+###################################################################
+############################# Context #############################
+###################################################################
+
 UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, by=None, \
                         initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
                         pagination=None, pageUnit=None, pageLimit=None, fromNow=None, responseType=None, \
@@ -45,3 +59,157 @@ PROXY_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=No
 
 REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, **context: \
     PROXY_CONTEXT(**REQUEST_CONTEXT(**context))
+
+
+###################################################################
+########################### Custom Dict ###########################
+###################################################################
+
+class CustomDict(dict):
+    def __init__(self, __m: Dict=dict(), **kwargs):
+        super().update(self.__dict__)
+        super().__init__(dict(__m, **kwargs))
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomDict]:
+        if __instance: return __instance.__class__(**self)
+        else: return self.__class__(**self)
+
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
+            reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
+        return kloc(dict(self), __key, default, if_null, reorder, values_only)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+        if not inplace: self = self.copy()
+        if self_var: dict.update(self, self.__dict__)
+        if __m or kwargs:
+            __m = dict(__m, **kwargs)
+            self[list(__m.keys())] = list(__m.values())
+            dict.update(self, __m)
+        return exists_one(inplace, self)
+
+    def updatable(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomDict, *args, inplace=True, self_var=False, **kwargs):
+            if not inplace: self = self.copy()
+            context = dict(inplace=inplace, self_var=self_var)
+            return self.update(func(self, *args, **kwargs, **context), **context)
+        return wrapper
+
+    def copyable(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomDict, *args, inplace=False, self_var=False, **kwargs):
+            if not inplace: self = self.copy()
+            context = dict(inplace=inplace, self_var=self_var)
+            return self.update(func(self, *args, **kwargs, **context), **context)
+        return wrapper
+
+    @updatable
+    def update_notna(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+        return dict(__m, **notna_dict(kwargs))
+
+    @updatable
+    def update_exists(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+        return dict(__m, **exists_dict(kwargs))
+
+    def __getitem__(self, __key: _KT) -> _VT:
+        if isinstance(__key, List): return [self.__getitem__(__k) for __k in __key]
+        else: return super().__getitem__(__key)
+
+    def __setitem__(self, __key: _KT, __value: _VT):
+        if isinstance(__key, List) and is_array(__value):
+            for __k, __v in zip(__key, __value):
+                setattr(self, __k, __v)
+        else: setattr(self, __key, __value)
+
+
+class TypedDict(CustomDict):
+    def update_default(self, __default: Dict=dict(), __how: Literal["notna","exists"]="notna",
+                        inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+        kwargs = {__k: __v for __k, __v in kwargs.items() if __default.get(__k) != __v}
+        if __how == "notna": return self.update_notna(kwargs, inplace=inplace)
+        else: return self.update_exists(kwargs, inplace=inplace, self_var=self_var)
+
+
+###################################################################
+########################### Custom List ###########################
+###################################################################
+
+class CustomList(list):
+    def __init__(self,  __iterable: Iterable):
+        super().__init__(__iterable)
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomList]:
+        if __instance: return __instance.__class__(self)
+        else: return self.__class__(self)
+
+    def get(self, __key: Index, default=None, if_null: Literal["drop","pass"]="pass") -> Union[Any,List,str]:
+        return iloc(list(self), __key, default, if_null)
+
+    def add(self, __iterable: Iterable):
+        for __i in __iterable:
+            self.append(__i)
+
+    def update(self, __iterable: Iterable, inplace=True):
+        if not inplace: self = self.copy()
+        self.clear()
+        self.add(__iterable)
+        return exists_one(inplace, self)
+
+    def updatable(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomList, *args, inplace=True, **kwargs):
+            if not inplace: self = self.copy()
+            return self.update(func(self, *args, inplace=inplace, **kwargs), inplace=inplace)
+        return wrapper
+
+    def copyable(func):
+        @functools.wraps(func)
+        def wrapper(self: CustomList, *args, inplace=False, **kwargs):
+            if not inplace: self = self.copy()
+            return self.update(func(self, *args, inplace=inplace, **kwargs), inplace=inplace)
+        return wrapper
+
+
+###################################################################
+########################## Custom Records #########################
+###################################################################
+
+class CustomRecords(CustomList):
+    def __init__(self,  __iterable: Iterable):
+        super().__init__([__i for __i in __iterable if isinstance(__i, Dict)])
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomRecords]:
+        if __instance: return __instance.__class__(self)
+        else: return self.__class__(self)
+
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass",
+            reorder=True, values_only=True) -> Union[Any,List,Dict,str]:
+        return vloc(list(self), __key, default, if_null, reorder, values_only)
+
+    def add(self, __iterable: Iterable):
+        for __i in __iterable:
+            if isinstance(__i, Dict): self.append(__i)
+
+    @CustomList.copyable
+    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
+        return [__func(__m, **kwargs) for __m in self]
+
+    @CustomList.copyable
+    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
+        if isinstance(__match, Callable) or match_by_key:
+            all_keys = isinstance(__match, Callable)
+            return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
+        else: return self
+
+    @CustomList.copyable
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
+        return drop_duplicates(self, keep=keep) if keep != True else self
+
+
+class TypedRecords(CustomRecords):
+    def __init__(self,  *args):
+        super().__init__(args)
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,TypedRecords]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)

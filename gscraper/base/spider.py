@@ -1,8 +1,7 @@
 from __future__ import annotations
 from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
 from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
-from gscraper.base.session import Iterator, ITER_INDEX, ITER_SUFFIX, ITER_MSG
-from gscraper.base.parser import Parser, SchemaInfo
+from gscraper.base.session import Iterator, Parser, SchemaInfo, ITER_INDEX, ITER_SUFFIX, ITER_MSG
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
@@ -29,6 +28,7 @@ import requests
 import time
 
 from typing import Dict, List, Literal, Optional, Tuple, Type, Union
+from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
 import datetime as dt
@@ -90,6 +90,88 @@ WHERE, WHICH = "urls", "data"
 
 
 ###################################################################
+############################# Headers #############################
+###################################################################
+
+HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
+    "sec-ch-ua": '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+}
+
+
+def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
+    if urlencoded or content_type == "urlencoded":
+        __type = "application/x-www-form-urlencoded"
+    elif content_type == "json": __type = "application/json"
+    elif content_type == "text": __type = "text/plain"
+    else: return str()
+    return __type+(("; charset=UTF-8") if utf8 else str())
+
+
+def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
+                origin: Union[bool,str]=False, secure=False,
+                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict:
+    headers = HEADERS.copy()
+    if authority: headers["Authority"] = urlparse(authority).hostname
+    if referer: headers["referer"] = referer
+    if host: headers["Host"] = urlparse(host).hostname
+    if origin: headers["Origin"] = parse_origin(origin if isinstance(origin, str) else (authority if authority else host))
+    if cookies: headers["Cookie"] = cookies
+    if secure: headers["Upgrade-Insecure-Requests"] = "1"
+    if content_type or urlencoded:
+        headers["Content-Type"] = get_content_type(content_type, urlencoded, utf8)
+    if xml: headers["X-Requested-With"] = "XMLHttpRequest"
+    return dict(headers, **kwargs)
+
+
+###################################################################
+############################### Json ##############################
+###################################################################
+
+class LazyDecoder(json.JSONDecoder):
+    def decode(s, **kwargs):
+        regex_replacements = [
+            (re.compile(r'([^\\])\\([^\\])'), r'\1\\\\\2'),
+            (re.compile(r',(\s*])'), r'\1'),
+        ]
+        for regex, replacement in regex_replacements:
+            s = regex.sub(replacement, s)
+        return super().decode(s, **kwargs)
+
+
+def validate_json(data: JsonData, __path: IndexLabel, default=dict()) -> JsonData:
+    __m = data.copy()
+    try:
+        for key in __path:
+            __m = __m[key]
+            if isinstance(__m, str):
+                try: __m = json.loads(__m)
+                except json.JSONDecodeError: return json.loads(__m, cls=LazyDecoder)
+        return __m
+    except: return default
+
+
+def parse_invalid_json(raw_json: str, key: str, value_type: Literal["any","dict"]="dict") -> JsonData:
+    rep_bool = lambda s: str(s).replace("null","None").replace("true","True").replace("false","False")
+    try:
+        if value_type == "dict" and re.search("\""+key+"\":\{[^\}]*\}+",raw_json):
+            return literal_eval(rep_bool("{"+re.search("\""+key+"\":\{[^\}]*\}+",raw_json).group()+"}"))
+        elif value_type == "any" and re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json):
+            return literal_eval(rep_bool(re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json).group()))
+        else: return
+    except: return dict() if value_type == "dict" else None
+
+
+###################################################################
 ############################## Urllib #############################
 ###################################################################
 
@@ -136,50 +218,6 @@ def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
 
 def encode_object(__object: str) -> str:
     return quote(str(__object).replace('\'','\"'))
-
-
-###################################################################
-############################# Headers #############################
-###################################################################
-
-HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-    "sec-ch-ua": '"Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-}
-
-
-def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
-    if urlencoded or content_type == "urlencoded":
-        __type = "application/x-www-form-urlencoded"
-    elif content_type == "json": __type = "application/json"
-    elif content_type == "text": __type = "text/plain"
-    else: return str()
-    return __type+(("; charset=UTF-8") if utf8 else str())
-
-
-def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
-                origin: Union[bool,str]=False, secure=False,
-                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict:
-    headers = HEADERS.copy()
-    if authority: headers["Authority"] = urlparse(authority).hostname
-    if referer: headers["referer"] = referer
-    if host: headers["Host"] = urlparse(host).hostname
-    if origin: headers["Origin"] = parse_origin(origin if isinstance(origin, str) else (authority if authority else host))
-    if cookies: headers["Cookie"] = cookies
-    if secure: headers["Upgrade-Insecure-Requests"] = "1"
-    if content_type or urlencoded:
-        headers["Content-Type"] = get_content_type(content_type, urlencoded, utf8)
-    if xml: headers["X-Requested-With"] = "XMLHttpRequest"
-    return dict(headers, **kwargs)
 
 
 ###################################################################

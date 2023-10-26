@@ -1,6 +1,5 @@
-from gscraper.base import UPLOAD_CONTEXT
-from gscraper.base.session import TypedDict, TypedRecords, BaseSession
-from gscraper.base.parser import Schema, Field, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
+from gscraper.base import TypedDict, TypedRecords, UPLOAD_CONTEXT
+from gscraper.base.session import BaseSession, Schema, Field, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.types import _KT, TypeHint, LogLevel, IndexLabel, Datetime, RenameMap
 from gscraper.base.types import TabularData, Account, PostData, is_records, from_literal
 
@@ -37,16 +36,9 @@ ENV_PATH = "env/"
 GCLOUD_ACCOUNT = ENV_PATH+"gcloud.json"
 GCLOUD_DATA = ENV_PATH+"data.json"
 
-KEY = "key"
-SHEET = "sheet"
-FIELDS = "fields"
-
-TABLE = "table"
-QUERY = "query"
-PID = "project_id"
-
-MODE = "mode"
-DATA = "data"
+KEY, SHEET, FIELDS = "key", "sheet", "fields"
+TABLE, QUERY, PID = "table", "query", "project_id"
+MODE, DATA = "mode", "data"
 
 FROM_GS, TO_GBQ = ["from_key", "from_sheet"], ["to_table", "to_pid"]
 FROM_GBQ, TO_GS = ["from_query", "from_pid"], ["to_key", "to_sheet"]
