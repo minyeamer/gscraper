@@ -1,4 +1,4 @@
-from gscraper.base import TypedDict, TypedRecords, UPLOAD_CONTEXT
+from gscraper.base.abstract import TypedDict, TypedRecords, UPLOAD_CONTEXT
 from gscraper.base.session import BaseSession, Schema, Field, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.types import _KT, TypeHint, LogLevel, IndexLabel, Datetime, RenameMap
 from gscraper.base.types import TabularData, Account, PostData, is_records, from_literal
@@ -6,7 +6,7 @@ from gscraper.base.types import TabularData, Account, PostData, is_records, from
 from gscraper.utils.cast import cast_str, cast_list, cast_float, cast_int, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import df_exists, df_empty, data_exists
+from gscraper.utils.map import df_exists, df_empty
 from gscraper.utils.map import iloc, to_array, kloc, drop_dict, cloc, to_dataframe, apply_df, apply_data
 
 from google.oauth2 import service_account
@@ -201,7 +201,7 @@ class GoogleQueryReader(BaseSession):
                     arr_cols: IndexLabel=list(), to: Optional[Literal["desc","name"]]=None,
                     rename: RenameMap=dict(), name=str(), account: Account=dict()):
         context = dict(default=default, head=head, headers=headers, numericise_ignore=str_cols,
-                        return_type="dataframe", rename=self.get_rename_map(to=to, renameMap=rename))
+                        return_type="dataframe", rename=rename)
         data = read_gspread(key, sheet, account, fields=cast_list(fields), if_null="drop", **context)
         self.checkpoint(READ(name), where="set_gs_query", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
@@ -286,7 +286,8 @@ class GoogleUploader(BaseSession):
 
     def upload_data(self, data: TabularData, uploadInfo: GoogleUploadInfo=dict(), reauth=False,
                     audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
-        __exists = data_exists(data)
+        data = to_dataframe(data)
+        __exists = df_exists(data)
         if __exists: data = to_dataframe(data).copy()
         context = UPLOAD_CONTEXT(account=account, **context)
         gbq_auth = dict(reauth=reauth, audience=audience, credentials=credentials)
@@ -329,7 +330,7 @@ class GoogleUploader(BaseSession):
                     head=1, headers=None, str_cols: NumericiseIgnore=list(),
                     to: Optional[Literal["desc","name"]]=None, rename: RenameMap=dict()) -> pd.DataFrame:
         data = read_gspread(key, sheet, account, default=default, head=head, headers=headers,
-                            numericise_ignore=str_cols, rename=self.get_rename_map(to=to, renameMap=rename))
+                            numericise_ignore=str_cols, rename=rename)
         self.checkpoint(READ(name), where="read_gs_base", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         return data

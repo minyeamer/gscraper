@@ -102,7 +102,7 @@ def to_dataframe(__object: MappingData, index: Optional[Sequence]=None) -> pd.Da
     elif is_records(__object, empty=True): __object = pd.DataFrame(align_records(__object)).convert_dtypes()
     elif isinstance(__object, dict): __object = pd.DataFrame([__object])
     else: return pd.DataFrame()
-    if safe_len(index, -1) == len(__object): __object.index = index
+    if (index is not None) and (safe_len(index, -1) == len(__object)): __object.index = index
     return __object
 
 
@@ -971,8 +971,8 @@ def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', inde
     path = cast_tuple(path)
     try:
         for selector in path[:-1]:
-            selector, index = _get_selector(selector, sep=sep)
-            source = select(source, selector, sep=sep, index=index)
+            __selector, __index = _get_selector(selector, sep=sep)
+            source = select(source, __selector, sep=sep, index=__index)
         selector = path[-1] if path else str()
         data = _select_by(source, selector, default, key, sep, index, by, lines, strip, replace)
     except: return default

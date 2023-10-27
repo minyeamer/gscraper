@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gscraper.base import CustomDict, TypedDict, TypedRecords, REQUEST_CONTEXT
+from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, REQUEST_CONTEXT
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList, IndexLabel, PANDAS_DATA
 from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
@@ -188,15 +188,12 @@ class BaseSession(CustomDict):
         unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
         return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
 
-    def get_rename_map(self, to: Optional[str]=None, renameMap: RenameMap=dict(), **context) -> RenameMap:
-        return renameMap
+    def get_rename_map(self, to: Optional[str]=None) -> RenameMap:
+        return dict()
 
-    def rename(self, string: str, to: Optional[str]=None, **context) -> str:
-        renameMap = self.get_rename_map(to=to, **context)
+    def rename(self, string: str, to: Optional[str]=None) -> str:
+        renameMap = self.get_rename_map(to=to)
         return renameMap[string] if renameMap and (string in renameMap) else string
-
-    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
-        pretty_print(__object, path=path, drop=drop)
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -207,19 +204,19 @@ class BaseSession(CustomDict):
         if self.debug and self._isin_log_list(point, self.debug):
             self.logger.warning(dict(point=f"({point})", **dumps_data(msg, limit=0)))
         if self.extraSave and self._isin_log_list(point, self.extraSave) and notna(save):
-            if (ext == "response"): save, ext = self._check_response(save)
+            save, ext = self._validate_extension(save, ext)
             self._validate_dir(CHECKPOINT_PATH)
             self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
         if self.interrupt and self._isin_log_list(point, self.interrupt):
             raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
 
     def save_data(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
-        prefix = self.rename(prefix if prefix else self.operation, to="ko")
+        prefix = prefix if prefix else self.operation
         file = prefix+'_'+self.now("%Y%m%d%H%M%S")
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
             self.save_dataframe(data, file+".xlsx")
-        elif ext == "html":
+        elif is_tag_type(ext):
             self.save_source(data, file+".html")
         else: self.save_json(data, file+".json")
 
@@ -233,7 +230,7 @@ class BaseSession(CustomDict):
         file = self._validate_file(file)
         if is_dfarray(data): data = data[0]
         else: data = to_dataframe(data)
-        data.rename(columns=self.get_rename_map(to="ko")).to_excel(file, index=False)
+        data.rename(columns=self.get_rename_map()).to_excel(file, index=False)
 
     def save_source(self, data: Union[str,Tag], file: str):
         file = self._validate_file(file)
@@ -249,10 +246,6 @@ class BaseSession(CustomDict):
         if func_objects: log_list = replace_map(log_list, **{__o: f"\"{__o}\"" for __o in func_objects})
         try: return literal_eval(log_list)
         except: return list()
-
-    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None):
-        log_object = self.eval_log(log_string, func=func)
-        self.print(log_object, path=path, drop=drop)
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
@@ -272,15 +265,16 @@ class BaseSession(CustomDict):
         elif startswith(log_name, ['_','-','[']): return point.endswith(log_name)
         else: return False
 
-    def _check_response(self, response: Data) -> Tuple[Data, TypeHint]:
-        if isinstance(response, str) and response:
-            try: return json.loads(response), "json"
-            except: return response, "html"
-        elif isinstance(response, pd.DataFrame):
-            return response, "dataframe"
-        elif isinstance(response, Tag):
-            return response, "html"
-        else: return response, "json"
+    def _validate_extension(self, data: Data, ext: Optional[TypeHint]=None) -> Tuple[Data, TypeHint]:
+        if ext: return data, ext
+        elif isinstance(data, str) and data:
+            try: return json.loads(data), "json"
+            except: return data, "html"
+        elif isinstance(data, pd.DataFrame):
+            return data, "dataframe"
+        elif isinstance(data, Tag):
+            return data, "html"
+        else: return data, "json"
 
     def _validate_dir(self, dir: str):
         if not os.path.exists(dir):
@@ -859,7 +853,7 @@ class Mapper(BaseSession):
             root = root if notna(root) else self.root
             data = get_value(data, root)
         schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo})
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo}, save=data)
         data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
         if updateTime: data = self.set_update_time(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
@@ -913,7 +907,7 @@ class Mapper(BaseSession):
     def map_context(self, data: ResponseData, __base: Data, schemaContext: SchemaContext,
                     responseType: Optional[TypeHint]=None, **context) -> Data:
         data = get_value(data, schemaContext[ROOT]) if ROOT in schemaContext else data
-        self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":schemaContext[SCHEMA]})
+        self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":schemaContext[SCHEMA]}, save=data)
         if not isinstance(data, _get_response_type(responseType if responseType else self.responseType)):
             if not data: return __base
             else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
@@ -1248,7 +1242,7 @@ class SequenceMapper(Mapper):
             root = root if notna(root) else self.root
             data = get_value(data, root)
         schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo})
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo}, save=data)
         if isinstance(data, (Sequence,pd.DataFrame)):
             groupby = dict(groupby=(groupby if notna(groupby) else self.groupby))
             groupSize = dict(groupSize=(groupSize if notna(groupSize) else self.groupSize))
@@ -1360,6 +1354,29 @@ class Parser(SequenceMapper):
     countby = str()
     schemaInfo = SchemaInfo()
 
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first") -> RenameMap:
+        if to in ("desc", "name"):
+            __from, __to = ("desc", "name") if to == "name" else ("name", "desc")
+            schema = self.schemaInfo.get_schema(schema_names=schema_names, keep=keep)
+            return {field[__from]: field[__to] for field in schema}
+        else: return dict()
+
+    def rename(self, string: str, to: Optional[Literal["desc","name"]]=None) -> str:
+        renameMap = self.get_rename_map(to=to)
+        return renameMap[string] if renameMap and (string in renameMap) else string
+
+    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        pretty_print(__object, path=path, drop=drop)
+
+    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None):
+        log_object = self.eval_log(log_string, func=func)
+        self.print(log_object, path=path, drop=drop)
+
+    ###################################################################
+    ######################### Parse Response #########################
+    ###################################################################
+
     def validate_response(func):
         @functools.wraps(func)
         def wrapper(self: Parser, response: Any, *args, **context):
@@ -1379,14 +1396,6 @@ class Parser(SequenceMapper):
     @validate_response
     def parse(self, response: Any, **context) -> Data:
         return self.map(response, **context)
-
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", renameMap: RenameMap=dict(), **context) -> RenameMap:
-        if to in ("desc", "name"):
-            __from, __to = ("desc", "name") if to == "name" else ("name", "desc")
-            schema = self.schemaInfo.get_schema(schema_names=schema_names, keep=keep)
-            return {field[__from]: field[__to] for field in schema}
-        else: return renameMap
 
 
 ###################################################################

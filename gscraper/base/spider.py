@@ -1,6 +1,6 @@
 from __future__ import annotations
-from gscraper.base import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
-from gscraper.base import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
+from gscraper.base.abstract import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 from gscraper.base.session import Iterator, Parser, SchemaInfo, ITER_INDEX, ITER_SUFFIX, ITER_MSG
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
@@ -497,7 +497,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
             self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
             response = func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -661,8 +661,8 @@ class AsyncSpider(Spider):
         async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
             context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
-            semaphore = self.asyncio_semaphore(**PROXY_CONTEXT(**context))
-            data = await func(self, *args, semaphore=semaphore, **context)
+            semaphore = self.asyncio_semaphore(**context)
+            data = await func(self, *args, semaphore=semaphore, **PROXY_CONTEXT(**context))
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
             self._with_data(data, **context)
             return data
@@ -796,7 +796,7 @@ class AsyncSpider(Spider):
             self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
             response = await func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -1009,7 +1009,7 @@ class LoginSpider(requests.Session, Spider):
             self.checkpoint(origin+"_request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
             self.logger.debug(log_messages(**messages, dump=self.logJson))
             response = func(self, method=method, url=url, origin=origin, messages=messages, **context)
-            self.checkpoint(origin+"_response", where=func.__name__, msg={"response":response}, save=response, ext="response")
+            self.checkpoint(origin+"_response", where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -1081,7 +1081,7 @@ class LoginSpider(requests.Session, Spider):
             return BeautifulSoup(response.text, features)
 
     def log_response_text(self, response: requests.Response, origin: str):
-        self.checkpoint(origin+"_text", where=origin, msg={"response":response.text}, save=response, ext="response")
+        self.checkpoint(origin+"_text", where=origin, msg={"response":response.text}, save=response)
 
 
 class BaseLogin(LoginSpider):
@@ -1173,7 +1173,7 @@ class EncryptedSpider(Spider):
         auth.login()
         auth.update_cookies(self.set_cookies(**context), if_exists="replace")
         self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
-        self.cookies = auth.get_cookies()
+        self.update(cookies=auth.get_cookies())
 
     def set_cookies(self, **context) -> Dict:
         return dict()

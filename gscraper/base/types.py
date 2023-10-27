@@ -193,7 +193,7 @@ SET_TYPES = [set, Set, "set"]
 DICT_TYPES = [Dict, dict, "dict", "dictionary"]
 RECORDS_TYPES = [Records, "records"]
 DATAFRAME_TYPES = [DataFrame, "dataframe", "df", "pandas", "pd"]
-TAG_TYPES = [Tag, "source", "tag", "bs4"]
+TAG_TYPES = [Tag, "tag", "bs4", "html", "source"]
 
 TYPE_LIST = {
     bool: BOOLEAN_TYPES,

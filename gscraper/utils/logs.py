@@ -1,4 +1,5 @@
-from gscraper.base.types import LogLevel, LogMessage, Shape, Data, is_records
+from gscraper.base.types import LogLevel, LogMessage, Shape, Data
+from gscraper.base.types import is_records, is_dfarray, is_tag_array
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ast import literal_eval
@@ -116,6 +117,8 @@ def _info_data(__object, limit=3000, depth=3) -> Union[Tuple[Shape,Any],Any]:
         shape = (len(__object),)
     elif is_records(__object, empty=False):
         shape = (len(__object), len(__object[0]))
+    elif is_dfarray(__object, empty=False) or is_tag_array(__object, empty=False):
+        return [_info_data(__e, limit=max(100,(limit//len(__object)))) for __e in __object]
     elif (not limit) or (__object == None) or ((limit > 0) and (len(str(__object)) < limit)):
         return __object
     else: shape = (len(__object),) if isinstance(__object, Dict) else len(str(__object))
