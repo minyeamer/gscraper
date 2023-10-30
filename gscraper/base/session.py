@@ -1379,8 +1379,10 @@ class Parser(SequenceMapper):
 
     def validate_response(func):
         @functools.wraps(func)
-        def wrapper(self: Parser, response: Any, *args, **context):
+        def wrapper(self: Parser, response: Any, *args, returnPath: Optional[_KT]=None, **context):
             is_valid = self.is_valid_response(response)
+            if notna(returnPath):
+                return get_value(response, returnPath)
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
             self.checkpoint(f"parse"+ITER_SUFFIX(context), where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **context)
@@ -1394,7 +1396,7 @@ class Parser(SequenceMapper):
         self.logger.info(log_data(data, **context))
 
     @validate_response
-    def parse(self, response: Any, **context) -> Data:
+    def parse(self, response: Any, returnPath: Optional[_KT]=None, **context) -> Data:
         return self.map(response, **context)
 
 
