@@ -181,11 +181,15 @@ decrypt = lambda s=str(), count=0, *args: decrypt(
     base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
 
 
-def get_cookies(session, url=None) -> str:
+def get_cookies(session, encode=True, raw=False, url=None) -> Union[str,Dict,RequestsCookieJar,SimpleCookie]:
     if isinstance(session, aiohttp.ClientSession):
-        return "; ".join([str(key)+"="+str(value) for key,value in session.cookie_jar.filter_cookies(url).items()])
+        cookies = session.cookie_jar.filter_cookies(url)
     elif isinstance(session, requests.Session):
-        return "; ".join([str(key)+"="+str(value) for key,value in dict(session.cookies).items()])
+        cookies = session.cookies
+    else: return str() if encode else dict()
+    if raw: return cookies
+    elif encode: return parse_cookies(cookies)
+    else: return {str(key): str(value) for key, value in cookies.items()}
 
 
 def parse_parth(url: str) -> str:
@@ -983,10 +987,8 @@ class LoginSpider(requests.Session, Spider):
     def login(self):
         ...
 
-    def get_cookies(self, returnType: Literal["str","dict"]="str") -> Union[str,Dict]:
-        if returnType == "str": return parse_cookies(self.cookies)
-        elif returnType == "dict": return dict(self.cookies.items())
-        else: return self.cookies
+    def get_cookies(self, encode=True, raw=False, url=None) -> Union[str,Dict,RequestsCookieJar,SimpleCookie]:
+        return get_cookies(self, encode=encode, raw=raw, url=url)
 
     def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore", **context):
         cookies = decode_cookies(cookies, **context) if isinstance(cookies, str) else dict(cookies, **context)
@@ -1019,7 +1021,7 @@ class LoginSpider(requests.Session, Spider):
                     headers=None, cookies=str(), allow_redirects=True, **context):
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
 
     @encode_messages
@@ -1028,7 +1030,7 @@ class LoginSpider(requests.Session, Spider):
                         headers=None, cookies=str(), allow_redirects=True, **context) -> int:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.status_code
 
@@ -1038,7 +1040,7 @@ class LoginSpider(requests.Session, Spider):
                         headers=None, cookies=str(), allow_redirects=True, **context) -> bytes:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.content
 
@@ -1048,7 +1050,7 @@ class LoginSpider(requests.Session, Spider):
                     headers=None, cookies=str(), allow_redirects=True, **context) -> str:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return response.text
 
     @encode_messages
@@ -1057,7 +1059,7 @@ class LoginSpider(requests.Session, Spider):
                     headers=None, cookies=str(), allow_redirects=True, **context) -> JsonData:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.json()
 
@@ -1067,7 +1069,7 @@ class LoginSpider(requests.Session, Spider):
                     headers=None, cookies=str(), allow_redirects=True, **context) -> Dict:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.headers
 
@@ -1077,7 +1079,7 @@ class LoginSpider(requests.Session, Spider):
                     headers=None, cookies=str(), allow_redirects=True, features="html.parser", **context) -> Tag:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
-            self.logger.debug(log_messages(cookies=dict(self.cookies), origin=origin, dump=self.logJson))
+            self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return BeautifulSoup(response.text, features)
 
     def log_response_text(self, response: requests.Response, origin: str):
@@ -1172,7 +1174,7 @@ class EncryptedSpider(Spider):
     def login(self, auth: LoginSpider, **context):
         auth.login()
         auth.update_cookies(self.set_cookies(**context), if_exists="replace")
-        self.checkpoint("login", where="login", msg={"cookies":dict(auth.cookies)})
+        self.checkpoint("login", where="login", msg={"cookies":auth.get_cookies(encode=False)})
         self.update(cookies=auth.get_cookies())
 
     def set_cookies(self, **context) -> Dict:
@@ -1266,7 +1268,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as auth:
                 self.login(auth, **context)
-                cookies = dict(cookies=dict(auth.cookies)) if self.sessionCookies else dict()
+                cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**ssl, **cookies) as session:
                     if not self.sessionCookies: context["cookies"] = self.cookies
                     data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))

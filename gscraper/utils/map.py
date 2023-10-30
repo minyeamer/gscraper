@@ -186,9 +186,9 @@ def iloc(__s: IndexedSequence, indices: Index, default=None, if_null: Literal["d
 
 
 def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="drop",
-        reorder=True, values_only=False, hier=False, alias: Sequence[_KT]=list(), sep=' > ') -> Union[_VT,Dict]:
+        reorder=True, values_only=False, hier=False, key_alias: Sequence[_KT]=list()) -> Union[_VT,Dict]:
     if hier:
-        return hloc(__m, keys, default, if_null=if_null, values_only=values_only, alias=alias, sep=sep)
+        return hloc(__m, keys, default, if_null=if_null, values_only=values_only, key_alias=key_alias)
     elif not is_array(keys):
         return __m.get(keys, default)
     elif keys:
@@ -200,21 +200,21 @@ def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="dr
 
 
 def hloc(__m: Dict, keys: Sequence[_KT], default=None, if_null: Literal["drop","pass"]="drop",
-        values_only=False, alias: Sequence[_KT]=list(), sep=' > ') -> Union[_VT,Dict]:
+        values_only=False, key_alias: Sequence[_KT]=list()) -> Union[_VT,Dict]:
     if is_single_path(keys, hier=True):
         return hier_get(__m, keys, default)
     elif allin(map(exists, keys)):
-        if len(alias) != len(keys):
-            alias = [sep.join(map(str, cast_list(__path))) for __path in keys]
-        __m = {__key: hier_get(__m, __path, default) for __key, __path in zip(alias, keys)}
+        if len(key_alias) != len(keys):
+            key_alias = [tuple(map(str, cast_list(__path))) for __path in keys]
+        __m = {__key: hier_get(__m, __path, default) for __key, __path in zip(key_alias, keys)}
         if if_null == "drop": __m = notna_dict(__m)
     else: return __m if if_null == "pass" else dict()
     return list(__m.values()) if values_only else __m
 
 
 def vloc(__r: List[Dict], keys: _KT, default=None, if_null: Literal["drop","pass"]="drop", reorder=True,
-        values_only=False, hier=False, alias: Sequence[_KT]=list(), sep=' > ') -> Union[Records,List]:
-    context = dict(if_null=if_null, reorder=reorder, values_only=values_only, hier=hier, alias=alias, sep=sep)
+        values_only=False, hier=False, key_alias: Sequence[_KT]=list()) -> Union[Records,List]:
+    context = dict(if_null=if_null, reorder=reorder, values_only=values_only, hier=hier, key_alias=key_alias)
     __r = [kloc(__m, keys, default=default, **context) for __m in __r]
     if if_null == "drop": return [__m for __m in __r if __m]
     else: return [__m if __m else dict() for __m in __r]
@@ -236,26 +236,25 @@ def cloc(df: pd.DataFrame, columns: IndexLabel, default=None, if_null: Literal["
 
 
 def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["drop","pass"]="drop",
-        values_only=False, hier=False, alias: Sequence[_KT]=list(), sep=' > ', index: Optional[Unit]=None,
-        by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-        strip=True, replace: RenameMap=dict()) -> Union[_VT,Dict]:
-    if not (allin(map(exists, selectors)) if hier else selectors):
+        values_only=False, hier=False, key_alias: Sequence[_KT]=list(), index: Optional[Unit]=None,
+        key=str(), text=False, sep=str(), strip=True, **kwargs) -> Union[_VT,Dict]:
+    if not selectors:
         return source if if_null == "pass" else default
-    loc = hier_select if hier else select_by
-    context = dict(default=default, sep=sep, index=index, by=by, lines=lines, strip=strip, replace=replace)
+    loc = hier_select if hier else select_path
+    context = dict(default=default, index=index, key=key, text=text, sep=sep, strip=strip)
     if is_single_selector(selectors, hier=hier, index=index):
         return loc(source, selectors, **context)
-    elif len(alias) != len(selectors):
-        alias = [_get_selector_name(selector, sep=sep, hier=hier) for selector in selectors]
-    __m = {key: loc(source, selector, **context) for key, selector in zip(alias, selectors)}
+    if len(key_alias) != len(selectors):
+        key_alias = [_get_selector_name(selector, hier=hier) for selector in selectors]
+    __m = {__key: loc(source, __path, **context) for __key, __path in zip(key_alias, selectors)}
     if if_null == "drop": __m = exists_dict(__m)
     return list(__m.values()) if values_only else __m
 
 
 def get_value(data: ResponseData, field: Union[_KT,Index], default=None, **kwargs) -> _VT:
     if not field: return default
-    elif isinstance(data, Dict): return hier_get(data, field, default, **kwargs)
-    elif is_records(data): return [hier_get(__m, field, default, **kwargs) for __m in data]
+    elif isinstance(data, Dict): return hier_get(data, field, default)
+    elif is_records(data): return [hier_get(__m, field, default) for __m in data]
     elif isinstance(data, pd.DataFrame):
         column = get_scala(field)
         return fillna_each(data[column], default) if column in data else default
@@ -270,14 +269,15 @@ def get_value(data: ResponseData, field: Union[_KT,Index], default=None, **kwarg
 @multitype_rename
 def filter_data(data: ResponseData, fields: Optional[Union[_KT,Index]]=list(), default=None,
                 if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
-                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
+                key_alias: Sequence[_KT]=list(), return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
                 convert_first=False, rename_first=False, **kwargs) -> Data:
     context = dict(default=default, if_null=if_null, values_only=values_only)
+    map_context = dict(hier=hier, key_alias=key_alias)
     if not fields: return data if if_null == "pass" else list()
-    elif isinstance(data, Dict): return kloc(data, fields, reorder=reorder, hier=hier, **context)
-    elif is_records(data): return vloc(data, fields, reorder=reorder, hier=hier, **context)
+    elif isinstance(data, Dict): return kloc(data, fields, reorder=reorder, **context, **map_context)
+    elif is_records(data): return vloc(data, fields, reorder=reorder, **context, **map_context)
     elif isinstance(data, pd.DataFrame): return cloc(data, fields, reorder=reorder, **context)
-    elif isinstance(data, Tag): return sloc(data, fields, hier=hier, **context)
+    elif isinstance(data, Tag): return sloc(data, fields, **context, **map_context, **kwargs)
     elif is_array(data): return iloc(data, fields, default=default, if_null=if_null)
     else: return data if if_null == "pass" else list()
 
@@ -342,36 +342,27 @@ def is_single_path(path: _KT, hier=False) -> bool:
     else: return (not is_array(path)) or (len(path) == 1)
 
 
-def hier_get(__m: Dict, __path: _KT, default=None, apply: Optional[ApplyFunction]=None,
-            __type: Optional[_TYPE]=None, empty=True, strict=True, **context) -> _VT:
-    __m = __m.copy()
+def hier_get(__m: Dict, __path: _KT, default=None) -> _VT:
     try:
-        for __key in cast_tuple(__path):
+        if not is_array(__path):
+            return __m.get(__path, default)
+        __m = __m.copy()
+        for __key in __path:
             __m = __m[__key]
+        return __m
     except: return default
-    value = safe_apply(__m, apply, default, **context) if apply else __m
-    if __type and not isinstance(value, __type): return default
-    return value if empty or notna(value, strict=strict) else default
 
 
-def hier_set(__m: Dict, __path: _KT, value: _VT, empty=True, strict=True, inplace=True) -> Dict:
-    if not inplace: __m = __m.copy()
-    if empty or notna(value, strict=strict):
-        try:
-            for __key in cast_tuple(__path)[:-1]:
+def hier_set(__m: Dict, __path: _KT, value: _VT, inplace=True) -> Dict:
+    try:
+        if not inplace: __m = __m.copy()
+        if is_array(__path):
+            for __key in __path[:-1]:
                 __m = __m[__key]
-        except: return __m if not inplace else None
-        __m[__path[-1]] = value
+            __m[__path[-1]] = value
+        else: __m[__path] = value
+    except: pass
     if not inplace: return __m
-
-
-def hier_get_set(__m: Dict, __get_path: _KT, __set_path: _KT, default=None,
-                apply: Optional[ApplyFunction]=None, __type: Optional[_TYPE]=None,
-                empty=True, strict=True, inplace=True, **context) -> Dict:
-    value = hier_get(__m, __get_path, default, apply, __type, empty, strict, **context)
-    if empty or notna(value, strict=strict):
-        return hier_set(__m, __set_path, value, inplace=inplace)
-    elif not inplace: return __m
 
 
 ###################################################################
@@ -514,15 +505,17 @@ def _isin_series(series: pd.Series, __values: Optional[IndexLabel]=None,
 
 def isin_source(source: Union[Tag,Sequence[Tag]], selectors: _KT, exact: Optional[_VT]=None,
                 include: Optional[_VT]=None, exclude: Optional[_VT]=None, how: Literal["any","all"]="any",
-                if_null=False, sep=' > ', index: Optional[Unit]=None, hier=False, filter=True) -> Union[bool,List[Tag],List[bool]]:
+                if_null=False, hier=False, index: Optional[Unit]=None, key=str(), text=True, sep=' ', strip=True,
+                filter=True, **kwargs) -> Union[bool,List[Tag],List[bool]]:
     if is_array(source):
-        __matches = [isin_source(__s, selectors, exact, include, exclude, how, if_null, index, hier) for __s in source]
+        context = locals()
+        __matches = [isin_source(dict(context, source=__s)) for __s in source]
         return [__s for __match, __s in zip(__matches, source) if __match] if filter else __matches
     if isna(exact) and isna(include) and isna(exclude):
         name = exists_one(*map(_get_class_name, (selectors if hier else cast_tuple(selectors))))
         if not name: return True
         else: exact = name
-    context = dict(sep=sep, index=index, by="text", lines="raw")
+    context = dict(index=index, key=key, text=text, sep=sep, strip=strip)
     __values = sloc(source, selectors, if_null="drop", values_only=True, hier=hier, **context)
     if not __values: return if_null
     elif is_single_selector(selectors, hier=hier, index=index): pass
@@ -538,12 +531,12 @@ def _get_class_name(selector: _KT) -> str:
 def isin_data(data: ResponseData, path: Optional[Union[_KT,IndexLabel]]=None,
                 exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
                 how: Literal["any","all"]="any", if_null=False, hier=False, filter=False,
-                index: Optional[Unit]=None, **kwargs) -> Union[bool,List[bool],pd.Series]:
+                **kwargs) -> Union[bool,List[bool],pd.Series]:
     context = dict(exact=exact, include=include, exclude=exclude, how=how, if_null=if_null)
     if isinstance(data, Dict): return isin_dict(data, path, hier=hier, **context)
     elif is_records(data): return isin_records(data, path, filter=filter, **context)
     elif isinstance(data, pd.DataFrame): return isin_df(data, path, filter=filter, **context)
-    elif isinstance(data, Tag): return isin_source(data, hier=hier, index=index, **context)
+    elif isinstance(data, Tag): return isin_source(data, hier=hier, **context, **kwargs)
     else: return isin(data, **context)
 
 
@@ -644,27 +637,26 @@ def groupby_df(df: pd.DataFrame, by: _KT, if_null: Literal["drop","pass"]="drop"
 
 
 def groupby_source(source: Sequence[Tag], by: Union[Dict[_KT,_KT],_KT],
-                    if_null: Literal["drop","pass"]="drop", hier=False, sep=' > ') -> Dict[_KT,Tag]:
+                    if_null: Literal["drop","pass"]="drop", hier=False) -> Dict[_KT,Tag]:
     if not is_array(source): raise TypeError(SOURCE_SEQUENCE_TYPE_MSG)
     if not isinstance(by, Dict):
         by = {0: by} if is_single_selector(by, hier=hier) else dict(enumerate(cast_tuple(by)))
     groups = dict()
     for __key, selector in by.items():
         name = _get_class_name(selector)
-        loc = hier_select if hier else select_by
+        loc = hier_select if hier else select_path
         __match = lambda __value: (name in cast_tuple(__value)) if name else bool(__value)
-        __matches = [__match(loc(__s, selector, sep=sep)) for __s in source]
+        __matches = [__match(loc(__s, selector)) for __s in source]
         groups[__key] = [__s for __i, __s in enumerate(source) if __matches[__i]]
         source = [__s for __i, __s in enumerate(source) if not __matches[__i]]
     if (if_null == "pass") and source: groups[None] = source
     return groups
 
 
-def groupby_data(data: Data, by: _KT, if_null: Literal["drop","pass"]="drop",
-                hier=False, sep=' > ', **kwargs) -> Dict[_KT,Data]:
+def groupby_data(data: Data, by: _KT, if_null: Literal["drop","pass"]="drop", hier=False, **kwargs) -> Dict[_KT,Data]:
     if is_records(data): return groupby_records(data, by, if_null=if_null, hier=hier)
     elif is_dfarray(data): return groupby_df(data, by, if_null=if_null)
-    elif is_tag_array(data): return groupby_source(data, by, if_null=if_null, hier=hier, sep=sep)
+    elif is_tag_array(data): return groupby_source(data, by, if_null=if_null, hier=hier)
     else: dict()
 
 
@@ -837,56 +829,49 @@ def clean_tag(__object: str) -> str:
     return re.sub("<[^>]*>", "", cast_str(__object))
 
 
-def _get_selector(selector: _KT, sep=' > ', index: Optional[Unit]=None) -> Tuple[str,Unit]:
+def _from_selector(selector: _KT, index: Optional[Unit]=None) -> Tuple[str,Unit]:
     if not (isinstance(selector, (List,str)) and selector): return str(), None
     elif not isinstance(selector, List): return selector, index
     selector = selector.copy()
     index = selector.pop() if isinstance(selector[-1], (int,List,Tuple)) else index
-    return sep.join(selector), index
+    return ' > '.join(selector), index
 
 
-def select(source: Tag, selector: _KT, sep=' > ', index: Optional[Unit]=None) -> Union[Tag,List[Tag]]:
-    selector, index = _get_selector(selector, sep=sep, index=index)
+def is_single_selector(selector: _KT, hier=False, index: Optional[Unit]=None) -> bool:
+    if isinstance(index, int): return True
+    elif not hier: return not is_2darray(selector, how="any")
+    elif not is_array(selector): return True
+    elif len(selector) == 1: return not is_array(selector[0])
+    else: return all(
+        [(not is_2darray(__s, how="any")) and isinstance(_from_selector(__s)[1], int) for __s in selector[:-1]])
+
+
+def select(source: Tag, selector: _KT, index: Optional[Unit]=None) -> Union[Tag,List[Tag]]:
+    selector, index = _from_selector(selector, index=index)
     if not selector: return source
     elif index == 0: return source.select_one(selector)
     elif not index: return source.select(selector)
     else: return iloc(source.select(selector), index)
 
 
-def select_one(source: Tag, selector: _KT, sep=' > ') -> Tag:
-    selector, _ = _get_selector(selector, sep=sep)
+def select_one(source: Tag, selector: _KT) -> Tag:
+    selector, _ = _from_selector(selector)
     if not selector: return source
     else: return source.select_one(selector)
 
 
-def parse_text(string: Keyword, strip=False, replace: RenameMap=dict()) -> Union[str,List[str]]:
-    if is_array(string): return [replace_map(__s, strip, **replace) for __s in string]
-    else: return replace_map(string, strip, **replace)
-
-
-def parse_lines(string: str, how: Literal["ignore","split","raw"]="ignore", sep='\n',
-                strip=False, replace: RenameMap=dict()) -> Union[str,List[str]]:
-    if how == "ignore": return parse_text(string.replace('\n', ' '), strip, **replace)
-    elif how == "split": return parse_text(string.split(sep), strip, **replace)
-    else: return parse_text(string, strip, **replace)
-
-
-def select_text(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
-                lines: Literal["ignore","split","raw"]="ignore", strip=True,
-                replace: RenameMap=dict()) -> Union[str,List[str]]:
-    source = select(source, selector, sep=sep, index=index)
+def select_text(source: Tag, selector: _KT, index: Optional[Index]=None, sep=str(), strip=True) -> Union[str,List[str]]:
+    source = select(source, selector, index=index)
     try:
         if is_array(source):
-            return [parse_lines(__s.text, how=lines, strip=strip, **replace)
-                    for __s in source if isinstance(__s, Tag)]
-        else: return parse_lines(source.text, how=lines, strip=strip, **replace)
+            return [__s.get_text(sep, strip=strip) for __s in source if isinstance(__s, Tag)]
+        else: return source.get_text(sep, strip=strip)
     except (AttributeError, IndexError, TypeError):
         return list() if is_array(source) else str()
 
 
-def select_attr(source: Tag, selector: str, key: str, sep=' > ',
-                index: Optional[Index]=None) -> Union[str,List[str],List[List[str]]]:
-    source = select(source, selector, sep=sep, index=index)
+def select_attr(source: Tag, selector: str, key: str, index: Optional[Index]=None) -> Union[str,List[str],List[List[str]]]:
+    source = select(source, selector, index=index)
     try:
         if is_array(source):
             return [__s.attrs.get(key,str()) for __s in source if isinstance(__s, Tag)]
@@ -895,90 +880,52 @@ def select_attr(source: Tag, selector: str, key: str, sep=' > ',
         return list() if is_array(source) else str()
 
 
-def select_datetime(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
-                    lines: Literal["ignore","split","raw"]="ignore", strip=True, default=None,
-                    replace: RenameMap=dict()) -> Union[dt.datetime,List[dt.datetime]]:
-    text = select_text(source, selector, sep=sep, index=index, lines=lines, strip=strip, replace=replace)
-    if is_array(text): return [cast_datetime(text, default) for text in text]
-    else: return cast_datetime(text, default)
-
-
-def select_date(source: Tag, selector: _KT, sep=' > ', index: Optional[Index]=None,
-                lines: Literal["ignore","split","raw"]="ignore", strip=True, default=None,
-                replace: RenameMap=dict()) -> Union[dt.date,List[dt.date]]:
-    text = select_text(source, selector, sep=sep, index=index, lines=lines, strip=strip, replace=replace)
-    if is_array(text): return [cast_date(text, default) for text in text]
-    else: return cast_date(text, default)
-
-
 ###################################################################
-############################ Select By ############################
+########################### Select Path ###########################
 ###################################################################
 
-def is_single_selector(selector: _KT, hier=False, index: Optional[Index]=None) -> bool:
-    if (not selector) or isinstance(index, int): return True
-    elif not hier: return not is_2darray(selector, how="any")
-    elif not is_array(selector): return True
-    elif len(selector) == 1: return not is_array(selector[0])
-    else: return all(
-        [(not is_2darray(__s, how="any")) and isinstance(_get_selector(__s)[1], int) for __s in selector[:-1]])
+def _from_selector_path(__path: _KT, key=str(), text=False) -> Tuple[_KT,str,str]:
+    if isinstance(__path, str):
+        if key: return (__path, key, "attr")
+        elif __path == "text()": return (str(), str(), "text")
+        elif __path.startswith('@'): return (str(), __path[1:], "attr")
+        elif __path.startswith('.'): return (str(), "class", "attr")
+        elif __path.startswith('#'): return (str(), "id", "attr")
+        else: return (__path, str(), ("text" if text else "source"))
+    elif is_array(__path):
+        selector, key, by = _from_selector_path(__path[-1])
+        return ((__path+[selector] if selector else __path), key, by)
+    else: return (str(), str(), "source")
 
 
-def _get_selector_by(selector: _KT, key=str(), by: Literal["source","text"]="source") -> Tuple[_KT,str,str]:
-    if isinstance(selector, str):
-        if selector == "text()": return (str(), str(), "text")
-        elif selector.startswith('@'): return (str(), selector[1:], by)
-        elif selector.startswith('.'): return (str(), "class", by)
-        elif selector.startswith('#'): return (str(), "id", by)
-        else: return (selector, key, by)
-    elif is_array(selector) and selector:
-        tag, key, by = _get_selector_by(selector[-1], key, by)
-        return ((selector+[tag] if tag else selector), key, by)
-    else: return (str(), str(), by)
-
-
-def _get_selector_name(selector: _KT, key=str(), by: Literal["source","text"]="source", sep=' > ', hier=False) -> str:
-    path = (sep.join([_get_selector_name(__s, sep=sep) if is_array(__s) else str(__s)
-                    for __s in selector[:-1]]) if hier else str())
-    if hier: selector = selector[-1]
-    selector, key, by = _get_selector_by(selector, key, by)
-    selector, index = _get_selector(selector, sep=sep)
-    if path: selector = sep.join(path, selector) if selector else path
+def _get_selector_name(__path: _KT, key=str(), hier=False) -> str:
+    path = (' > '.join([_get_selector_name(__s, key) if is_array(__s) else str(__s) for __s in __path[:-1]]) if hier else str())
+    if hier: __path = __path[-1]
+    selector, key, by = _from_selector_path(__path, key)
+    selector, index = _from_selector(selector)
+    if path: selector = ' > '.join(path, selector) if selector else path
     return selector + (f"[{index}]" if notna(index) else str()) + (f"[@{key}]" if key else str())
 
 
-def select_by(source: Tag, selector: _KT, default=None, key=str(), sep=' > ', index: Optional[Unit]=None,
-            by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-            strip=True, replace: RenameMap=dict()) -> HtmlData:
-    try: return _select_by(**locals())
-    except: return default
-
-
-def _select_by(source: Tag, selector: _KT, default=None, key=str(), sep=' > ', index: Optional[Unit]=None,
-            by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-            strip=True, replace: RenameMap=dict()) -> HtmlData:
-    selector, key, by = _get_selector_by(selector, key, by)
-    context = dict(sep=sep, index=index, lines=lines, strip=strip, replace=replace)
-    if key: return select_attr(source, selector, key, sep=sep, index=index)
-    elif by == "text": return select_text(source, selector, **context)
-    else: return select(source, selector, sep=sep, index=index)
-
-
-def hier_select(source: Tag, path: _KT, default=None, key=str(), sep=' > ', index: Optional[Unit]=None,
-                by: Literal["source","text"]="source", lines: Literal["ignore","split","raw"]="ignore",
-                strip=True, replace: RenameMap=dict(), apply: Optional[ApplyFunction]=None,
-                __type: Optional[_TYPE]=None, empty=True, strict=True, **context) -> HtmlData:
-    path = cast_tuple(path)
+def select_path(source: Tag, __path: _KT, default=None, index: Optional[Unit]=None, key=str(),
+                text=False, sep=str(), strip=True, **kwargs) -> HtmlData:
+    selector, key, by = _from_selector_path(__path, key, text)
     try:
-        for selector in path[:-1]:
-            __selector, __index = _get_selector(selector, sep=sep)
-            source = select(source, __selector, sep=sep, index=__index)
-        selector = path[-1] if path else str()
-        data = _select_by(source, selector, default, key, sep, index, by, lines, strip, replace)
+        if by == "text": return select_text(source, selector, index=index, sep=sep, strip=strip)
+        elif by == "attr": return select_attr(source, selector, key, index=index)
+        else: return select(source, selector, index=index)
     except: return default
-    data = safe_apply(data, apply, default, **context) if apply else data
-    if __type and not isinstance(data, __type): return default
-    return data if empty or notna(data, strict=strict) else default
+
+
+def hier_select(source: Tag, __path: _KT, default=None, index: Optional[Unit]=None, key=str(),
+                text=False, sep=str(), strip=True, **kwargs) -> HtmlData:
+    try:
+        if is_array(__path):
+            for selector in __path[:-1]:
+                source = select(source, selector)
+            __path = __path[-1] if __path else str()
+        return select_path(source, __path, default, index, key, text, sep, strip)
+    except: return default
 
 
 ###################################################################
@@ -1199,10 +1146,10 @@ def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int
     return __pattern.search(string).groups()[index] if catch else default
 
 
-def replace_map(__string: str, strip=False, **context) -> str:
+def replace_map(__string: str, **context) -> str:
     for __old, __new in context.items():
         __string = __string.replace(__old, __new)
-    return __string.strip() if strip else __string
+    return __string
 
 
 def match_keyword(__string: str, __keyword: Keyword) -> bool:
@@ -1312,9 +1259,9 @@ def merge_drop(left: pd.DataFrame, right: pd.DataFrame, drop: Literal["left","ri
 
 def unroll_df(df: pd.DataFrame, columns: IndexLabel, values: _VT) -> pd.DataFrame:
     columns, values = cast_tuple(columns), cast_tuple(values)
-    get_values = lambda row: [row[__value] for __value in values]
-    len_values = lambda row: min(map(len, get_values(row)))
-    unroll_row = lambda row: [[row[__column]]*len_values(row) for __column in columns]+get_values(row)
+    __get = lambda row: [row[__value] for __value in values]
+    __len = lambda row: min(map(len, __get(row)))
+    unroll_row = lambda row: [[row[__column]]*__len(row) for __column in columns]+__get(row)
     map_subrow = lambda subrow: {__key: __value for __key, __value in zip(columns+values,subrow)}
     map_row = lambda row: pd.DataFrame([map_subrow(subrow) for subrow in zip(*unroll_row(row))])
     return pd.concat([map_row(row) for _,row in df.iterrows()])

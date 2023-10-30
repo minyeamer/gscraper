@@ -2,7 +2,7 @@ from __future__ import annotations
 from gscraper.base.types import _KT, _VT, ClassInstance, Index, MatchFunction
 
 from gscraper.utils.map import iloc, kloc, notna_dict, exists_dict
-from gscraper.utils.map import vloc, match_records, drop_duplicates, exists_one
+from gscraper.utils.map import vloc, match_records, drop_duplicates
 
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Union
 import functools
@@ -82,12 +82,12 @@ class CustomDict(dict):
             reorder=True, values_only=True) -> Union[Any,Dict,List,str]:
         return kloc(dict(self), __key, default, if_null, reorder, values_only)
 
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> CustomDict:
         if not inplace: self = self.copy()
         if self_var: dict.update(self, self.__dict__)
         for __k, __v in dict(__m, **kwargs).items():
             self[__k] = __v
-        return exists_one(inplace, self)
+        if not inplace: return self
 
     def updatable(func):
         @functools.wraps(func)
@@ -106,11 +106,11 @@ class CustomDict(dict):
         return wrapper
 
     @updatable
-    def update_notna(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+    def update_notna(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> CustomDict:
         return dict(__m, **notna_dict(kwargs))
 
     @updatable
-    def update_exists(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+    def update_exists(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> CustomDict:
         return dict(__m, **exists_dict(kwargs))
 
     def __setitem__(self, __key: _KT, __value: _VT):
@@ -120,7 +120,7 @@ class CustomDict(dict):
 
 class TypedDict(CustomDict):
     def update_default(self, __default: Dict=dict(), __how: Literal["notna","exists"]="notna",
-                        inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+                        inplace=True, self_var=False, **kwargs) -> CustomDict:
         kwargs = {__k: __v for __k, __v in kwargs.items() if __default.get(__k) != __v}
         if __how == "notna": return self.update_notna(kwargs, inplace=inplace)
         else: return self.update_exists(kwargs, inplace=inplace, self_var=self_var)
@@ -149,7 +149,7 @@ class CustomList(list):
         if not inplace: self = self.copy()
         self.clear()
         self.add(__iterable)
-        return exists_one(inplace, self)
+        if not inplace: return self
 
     def updatable(func):
         @functools.wraps(func)
@@ -187,18 +187,18 @@ class CustomRecords(CustomList):
             if isinstance(__i, Dict): self.append(__i)
 
     @CustomList.copyable
-    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
+    def map(self, __func: Callable, inplace=False, **kwargs) -> CustomRecords:
         return [__func(__m, **kwargs) for __m in self]
 
     @CustomList.copyable
-    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
+    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> CustomRecords:
         if isinstance(__match, Callable) or match_by_key:
             all_keys = isinstance(__match, Callable)
             return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
         else: return self
 
     @CustomList.copyable
-    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> CustomRecords:
         return drop_duplicates(self, keep=keep) if keep != True else self
 
 

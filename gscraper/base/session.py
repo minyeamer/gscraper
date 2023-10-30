@@ -635,12 +635,11 @@ class Join(Apply):
 
 
 class Regex(Apply):
-    def __init__(self, pattern: RegexFormat, how: Literal["search","findall","sub"]="search",
-                default=None, index: Optional[int]=0, repl: Optional[str]=None):
-        if notna(repl): how = "sub"
-        elif not isinstance(index, int): how = "findall"
-        super().__init__(func=__REGEX__, pattern=pattern, how=how)
-        self.update_default(dict(index=0), default=default, index=index, repl=repl)
+    def __init__(self, pattern: RegexFormat, default=None, index: Optional[int]=0,
+                repl: Optional[str]=None, strip=False):
+        super().__init__(func=__REGEX__, pattern=pattern)
+        self.update_default(dict(index=0, strip=False),
+            default=default, index=index, repl=repl, strip=strip)
 
 
 class Rename(Apply):
@@ -694,12 +693,12 @@ PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
 class Field(TypedDict):
     def __init__(self, name: _KT, path: SchemaPath, type: TypeHint, mode: SchemaMode, desc: Optional[str]=None,
                 default: Optional[Any]=None, apply: Optional[Apply]=None, match: Optional[Match]=None,
-                cast=False, strict=True, how: Optional[PathType]=None, description: Optional[str]=None):
+                cast=False, strict=True, sep=str(), strip=True, how: Optional[PathType]=None, description: Optional[str]=None):
         super().__init__(name=name, path=path, type=type, mode=mode)
-        self.update_default(dict(cast=False, strict=True),
+        self.update_default(dict(cast=False, strict=True, sep=str(), strip=True),
             description=(desc if desc else description), default=default,
             apply=_to_apply_func(apply), match=_to_match_func(match),
-            cast=cast, strict=strict, how=(how if how else _get_path_type(path)))
+            cast=cast, strict=strict, sep=sep, strip=strip, how=(how if how else _get_path_type(path)))
         self.init_field()
 
     def init_field(self):
@@ -958,20 +957,21 @@ class Mapper(BaseSession):
         return __base
 
     def get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
-                    apply: Apply=dict(), match: Match=dict(), cast=False, strict=True,
+                    apply: Apply=dict(), match: Match=dict(), cast=False, strict=True, sep=str(), strip=True,
                     context: Context=dict(), name=str(), log=False, **field) -> _VT:
         if isinstance(data, pd.DataFrame):
             if match:
                 data = data[self.match_data(data, match, context=context, field=field, name=name, log=log)]
                 if data.empty: return __MISMATCH__
         elif not self.match_data(data, match, context=context, name=name, log=log): return __MISMATCH__
-        default = self._get_value_by_path(data, default) if notna(default) else None
-        __value = self._get_value_by_path(data, path, default, context)
+        default = self._get_value_by_path(data, default, None, sep, strip, context) if notna(default) else None
+        __value = self._get_value_by_path(data, path, default, sep, strip, context)
         return self._apply_value(__value, apply, type, default, cast, strict, context, name, log, **field)
 
-    def _get_value_by_path(self, data: ResponseData, path=list(), default=None, context: Context=dict()) -> _VT:
+    def _get_value_by_path(self, data: ResponseData, path=list(), default=None, sep=str(), strip=True,
+                            context: Context=dict()) -> _VT:
         if is_array(path):
-            return get_value(data, path, default=default) if path else data
+            return get_value(data, path, default=default, sep=sep, strip=strip) if path else data
         elif isinstance(path, Callable):
             __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
             return __apply(data, path, default, **context)
@@ -1075,13 +1075,13 @@ class Mapper(BaseSession):
         __object = [__s for __s in [cast_str(__e, strict=True, strip=strip) for __e in __object] if __s]
         return sep.join(__object) if __object else default
 
-    def __regex__(self, __object, pattern: RegexFormat, how: Literal["search","findall","sub"]="search",
-                    default=None, index: Optional[int]=0, repl: Optional[str]=None, **kwargs) -> str:
+    def __regex__(self, __object, pattern: RegexFormat, default=None, index: Optional[int]=0,
+                    repl: Optional[str]=None, strip=False, **kwargs) -> str:
         __object = cast_str(__object, strict=True)
         __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
-        if how == "sub": return __pattern.sub(repl, __object)
-        elif how == "findall": index = None
-        return re_get(pattern, __object, default=default, index=index)
+        if isinstance(repl, str): __object = __pattern.sub(repl, __object)
+        else: return re_get(pattern, __object, default=default, index=index)
+        return __object.strip() if strip else __object
 
     def __rename__(self, __object, rename: RenameMap, path: _KT=list(),
                     if_null: Union[Literal["null","pass","error"],Any]="null", **kwargs) -> str:
