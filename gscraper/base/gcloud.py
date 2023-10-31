@@ -51,6 +51,8 @@ UPLOAD = lambda name=str(): f"upload_{name}" if name else "upload"
 ############################# Messages ############################
 ###################################################################
 
+INVALID_QUERY_MSG = "To update data, parameters for source and destination are required."
+
 INVALID_AXIS_MSG = lambda axis: f"'{axis}' is not valid axis. Only allowed in table(-1), each column(0), each row(1)."
 
 INVALID_GS_ACTION_MSG = lambda action: f"'{action}' is not valid action for gspread task."
@@ -167,9 +169,9 @@ class GspreadReadContext(TypedDict):
     def __init__(self, key: str, sheet: str, fields: IndexLabel, axis=0, dropna=True, strict=True,
                 unique=False, default: Optional[Any]=None, head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, arr_cols: Optional[IndexLabel]=None,
-                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
+                to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None):
         super().__init__(key=key, sheet=sheet, fields=fields)
-        self.update_default(dict(axis=0, dropna=True, strict=True, unique=False, head=1),
+        self.update_default(dict(axis=0, dropna=True, strict=True, unique=False, head=1, to="desc"),
             axis=axis, dropna=dropna, strict=strict, unique=unique, default=default, head=head,
             headers=headers, str_cols=str_cols, arr_cols=arr_cols, to=to, rename=rename)
 
@@ -198,10 +200,10 @@ class GoogleQueryReader(BaseSession):
 
     def set_gs_query(self, key: str, sheet: str, fields: IndexLabel, axis=0, dropna=True, strict=True, unique=False,
                     default=None, head=1, headers=None, str_cols: NumericiseIgnore=list(),
-                    arr_cols: IndexLabel=list(), to: Optional[Literal["desc","name"]]=None,
-                    rename: RenameMap=dict(), name=str(), account: Account=dict()):
+                    arr_cols: IndexLabel=list(), to: Optional[Literal["desc","name"]]="desc",
+                    rename: Optional[RenameMap]=None, name=str(), account: Account=dict()):
         context = dict(default=default, head=head, headers=headers, numericise_ignore=str_cols,
-                        return_type="dataframe", rename=rename)
+                        return_type="dataframe", rename=(rename if rename else self.get_rename_map(to=to)))
         data = read_gspread(key, sheet, account, fields=cast_list(fields), if_null="drop", **context)
         self.checkpoint(READ(name), where="set_gs_query", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
@@ -229,9 +231,9 @@ class GspreadUpdateContext(TypedDict):
     def __init__(self, key: str, sheet: str, mode: Literal["replace","append","upsert"]="append",
                 cell: Optional[str]=None, base_sheet: Optional[str]=None, default: Optional[Any]=None,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
-                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
+                to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None):
         super().__init__(key=key, sheet=sheet)
-        self.update_default(dict(mode="append", head=1),
+        self.update_default(dict(mode="append", head=1, to="desc"),
             mode=mode, cell=cell, base_sheet=base_sheet, default=default,
             head=head, headers=headers, str_cols=str_cols, to=to, rename=rename)
 
@@ -240,34 +242,31 @@ class BigQueryContext(TypedDict):
     def __init__(self, table: str, project_id: str, mode: Literal["fail","replace","append","upsert"]="append",
                 base_query: Optional[str]=None, schema: Optional[BigQuerySchema]=None,
                 progress=True, partition: Optional[str]=None,
-                partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto"):
+                partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
         super().__init__(table=table, project_id=project_id)
         self.update_default(dict(mode="append", progress=True, partition_by="auto"),
             mode=mode, base_query=base_query, schema=validate_gbq_schema(schema), progress=progress,
             partition=partition, partition_by=partition_by)
 
 
-class GsToGbqContext(TypedDict):
-    def __init__(self, from_key: str, from_sheet: str, to_table: str, to_pid: str,
-                mode: Literal["fail","replace","append","upsert"]="append", schema: Optional[BigQuerySchema]=None,
-                progress=True, default: Optional[Any]=None, head=1,
-                headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
-                to: Optional[Literal["desc","name"]]=None, rename: Optional[RenameMap]=None):
-        super().__init__(from_key=from_key, from_sheet=from_sheet, to_table=to_table, to_pid=to_pid)
-        self.update_default(dict(mode="append", progress=True, head=1),
-            default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
-            mode=mode, schema=validate_gbq_schema(schema), progress=progress)
-
-
-class GbqToGsContext(TypedDict):
-    def __init__(self, from_query: str, from_pid: str, to_key: str, to_sheet: str,
-                mode: Literal["fail","replace","append","upsert"]="append", cell: Optional[str]=None):
-        super().__init__(from_query=from_query, from_pid=from_pid, to_key=to_key, to_sheet=to_sheet)
-        self.update_default(dict(mode="append"), mode=mode, cell=cell)
+class GoogleUpdateContext(TypedDict):
+    def __init__(self, from_key=str(), from_sheet=str(), from_query=str(), from_pid=str(),
+                to_key=str(), to_sheet=str(), to_table=str(), to_pid=str(),
+                mode: Literal["fail","replace","append","upsert"]="append", default: Optional[Any]=None,
+                head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
+                to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None, cell: Optional[str]=None,
+                schema: Optional[BigQuerySchema]=None, progress=True, partition: Optional[str]=None,
+                partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
+        query = kloc(locals(), FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")
+        if len(query) != 4: raise ValueError(INVALID_QUERY_MSG)
+        super().__init__(**query)
+        self.update_default(dict(mode="append", progress=True, head=1, to="desc"),
+            mode=mode, default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
+            cell=cell, schema=validate_gbq_schema(schema), progress=progress, partition=partition, partition_by=partition_by)
 
 
 GoogleUploadMode = Literal["fail","replace","append","upsert"]
-GoogleUploadContext = Union[GspreadUpdateContext, BigQueryContext, GsToGbqContext, GbqToGsContext]
+GoogleUploadContext = Union[GspreadUpdateContext, BigQueryContext, GoogleUpdateContext]
 
 class GoogleUploadInfo(TypedDict):
     def __init__(self, **context: GoogleUploadContext):
@@ -296,10 +295,8 @@ class GoogleUploader(BaseSession):
                 status = self.upload_gspread(data=data.copy(), **uploadContext, name=name, **context)
             elif __exists and (len(kloc(uploadContext, [TABLE, PID], if_null="drop")) == 2):
                 status = self.upload_gbq(data=data.copy(), **uploadContext, name=name, **gbq_auth, **context)
-            elif len(kloc(uploadContext, FROM_GS + TO_GBQ, if_null="drop")) == 4:
-                status = self.gspread_to_gbq(**uploadContext, name=name, **gbq_auth, **context)
-            elif len(kloc(uploadContext, FROM_GBQ + TO_GS, if_null="drop")) == 4:
-                status = self.gbq_to_gspread(**uploadContext, name=name, **gbq_auth, **context)
+            elif len(kloc(uploadContext, FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")) == 4:
+                status = self.update_data(**uploadContext, name=name, **gbq_auth, **context)
             else: status = False
             self.uploadStatus[name] = status
 
@@ -308,10 +305,10 @@ class GoogleUploader(BaseSession):
     ###################################################################
 
     @BaseSession.catch_exception
-    def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["replace","append","upsert"]="append",
-                        cell=str(), base_sheet=str(), default=None, head=1, headers=None,
-                        str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]=None,
-                        rename: RenameMap=dict(), name=str(), account: Account=dict(), **context) -> bool:
+    def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame,
+                        mode: Literal["replace","append","upsert"]="append", cell=str(), base_sheet=str(), default=None,
+                        head=1, headers=None, str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="desc",
+                        rename: Optional[RenameMap]=None, name=str(), account: Account=dict(), **context) -> bool:
         data = self.map_gs_data(data, name=name, **context)
         if base_sheet or (mode == "upsert"):
             base_sheet = sheet if mode == "upsert" else base_sheet
@@ -328,9 +325,9 @@ class GoogleUploader(BaseSession):
 
     def read_gs_base(self, key: str, sheet: str, name=str(), account: Account=dict(), default=None,
                     head=1, headers=None, str_cols: NumericiseIgnore=list(),
-                    to: Optional[Literal["desc","name"]]=None, rename: RenameMap=dict()) -> pd.DataFrame:
+                    to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None) -> pd.DataFrame:
         data = read_gspread(key, sheet, account, default=default, head=head, headers=headers,
-                            numericise_ignore=str_cols, rename=rename)
+                            numericise_ignore=str_cols, rename=(rename if rename else self.get_rename_map(to=to)))
         self.checkpoint(READ(name), where="read_gs_base", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         return data
@@ -385,27 +382,30 @@ class GoogleUploader(BaseSession):
         return data[data[key].notna()].drop_duplicates(key)
 
     ###################################################################
-    ########################### Cross Upload ##########################
+    ########################### Update Data ###########################
     ###################################################################
 
     @BaseSession.catch_exception
-    def gspread_to_gbq(self, from_key: str, from_sheet: str, to_table: str, to_pid: str,
-                        default=None, head=1, headers=None, str_cols: NumericiseIgnore=list(),
-                        mode: Literal["fail","replace","append","upsert"]="append",
-                        schema: Optional[BigQuerySchema]=None, progress=True,
-                        name=str(), reauth=False, audience=str(), account: Account=dict(),
-                        credentials: Optional[IDTokenCredentials]=None, **context) -> bool:
-        data = self.read_gs_base(from_key, from_sheet, name, account, default, head, headers, str_cols)
-        return self.upload_gbq(to_table, to_pid, data, mode, schema, progress=progress, name=name,
-                                reauth=reauth, audience=audience, account=account, credentials=credentials, **context)
-
-    @BaseSession.catch_exception
-    def gbq_to_gspread(self, from_query: str, from_pid: str, to_key: str, to_sheet: str,
-                        mode: Literal["fail","replace","append","upsert"]="append", cell=str(),
-                        name=str(), reauth=False, account: Account=dict(), audience=str(),
-                        credentials: Optional[IDTokenCredentials]=None, **context) -> bool:
-        data = self.read_gbq_base(from_query, from_pid, name, reauth, audience, account, credentials)
-        return self.upload_gspread(to_key, to_sheet, data, mode, cell, name=name, account=account, **context)
+    def update_data(self, from_key=str(), from_sheet=str(), from_query=str(), from_pid=str(),
+                    to_key=str(), to_sheet=str(), to_table=str(), to_pid=str(),
+                    mode: Literal["fail","replace","append","upsert"]="append", default=None, head=1, headers=None,
+                    str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="desc",
+                    rename: Optional[RenameMap]=None, cell=str(), schema: Optional[BigQuerySchema]=None, progress=True,
+                    partition=str(), partition_by: Literal["auto","second","minute","hour","day","date"]="auto",name=str(),
+                    reauth=False, audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None,
+                    **context) -> bool:
+        if from_key and from_sheet:
+            data = self.read_gs_base(from_key, from_sheet, name, account, default, head, headers, str_cols, to, rename)
+        elif from_query and from_pid:
+            data = self.read_gbq_base(from_query, from_pid, name, reauth, audience, account, credentials)
+        else: return False
+        if to_key and to_sheet:
+            return self.upload_gspread(to_key, to_sheet, data, mode, cell, name=name, account=account, **context)
+        elif to_table and to_pid:
+            return self.upload_gbq(
+                to_table, to_pid, data, mode, schema, str(), progress, partition, partition_by,
+                name, reauth, audience, account, credentials, **context)
+        else: return False
 
 
 ###################################################################
