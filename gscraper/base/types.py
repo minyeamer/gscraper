@@ -427,12 +427,12 @@ def get_annotation_name(annotation, custom_type=False) -> str:
     return annotation
 
 
-def get_annotation_typehint(annotation, custom_type=True) -> str:
+def get_annotation_typehint(annotation, custom_type=True) -> Union[str,List[str]]:
     annotation = get_annotation_name(annotation, custom_type=custom_type)
     return _decap(annotation, "Union", split=',')
 
 
-def get_annotation_type(annotation, custom_type=True) -> str:
+def get_annotation_type(annotation, custom_type=True) -> Union[str,List[str]]:
     name = get_annotation_typehint(annotation, custom_type=custom_type)
     if isinstance(name, List): return [__name for __name in map(get_annotation_type, name) if __name]
     name = name.replace("datetime.","").lower()

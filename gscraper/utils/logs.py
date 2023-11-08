@@ -1,4 +1,4 @@
-from gscraper.base.types import LogLevel, LogMessage, Shape, Data
+from gscraper.base.types import LogLevel, LogMessage, Shape, TabularData, Data
 from gscraper.base.types import is_records, is_dfarray, is_tag_array
 
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -177,8 +177,10 @@ def log_exception(func: str, dump=False, **kwargs) -> LogMessage:
     return dict(func=func, kwargs=dumps(kwargs, dump=dump), error=error)
 
 
-def log_table(data: DataFrame, schema: Optional[List]=None, dump=False, **kwargs) -> LogMessage:
+def log_table(data: TabularData, schema: Optional[List]=None, dump=False, **kwargs) -> LogMessage:
     schema = dict(schema=dumps(schema, dump=dump)) if schema else dict()
-    try: shape = data.shape
-    except: shape = (0,0)
-    return dict(**kwargs, **{"table-shape":str(shape)}, **schema)
+    if not isinstance(data, (DataFrame,Series)):
+        try: shape = (len(data),)
+        except: shape = (0,)
+    else: shape = data.shape
+    return dict(**kwargs, **{"table-shape":shape}, **schema)

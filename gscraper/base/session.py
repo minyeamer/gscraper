@@ -11,7 +11,7 @@ from gscraper.base.types import is_array, allin_instance, is_str_array, is_recor
 
 from gscraper.utils import isna, notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
-from gscraper.utils.date import now, get_date, get_busdate, set_date, is_daily_frequency, get_date_range
+from gscraper.utils.date import now, today, get_date, get_busdate, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import isna_plus, exists_one, df_exists, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
@@ -52,7 +52,8 @@ SCHEMA, ROOT, MATCH, RANK = "schema", "root", "match", "rank"
 SCHEMA_KEY = "__key"
 SCHEMA_KEYS = [SCHEMA, ROOT, MATCH]
 
-NAME, PATH, TYPE, MODE, APPLY, MATCH, CAST = "name", "path", "type", "mode", "apply", "match", "cast"
+NAME, PATH, TYPE, MODE, DESC = "name", "path", "type", "mode", "description"
+APPLY, MATCH, CAST = "apply", "match", "cast"
 HOW, VALUE, TUPLE, ITERATE, CALLABLE = "how", "value", "tuple", "iterate", "callable"
 
 QUERY, INDEX, LABEL = "QUERY", "INDEX", "LABEL"
@@ -147,25 +148,21 @@ MATCH_FUNCTION = "MatchFunction"
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
-    host = str()
-    fields = list()
     tzinfo = None
     datetimeUnit = "second"
-    returnType = None
     errors = list()
 
-    def __init__(self, fields: IndexLabel=list(),
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+    def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False, **context):
-        self.operation = self.operation
-        self.fields = fields if fields else self.fields
+        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
+        super().__init__(**context)
+
+    def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second"):
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
-        self.returnType = returnType if returnType else returnType
-        self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
-        super().__init__(**context)
 
     def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                     debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False):
@@ -180,13 +177,12 @@ class BaseSession(CustomDict):
         self.localSave = localSave
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
-            hours=0, weeks=0, droptz=True) -> dt.datetime:
+            hours=0, weeks=0, droptz=True, droptime=False, unit=str()) -> Union[dt.datetime,dt.date,str]:
         return now(__format, days, seconds, microseconds, milliseconds, minutes, hours, weeks,
-                    tzinfo=self.tzinfo, droptz=droptz, unit=self.datetimeUnit)
+                    tzinfo=self.tzinfo, droptz=droptz, droptime=droptime, unit=(unit if unit else self.datetimeUnit))
 
-    def today(self, __format=str(), days=0, weeks=0, droptz=True) -> dt.date:
-        unit = self.datetimeUnit if self.datetimeUnit in ["month","year"] else None
-        return now(__format, days, weeks, tzinfo=self.tzinfo, droptz=droptz, droptime=True, unit=unit)
+    def today(self, __format=str(), days=0, weeks=0, droptime=True) -> Union[dt.datetime,dt.date,str]:
+        return today(__format, days, weeks, tzinfo=self.tzinfo, droptime=droptime)
 
     def get_rename_map(self, to: Optional[str]=None) -> RenameMap:
         return dict()
@@ -230,7 +226,14 @@ class BaseSession(CustomDict):
         file = self._validate_file(file)
         if is_dfarray(data): data = data[0]
         else: data = to_dataframe(data)
-        data.rename(columns=self.get_rename_map()).to_excel(file, index=False)
+        data = data.rename(columns=self.get_rename_map())
+        try: data.to_excel(file, index=False)
+        except: self._write_dataframe(data, file)
+
+    def _write_dataframe(self, data: pd.DataFrame, file: str):
+        writer = pd.ExcelWriter(file, engine="xlsxwriter", engine_context={"options":{"strings_to_urls":False}})
+        data.to_excel(writer, index=False)
+        writer.close()
 
     def save_source(self, data: Union[str,Tag], file: str):
         file = self._validate_file(file)
@@ -835,16 +838,9 @@ def validate_info(info: Any) -> SchemaInfo:
 class Mapper(BaseSession):
     __metaclass__ = ABCMeta
     operation = "mapper"
-    fields = list()
     responseType = "dict"
     root = list()
     schemaInfo = SchemaInfo()
-
-    def __init__(self, fields: IndexLabel=list(), logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False, **context):
-        BaseSession.__init__(self, **self.from_locals(locals()))
-        if not isinstance(self.schemaInfo, SchemaInfo):
-            self.update(schemaInfo=validate_info(self.schemaInfo))
 
     def map(self, data: ResponseData, schemaInfo: Optional[SchemaInfo]=None, responseType: Optional[TypeHint]=None,
             root: Optional[_KT]=None, discard=True, updateTime=True, fields: IndexLabel=list(), **context) -> Data:
@@ -1226,7 +1222,6 @@ def _is_single_path_by_data(data: ResponseData, path: _KT, hier=False) -> bool:
 class SequenceMapper(Mapper):
     __metaclass__ = ABCMeta
     operation = "mapper"
-    fields = list()
     responseType = "records"
     root = list()
     groupby = list()
@@ -1259,7 +1254,7 @@ class SequenceMapper(Mapper):
 
     def map_sequence(self, data: ResponseData, schemaInfo: SchemaInfo, responseType: Optional[TypeHint]=None,
                     groupby: _KT=list(), groupSize: NestedDict=dict(), countby: Optional[Literal["page","start"]]=None,
-                    match: Optional[Union[MatchFunction,bool]]=None, discard=False, **context) -> Data:
+                    match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Data:
         context = dict(context, schemaInfo=schemaInfo, countby=countby, match=match, discard=discard)
         responseType = _get_response_type(responseType if responseType else self.responseType)
         if groupby: return self.groupby_data(data, groupby, groupSize, responseType=responseType, **context)
@@ -1282,7 +1277,7 @@ class SequenceMapper(Mapper):
     ###################################################################
 
     def map_records(self, __r: Records, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
-                    match: Optional[Union[MatchFunction,bool]]=None, discard=False, **context) -> Records:
+                    match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
         start = self.get_start_by(countby, count=len(__r), **context)
         for __i, __m in enumerate(__r, start=(start if start else 0)):
@@ -1293,7 +1288,7 @@ class SequenceMapper(Mapper):
         return data
 
     def map_dataframe(self, df: pd.DataFrame, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
-                    match: Optional[Union[MatchFunction,bool]]=None, discard=False, **context) -> pd.DataFrame:
+                    match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> pd.DataFrame:
         start = self.get_start_by(countby, count=len(df), **context)
         if isinstance(start, int) and (RANK not in df):
             df[RANK] = range(start, len(df)+start)
@@ -1302,7 +1297,7 @@ class SequenceMapper(Mapper):
         return self.map_info(df, schemaInfo, **context)
 
     def map_tag_list(self, tag_list: Sequence[Tag], schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
-                    match: Optional[Union[MatchFunction,bool]]=None, discard=False, **context) -> Records:
+                    match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
         start = self.get_start_by(countby, count=len(tag_list), **context)
         for __i, __s in enumerate(tag_list, start=(start if start else 0)):
@@ -1345,7 +1340,6 @@ class SequenceMapper(Mapper):
 class Parser(SequenceMapper):
     __metaclass__ = ABCMeta
     operation = "parser"
-    host = str()
     fields = list()
     responseType = "records"
     root = list()
@@ -1354,17 +1348,13 @@ class Parser(SequenceMapper):
     countby = str()
     schemaInfo = SchemaInfo()
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]=None, schema_names: _KT=list(),
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first") -> RenameMap:
         if to in ("desc", "name"):
-            __from, __to = ("desc", "name") if to == "name" else ("name", "desc")
+            __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
             schema = self.schemaInfo.get_schema(schema_names=schema_names, keep=keep)
             return {field[__from]: field[__to] for field in schema}
         else: return dict()
-
-    def rename(self, string: str, to: Optional[Literal["desc","name"]]=None) -> str:
-        renameMap = self.get_rename_map(to=to)
-        return renameMap[string] if renameMap and (string in renameMap) else string
 
     def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
         pretty_print(__object, path=path, drop=drop)

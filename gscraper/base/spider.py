@@ -1,6 +1,8 @@
 from __future__ import annotations
-from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT, API_CONTEXT
+from gscraper.base.abstract import TypedDict, TypedRecords
+from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, LOGIN_CONTEXT
 from gscraper.base.abstract import RESPONSE_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+
 from gscraper.base.session import Iterator, Parser, SchemaInfo, ITER_INDEX, ITER_SUFFIX, ITER_MSG
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
@@ -14,8 +16,8 @@ from gscraper.base.types import is_array, init_origin
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
-from gscraper.utils.map import to_array, align_array, kloc, exists_dict, chain_dict, apply_records, drop_dict
-from gscraper.utils.map import exists_one, unique, rename_data, filter_data, chain_exists, between_data, re_get
+from gscraper.utils.map import to_array, align_array, kloc, exists_dict, chain_dict, drop_dict, diff
+from gscraper.utils.map import exists_one, unique, apply_records, rename_data, filter_data, chain_exists, between_data, re_get
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
@@ -24,10 +26,11 @@ from urllib.parse import quote, urlencode, urlparse
 import asyncio
 import aiohttp
 import functools
+import inspect
 import requests
 import time
 
-from typing import Dict, List, Literal, Optional, Tuple, Type, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
@@ -54,17 +57,23 @@ MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
-CONTEXT_UNIQUE = ["context", "contextFields"]
+TIME_UNIQUE = ["tzinfo", "datetimeUnit"]
+LOG_UNIQUE = ["logName", "logLevel", "logFile", "debug", "extraSave", "interrupt", "localSave"]
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
 
 GCLOUD_AUTH_UNIQUE = ["account"]
 GCLOUD_QUERY_UNIQUE = ["queryInfo"]
 GCLOUD_UPLOAD_UNIQUE = ["uploadInfo", "reauth", "audience", "credentials"]
-GLOUD_UNIQUE = GCLOUD_AUTH_UNIQUE + GCLOUD_QUERY_UNIQUE + GCLOUD_UPLOAD_UNIQUE
+GCLOUD_UNIQUE = GCLOUD_AUTH_UNIQUE + GCLOUD_QUERY_UNIQUE + GCLOUD_UPLOAD_UNIQUE
 
-SPIDER_UNIQUE = ["delay", "progress", "cookies"]
-ASYNC_UNIQUE = ["numTasks", "maxLimit", "apiRedirect", "redirectUnit"]
+SPIDER_UNIQUE = ["context", "fields", "returnType", "delay", "progress", "message", "cookies", "discard", "byDate", "fromDate", "toDate"]
+ASYNC_UNIQUE = ["context", "numTasks", "maxLimit", "apiRedirect", "redirectUnit"]
 ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
+
+WORKER_UNIQUE = TIME_UNIQUE + LOG_UNIQUE + ITERATOR_UNIQUE + SPIDER_UNIQUE[1:] + ASYNC_UNIQUE[1:]
+
+NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName", "dataType"
+FIELDS, PARAMS, CONTEXT = "fields", "params", "context"
 
 SUCCESS_RESULT = [{"response": "completed"}]
 
@@ -256,39 +265,57 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     countby = str()
     schemaInfo = SchemaInfo()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
+    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(), discard=True,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
-        Parser.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ITERATOR_UNIQUE+SPIDER_UNIQUE+GLOUD_UNIQUE))
-        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
-        self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if notna(fromNow) else self.fromNow
-        self.delay = delay
-        self.progress = progress
-        self.cookies = cookies
-        if byDate:
-            self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
-        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"), self_var=True)
-        if queryInfo:
-            self.set_query(queryInfo, account)
+        Parser.__init__(self, **self.from_locals(locals(), drop=SPIDER_UNIQUE+ITERATOR_UNIQUE+GCLOUD_UNIQUE))
+        self.set_return_type(fields, returnType)
+        self.set_iterator_params(iterateUnit, interval, fromNow)
+        self.set_requests_params(delay, progress, message, cookies, discard)
+        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
+        self.update(UNIQUE_CONTEXT(**context), self_var=True)
+        self.set_query(queryInfo, account)
         self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
         self._disable_warnings()
 
+    def set_return_type(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None):
+        self.fields = fields if fields else self.fields
+        self.returnType = returnType if returnType else self.returnType
+
+    def set_iterator_params(self, iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None):
+        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
+        self.interval = interval if interval else self.interval
+        self.fromNow = fromNow if notna(fromNow) else self.fromNow
+
+    def set_requests_params(self, delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(),
+                            cookies=str(), discard=True):
+        self.delay = delay
+        self.progress = progress
+        self.message = message
+        self.cookies = cookies
+        self.discard = discard
+
     def set_date_filter(self, byDate: IndexLabel, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None):
-        self.byDate = cast_list(byDate)
-        self.fromDate, self.toDate = self.get_date_pair(fromDate, toDate, fromNow=(None, None))
+        if byDate:
+            self.byDate = cast_list(byDate)
+            self.fromDate, self.toDate = self.get_date_pair(fromDate, toDate, fromNow=(None, None))
 
     def _disable_warnings(self):
         if self.ssl == False:
             from urllib3.exceptions import InsecureRequestWarning
             import urllib3
             urllib3.disable_warnings(InsecureRequestWarning)
+
+    def log_errors(self, *args, **context):
+        iterator = self.get_iterator(**context)
+        if iterator: self.errors.append(iterator)
+        else: super().log_errors(self, *args, **context)
 
     ###################################################################
     ######################### Local Variables #########################
@@ -319,35 +346,38 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     ######################### Session Managers ########################
     ###################################################################
 
+    def init_context(self, context: Context, self_var=True, mapper: Optional[Callable]=None) -> Context:
+        if self_var: context = dict(self, **context)
+        if isinstance(mapper, Callable): context = mapper(**context)
+        return UNIQUE_CONTEXT(**context)
+
     def requests_task(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **context):
-            context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=TASK_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             data = func(self, *args, **PROXY_CONTEXT(**context))
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
     def requests_session(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, self_var=True, **context):
-            context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with requests.Session() as session:
                 data = func(self, *args, session=session, **PROXY_CONTEXT(**context))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
-    def _with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(),
-                    alertMessage=False, alertName=str(), nateonUrl=str(), **context):
+    def with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
         if self.localSave: self.save_data(data, ext="dataframe")
         self.upload_data(data, uploadInfo, **context)
-        self.alert_message(data, alertMessage, alertName, nateonUrl, **context)
 
     def requests_limit(func):
         @functools.wraps(func)
@@ -458,8 +488,8 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         self.checkpoint("iterator", where="gather_count_by_date", msg={"iterator":iterator})
         return iterator, context
 
-    def get_gather_message(self, *args, **context) -> str:
-        return GATHER_MSG(self.which, self.where, self.by)
+    def get_gather_message(self, *args, message=str(), **context) -> str:
+        return message if message else GATHER_MSG(self.which, self.where, self.by)
 
     def get_count_context(self, **context) -> Context:
         return context
@@ -637,24 +667,25 @@ class AsyncSpider(Spider):
     countby = str()
     schemaInfo = SchemaInfo()
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
+    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(), discard=True,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
-        Spider.__init__(self, **self.from_locals(locals(), drop=CONTEXT_UNIQUE+ASYNC_UNIQUE+GLOUD_UNIQUE))
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, reauth=False, audience=str(), account: Account=dict(),
+                credentials=None, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), **context):
+        Spider.__init__(self, **self.from_locals(locals(), drop=ASYNC_UNIQUE+GCLOUD_UNIQUE))
+        self.set_asyncio_params(numTasks, apiRedirect, redirectUnit)
+        self.update(UNIQUE_CONTEXT(**context), self_var=True)
+        self.set_query(queryInfo, account)
+        self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
+
+    def set_asyncio_params(self, numTasks=100, apiRedirect=False, redirectUnit: Unit=0):
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
         self.apiRedirect = apiRedirect
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
-        self.update(kloc(UNIQUE_CONTEXT(**context), contextFields, if_null="pass"), self_var=True)
-        if queryInfo:
-            self.set_query(queryInfo, account)
-        self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
 
     ###################################################################
     ########################## Async Managers #########################
@@ -663,26 +694,26 @@ class AsyncSpider(Spider):
     def asyncio_task(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
-            context = TASK_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=TASK_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**context)
             data = await func(self, *args, semaphore=semaphore, **PROXY_CONTEXT(**context))
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
     def asyncio_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, self_var=True, **context):
-            context = REQUEST_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
@@ -938,10 +969,10 @@ class AsyncSpider(Spider):
 
     def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
         return dict(
+            operation = self.operation,
             redirectUrl=redirectUrl,
             authorization=authorization,
             account=account,
-            cookies=self.cookies,
             **REDIRECT_CONTEXT(**context))
 
     def _parse_redirect(self, data: RedirectData, **context) -> Records:
@@ -1131,22 +1162,22 @@ class EncryptedSpider(Spider):
     decryptedKey = dict()
     sessionCookies = True
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
+    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(), discard=True,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
-        if not self.cookies:
-            self.set_secrets(encryptedKey, decryptedKey)
+        self.set_secrets(encryptedKey, decryptedKey)
 
     def set_secrets(self, encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None):
-        if isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
+        if self.cookies: return
+        elif isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
             try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
         self.update(decryptedKey=(decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey))
@@ -1159,15 +1190,15 @@ class EncryptedSpider(Spider):
     def login_session(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with (BaseLogin(self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
                 self.login(session, **context)
                 if not self.sessionCookies: context["cookies"] = self.cookies
-                data = func(self, *args, session=session, **PROXY_CONTEXT(**context))
+                data = func(self, *args, session=session, **PROXY_CONTEXT(**LOGIN_CONTEXT(**context)))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
@@ -1187,22 +1218,20 @@ class EncryptedSpider(Spider):
     def api_session(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = API_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             with requests.Session() as session:
-                data = func(self, *args, session=session,
-                    **self.validate_secret(**dict(PROXY_CONTEXT(**context), **self.decryptedKey)))
+                data = func(self, *args, session=session, **self.validate_secret(**dict(context, **self.decryptedKey)))
             time.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
     def validate_secret(self, clientId: str, clientSecret: str, **context) -> Context:
         headers = self.set_headers(clientId=clientId, clientSecret=clientSecret, **context)
         self.checkpoint("api", where="set_headers", msg={"headers":headers})
-        if headers: context["headers"] = headers
-        return context
+        return PROXY_CONTEXT(**context, headers=headers)
 
     def set_headers(self, **context) -> Dict:
         return dict()
@@ -1244,25 +1273,23 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     decryptedKey = dict()
     sessionCookies = True
 
-    def __init__(self, fields: IndexLabel=list(), contextFields: IndexLabel=list(),
-                iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None,
+    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                returnType: Optional[TypeHint]=None, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
+                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
                 debug: List[str]=list(), extraSave: List[str]=list(), interrupt=str(), localSave=False,
-                delay: Union[float,int,Tuple[int]]=1., progress=True, cookies=str(),
+                delay: Union[float,int,Tuple[int]]=1., progress=True, message=str(), cookies=str(), discard=True,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                numTasks=100, apiRedirect=False, redirectUnit: Unit=0,
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
+                numTasks=100, apiRedirect=False, redirectUnit: Unit=0, reauth=False, audience=str(), account: Account=dict(),
+                credentials=None, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
-        if not self.cookies:
-            self.set_secrets(encryptedKey, decryptedKey)
+        self.set_secrets(encryptedKey, decryptedKey)
 
     def login_session(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSpider, *args, self_var=True, **context):
-            context = LOGIN_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             semaphore = self.asyncio_semaphore(**context)
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
@@ -1271,25 +1298,24 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
                 cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**ssl, **cookies) as session:
                     if not self.sessionCookies: context["cookies"] = self.cookies
-                    data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**context))
+                    data = await func(self, *args, session=session, semaphore=semaphore, **PROXY_CONTEXT(**LOGIN_CONTEXT(**context)))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
     def api_session(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = API_CONTEXT(**(dict(self, **context) if self_var else context))
+            context = self.init_context(context, self_var=self_var, mapper=REQUEST_CONTEXT)
             self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
             ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
             async with aiohttp.ClientSession(**ssl) as session:
-                data = await func(self, *args, session=session,
-                    **self.validate_secret(**dict(PROXY_CONTEXT(**context), **self.decryptedKey)))
+                data = await func(self, *args, session=session, **self.validate_secret(**dict(context, **self.decryptedKey)))
             await asyncio.sleep(.25)
             self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self._with_data(data, **context)
+            self.with_data(data, **context)
             return data
         return wrapper
 
@@ -1298,68 +1324,102 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
 ############################ Pipelines ############################
 ###################################################################
 
+class Task(TypedDict):
+    def __init__(self, operator: Spider, task: str, dataName: str, dataType: Optional[TypeHint]=None,
+                name=str(), fields: _KT=list(), params: Optional[_KT]=None, **context):
+        name = name if name else operator.operation
+        super().__init__(name=name, operator=operator, task=task, fields=fields, dataName=dataName)
+        self.update_exists(dataType=dataType, params=params, context=context)
+
+
+class Dag(TypedRecords):
+    def __init__(self, *args: Task):
+        super().__init__(*args)
+
+
 class Pipeline(Spider):
     __metaclass__ = ABCMeta
     asyncio = False
     operation = "pipeline"
-    dependencies = (Spider, Spider)
     fields = list()
-    iterateUnit = 1
+    customFields = list()
+    iterateUnit = 0
+    redirectUnit = 0
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
+    schemaInfo = SchemaInfo()
+    dags = Dag()
 
     @abstractmethod
     @Spider.requests_task
-    def crawl(self, *args, **context) -> Data:
-        args, context = self.validate_params(locals())
-        return self.gather(*args, **context)
+    def crawl(self, **context) -> Data:
+        return self.gather(**context)
+
+    def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        data = dict()
+        gatherFields = diff(cast_list(fields), cast_list(self.customFields)) if self.customFields else fields
+        for task in self.dags:
+            point, method, worker, name, params = self.from_task(task, fields=gatherFields, **context)
+            response = method(worker=worker, data=data, **params)
+            self.checkpoint(point, where=task, msg={"data":response}, save=response)
+            data[name] = response
+        return self.map_reduce(**data, fields=fields, returnType=returnType, **context)
+
+    def from_task(self, task: Task, fields: IndexLabel=list(), **context) -> Tuple[str,Callable,Spider,str,Context]:
+        method = getattr(self, task[TASK])
+        fields = task[FIELDS] if isinstance(task[FIELDS], Tuple) else unique(*cast_list(task[FIELDS]), *fields)
+        context = dict(context, fields=fields, returnType=task.get(DATATYPE), **task.get(CONTEXT,dict()))
+        worker = task[OPERATOR](**kloc(context, WORKER_UNIQUE + ["logger"], if_null="drop"))
+        params = kloc(context, task[PARAMS], if_null="drop") if PARAMS in task else PROXY_CONTEXT(**context)
+        return task[NAME], method, worker, task[DATANAME], params
+
+    @Spider.requests_limit
+    def request_crawl(self, worker: Spider, data: Dict[_KT,Data]=dict(), **params) -> Data:
+        return worker.crawl(**params)
+
+    def filter_data(func):
+        @functools.wraps(func)
+        def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context):
+            data = func(self, *args, **context)
+            return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
+        return wrapper
 
     @abstractmethod
-    def gather(self, **context) -> Data:
-        args = list()
-        for cralwer in self.dependencies:
-            data = self.crawl_proxy(cralwer, **context)
-            args.append(data)
-        return self.map_reduce(*args, **context)
-
-    def crawl_proxy(self, init: Type[Spider], returnType: Optional[TypeHint]=None, **context) -> Data:
-        crawler = init(**PROXY_CONTEXT(**context), returnType=returnType)
-        data = crawler.crawl()
-        self.checkpoint(crawler.operation, where=crawler.operation, msg={"data":data}, save=data)
-        return data
-
-    def map_reduce(self, *data: Data, fields: IndexLabel=list(), **context) -> Data:
-        return filter_data(chain_exists(data), fields=fields, if_null="pass")
+    @filter_data
+    def map_reduce(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        ...
 
 
 class AsyncPipeline(AsyncSpider, Pipeline):
     __metaclass__ = ABCMeta
     operation = "pipeline"
-    dependencies = (AsyncSpider, AsyncSpider)
     fields = list()
-    iterateUnit = 1
+    customFields = list()
+    iterateUnit = 0
+    redirectUnit = 0
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
+    schemaInfo = SchemaInfo()
+    dags = Dag()
 
     @abstractmethod
     @AsyncSpider.asyncio_task
-    async def crawl(self, *args, **context) -> Data:
-        args, context = self.validate_params(locals())
-        return await self.gather(*args, **context)
+    async def crawl(self, **context) -> Data:
+        return await self.gather(**context)
 
-    @abstractmethod
-    async def gather(self, **context) -> Data:
-        args = list()
-        for cralwer in self.dependencies:
-            if cralwer.asyncio: data = await self.async_proxy(cralwer, **context)
-            else: data = self.crawl_proxy(cralwer, **context)
-            args.append(data)
-        return self.map_reduce(*args, **context)
+    async def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        data = dict()
+        gatherFields = diff(cast_list(fields), cast_list(self.customFields)) if self.customFields else fields
+        for task in self.dags:
+            point, method, worker, name, params = self.from_task(task, fields=gatherFields, **context)
+            params = dict(params, worker=worker, data=data)
+            response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
+            self.checkpoint(point, where=task, msg={"data":response}, save=response)
+            data[name] = response
+        return self.map_reduce(**data, fields=fields, returnType=returnType, **context)
 
-    async def async_proxy(self, init: Type[AsyncSpider], returnType: Optional[TypeHint]=None, **context) -> Data:
-        crawler = init(**PROXY_CONTEXT(**context), returnType=returnType)
-        data = await crawler.crawl()
-        self.checkpoint(crawler.operation, where=crawler.operation, msg={"data":data}, save=data)
-        return data
+    @AsyncSpider.asyncio_limit
+    async def async_crawl(self, worker: AsyncSpider, data: Dict[_KT,Data]=dict(), **params) -> Data:
+        return await worker.crawl(**params)

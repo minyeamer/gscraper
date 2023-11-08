@@ -12,19 +12,35 @@ import functools
 ############################# Context #############################
 ###################################################################
 
-UNIQUE_CONTEXT = lambda self=None, asyncio=None, operation=None, host=None, where=None, which=None, by=None, \
-                        initTime=None, contextFields=None, iterateArgs=None, iterateProduct=None, \
-                        pagination=None, pageUnit=None, pageLimit=None, fromNow=None, responseType=None, \
-                        debug=None, localSave=None, extraSave=None, interrupt=None, \
-                        logger=None, logJson=None, errors=None, ssl=None, match=None, hier=None, \
-                        redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, \
-                        root=None, groupby=None, countby=None, schemaInfo=None, schema=None, field=None, \
-                        crawler=None, decryptedKey=None, auth=None, sessionCookies=None, dependencies=None, \
-                        func=None, inplace=None, self_var=None, prefix=None, rename=None, **context: context
+SESSION_CONTEXT = lambda self=None, operation=None, initTime=None, prefix=None, rename=None, \
+                        inplace=None, self_var=None, **context: context
 
 
-TASK_CONTEXT = lambda locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        drop=None, index=None, count=None, to=None, **context: UNIQUE_CONTEXT(**context)
+LOG_CONTEXT = lambda debug=None, localSave=None, extraSave=None, interrupt=None, logger=None, logJson=None, \
+                    errors=None, func=None, **context: context
+
+
+ITERATOR_CONTEXT = lambda iterateArgs=None, iterateProduct=None, pagination=None, pageUnit=None, pageLimit=None, \
+                        fromNow=None, __i=None, **context: context
+
+
+MAP_CONTEXT = lambda responseType=None, match=None, root=None, groupby=None, countby=None, schemaInfo=None, \
+                    schema=None, __index=None, **context: context
+
+
+SPIDER_CONTEXT = lambda asyncio=None, host=None, where=None, which=None, by=None, field=None, \
+                        contextFields=None, ssl=None, **context: context
+
+
+ASYNCIO_CONTEXT = lambda redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
+
+
+UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, customFields=None, dags=None, **context: \
+    ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**SESSION_CONTEXT(**context))))))
+
+
+TASK_CONTEXT = lambda init=None, data=None, locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
+                        drop=None, index=None, count=None, depth=None, hier=None, log=None, to=None, **context: context
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
@@ -35,10 +51,7 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
 
 
 LOGIN_CONTEXT = lambda userid=None, passwd=None, domain=None, naverId=None, naverPw=None, \
-                        **context: REQUEST_CONTEXT(**context)
-
-
-API_CONTEXT = lambda clientId=None, clientSecret=None, **context: REQUEST_CONTEXT(**context)
+                        **context: context
 
 
 RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
@@ -47,22 +60,24 @@ RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile
                         dict(REQUEST_CONTEXT(**context), index=index)
 
 
-UPLOAD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
+GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
                         default=None, head=None, headers=None, numericise_ignore=None, str_cols=None, arr_cols=None, \
                         to=None, rename=None, table=None, project_id=None, schema=None, base_query=None, \
                         progress=None, partition=None, prtition_by=None, base=None, **context: context
 
 
-PROXY_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, \
-                        **context: context
+UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, **context: context
+
+
+PROXY_CONTEXT = lambda session=None, semaphore=None, **context: UPLOAD_CONTEXT(**UNIQUE_CONTEXT(**context))
 
 
 REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, cookies=str(), **context: \
-    PROXY_CONTEXT(**REQUEST_CONTEXT(**context), cookies=cookies)
+    UPLOAD_CONTEXT(**REQUEST_CONTEXT(**context), cookies=cookies)
 
 
 LOCAL_CONTEXT = lambda apiRedirect=None, returnType=None, session=None, semaphore=None, **context: \
-    PROXY_CONTEXT(**context)
+    UPLOAD_CONTEXT(**context)
 
 
 ###################################################################
@@ -120,7 +135,7 @@ class CustomDict(dict):
 
 class TypedDict(CustomDict):
     def update_default(self, __default: Dict=dict(), __how: Literal["notna","exists"]="notna",
-                        inplace=True, self_var=False, **kwargs) -> CustomDict:
+                        inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
         kwargs = {__k: __v for __k, __v in kwargs.items() if __default.get(__k) != __v}
         if __how == "notna": return self.update_notna(kwargs, inplace=inplace)
         else: return self.update_exists(kwargs, inplace=inplace, self_var=self_var)
@@ -187,18 +202,18 @@ class CustomRecords(CustomList):
             if isinstance(__i, Dict): self.append(__i)
 
     @CustomList.copyable
-    def map(self, __func: Callable, inplace=False, **kwargs) -> CustomRecords:
+    def map(self, __func: Callable, inplace=False, **kwargs) -> Union[bool,CustomRecords]:
         return [__func(__m, **kwargs) for __m in self]
 
     @CustomList.copyable
-    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> CustomRecords:
+    def filter(self, __match: Optional[MatchFunction]=None, inplace=False, **match_by_key) -> Union[bool,CustomRecords]:
         if isinstance(__match, Callable) or match_by_key:
             all_keys = isinstance(__match, Callable)
             return match_records(self, all_keys=all_keys, match=__match, **match_by_key)
         else: return self
 
     @CustomList.copyable
-    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> CustomRecords:
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,CustomRecords]:
         return drop_duplicates(self, keep=keep) if keep != True else self
 
 

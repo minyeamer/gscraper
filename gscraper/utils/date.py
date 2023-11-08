@@ -70,9 +70,8 @@ def now(__format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minut
     return __datetime.strftime(__format) if __format else __datetime
 
 
-def today(__format=str(), days=0, weeks=0, tzinfo=None) -> Union[dt.date,str]:
-    if __format: return now(__format, days=days, weeks=weeks, tzinfo=tzinfo, droptime=True, unit="day")
-    else: return now(days=days, weeks=weeks, tzinfo=tzinfo, droptime=True, unit="day")
+def today(__format=str(), days=0, weeks=0, tzinfo=None, droptime=True) -> Union[dt.date,dt.datetime,str]:
+    return now(__format, days=days, weeks=weeks, tzinfo=tzinfo, droptime=droptime, unit="day")
 
 
 ###################################################################
