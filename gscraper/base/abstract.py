@@ -12,7 +12,7 @@ import functools
 ############################# Context #############################
 ###################################################################
 
-SESSION_CONTEXT = lambda self=None, operation=None, initTime=None, prefix=None, rename=None, \
+BASE_CONTEXT = lambda self=None, operation=None, initTime=None, prefix=None, rename=None, \
                         inplace=None, self_var=None, **context: context
 
 
@@ -28,15 +28,14 @@ MAP_CONTEXT = lambda responseType=None, match=None, root=None, groupby=None, cou
                     schema=None, __index=None, **context: context
 
 
-SPIDER_CONTEXT = lambda asyncio=None, host=None, where=None, which=None, by=None, field=None, \
-                        contextFields=None, ssl=None, **context: context
+SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, **context: context
 
 
 ASYNCIO_CONTEXT = lambda redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
 
 
-UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, customFields=None, dags=None, **context: \
-    ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**SESSION_CONTEXT(**context))))))
+UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, derivFields=None, dags=None, **context: \
+    ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 
 TASK_CONTEXT = lambda init=None, data=None, locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
@@ -48,10 +47,6 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         allow_redirects=None, validate=None, exception=None, valid=None, invalid=None, \
                         close=None, encoding=None, features=None, html=None, table_header=None, table_idx=None, \
                         engine=None, **context: TASK_CONTEXT(**context)
-
-
-LOGIN_CONTEXT = lambda userid=None, passwd=None, domain=None, naverId=None, naverPw=None, \
-                        **context: context
 
 
 RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
@@ -66,10 +61,18 @@ GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, b
                         progress=None, partition=None, prtition_by=None, base=None, **context: context
 
 
-UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, **context: context
+UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, \
+                        which=None, where=None, by=None, **context: context
 
 
-PROXY_CONTEXT = lambda session=None, semaphore=None, **context: UPLOAD_CONTEXT(**UNIQUE_CONTEXT(**context))
+SESSION_CONTEXT = lambda session=None, semaphore=None, **context: UPLOAD_CONTEXT(**context)
+
+
+LOGIN_CONTEXT = lambda userid=None, passwd=None, domain=None, naverId=None, naverPw=None, \
+                        **context: SESSION_CONTEXT(**context)
+
+
+PROXY_CONTEXT = lambda **context: UNIQUE_CONTEXT(**UPLOAD_CONTEXT(**context))
 
 
 REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, cookies=str(), **context: \

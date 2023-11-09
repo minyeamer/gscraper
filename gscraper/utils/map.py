@@ -579,8 +579,10 @@ def unique_keys(__r: Records, forward=True) -> _KT:
 
 
 def filter_exists(__object, strict=False) -> Any:
-    if is_array(__object):
-        return type(__object)([__value for __value in __object if exists(__value, strict=strict)])
+    if isinstance(__object, List):
+        return [__value for __value in __object if exists(__value, strict=strict)]
+    if isinstance(__object, Tuple):
+        return tuple(__value for __value in __object if exists(__value, strict=strict))
     elif isinstance(__object, Dict):
         return {key: __value for key, __value in __object.items() if exists(__value, strict=strict)}
     elif isinstance(__object, pd.DataFrame):
@@ -1338,8 +1340,10 @@ def get_columns(df: PandasData) -> IndexLabel:
 def merge_first(left: pd.DataFrame, right: pd.DataFrame, first: Literal["left","right"]="left",
                 how: Literal["left","right","outer","inner","cross"]="inner",
                 on: Optional[IndexLabel]=None) -> pd.DataFrame:
-    columns = map(str, unique(*cast_list(on), *left.columns, *right.columns))
+    columns = [str(column) for column in unique(*cast_list(on), *left.columns, *right.columns)]
     df = left.merge(right, how=how, on=on)
+    if len(df.columns) == len(columns):
+        return df
     for column in columns:
         FIRST, SECOND = ("_y", "_x") if first == "right" else ("_x", "_y")
         try: df[column] = df.pop(column+FIRST).combine_first(df.pop(column+SECOND))
