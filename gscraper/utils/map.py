@@ -100,7 +100,7 @@ def to_records(__object: MappingData, depth=0) -> Records:
 
 def to_dataframe(__object: MappingData, index: Optional[Sequence]=None) -> pd.DataFrame:
     if isinstance(__object, pd.DataFrame): pass
-    elif is_records(__object, empty=True): __object = pd.DataFrame(align_records(__object)).convert_dtypes()
+    elif is_records(__object, empty=True): __object = convert_dtypes(pd.DataFrame(align_records(__object)))
     elif isinstance(__object, (dict,pd.Series)): __object = pd.DataFrame([__object])
     else: return pd.DataFrame()
     if (index is not None) and (safe_len(index, -1) == len(__object)): __object.index = index
@@ -635,14 +635,15 @@ def groupby_records(__r: Records, by: _KT, if_null: Literal["drop","pass"]="drop
     for __m in __r:
         values = kloc(__m, by, default=str(), if_null=if_null, values_only=True, hier=hier)
         if len(values) != len(by): continue
-        else: groups[tuple(values)].append(__m)
+        else: groups[values[0] if len(values) == 1 else tuple(values)].append(__m)
     return dict(groups)
 
 
 def groupby_df(df: pd.DataFrame, by: _KT, if_null: Literal["drop","pass"]="drop") -> Dict[_KT,pd.DataFrame]:
     counts = cloc(df, cast_list(by), if_null=if_null).value_counts().reset_index(name="count")
     keys = counts.drop(columns="count").to_dict("split")["data"]
-    return {tuple(key): match_df(df, **dict(zip(by, map(lambda x: (lambda y: x == y), key)))) for key in keys}
+    return {key if len(key) == 1 else tuple(key): match_df(df, **dict(zip(by, map(lambda x: (lambda y: x == y), key))))
+            for key in keys}
 
 
 def groupby_source(source: Sequence[Tag], by: Union[Dict[_KT,_KT],_KT],
@@ -1335,6 +1336,19 @@ def get_columns(df: PandasData) -> IndexLabel:
     if isinstance(df, pd.DataFrame): return df.columns
     elif isinstance(df, pd.Series): return df.index
     else: return list()
+
+
+def convert_dtypes(df: PandasData) -> PandasData:
+    if isinstance(df, pd.DataFrame):
+        df = df.copy()
+        for column in df.columns:
+            df[column] = convert_dtypes(df[column])
+        return df
+    elif isinstance(df, pd.Series):
+        if "float" in df.dtype.name:
+            return df.convert_dtypes()
+        else: return df.where(pd.notna(df), None)
+    else: return pd.Series(dtype="object")
 
 
 def merge_first(left: pd.DataFrame, right: pd.DataFrame, first: Literal["left","right"]="left",

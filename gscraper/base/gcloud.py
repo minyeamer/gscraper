@@ -7,7 +7,7 @@ from gscraper.base.types import TabularData, Account, PostData, is_records, from
 from gscraper.utils.cast import cast_str, cast_list, cast_float, cast_int, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_exists, df_empty, iloc, to_array
+from gscraper.utils.map import isna, df_exists, df_empty, to_array, get_scala
 from gscraper.utils.map import kloc, to_dict, to_records, cloc, to_dataframe, apply_df, apply_data
 
 from google.oauth2 import service_account
@@ -58,8 +58,8 @@ INVALID_AXIS_MSG = lambda axis: f"'{axis}' is not valid axis. Only allowed in ta
 
 INVALID_GS_ACTION_MSG = lambda action: f"'{action}' is not valid action for gspread task."
 
-INVALID_SCHEMA_MSG = "Please verify that the structure and data types in the DataFrame match the schema of the destination table."
-INVALID_UPSERT_KEY_MSG = "Please verify that a primary key exists and is in both DataFrame objects."
+SCHEMA_MISMATCH_MSG = "Please verify that the structure and data types in the DataFrame match the schema of the destination table."
+INVALID_PRIMARY_KEY_MSG = "Please verify that a primary key exists and is in both DataFrame objects."
 
 BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery"
 
@@ -152,9 +152,13 @@ class BigQuerySchema(Schema):
     def __init__(self, *args: BigQueryField):
         TypedRecords.__init__(self, *[validate_gbq_field(field) for field in args])
 
+    def get_primary_key(self, index=0) -> str:
+        keys = [field.get("name") for field in self if isinstance(field, Dict) and field.get("mode") == "REQUIRED"]
+        return get_scala(keys, index=index)
 
-def validate_gbq_schema(schema: Any) -> BigQuerySchema:
-    if not schema: return
+
+def validate_gbq_schema(schema: Any, optional=False) -> BigQuerySchema:
+    if (not schema) and optional: return
     elif isinstance(schema, BigQuerySchema): return schema
     elif isinstance(schema, List): return BigQuerySchema(*schema)
     else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, BIGQUERY_SCHEMA))
@@ -253,7 +257,7 @@ class BigQueryContext(TypedDict):
                 partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
         super().__init__(table=table, project_id=project_id)
         self.update_default(dict(mode="append", progress=True, partition_by="auto"),
-            mode=mode, base_query=base_query, schema=validate_gbq_schema(schema), progress=progress,
+            mode=mode, base_query=base_query, schema=validate_gbq_schema(schema, optional=True), progress=progress,
             partition=partition, partition_by=partition_by)
 
 
@@ -270,7 +274,8 @@ class GoogleUpdateContext(TypedDict):
         super().__init__(**query)
         self.update_default(dict(mode="append", progress=True, head=1, to="desc"),
             mode=mode, default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
-            cell=cell, schema=validate_gbq_schema(schema), progress=progress, partition=partition, partition_by=partition_by)
+            cell=cell, schema=validate_gbq_schema(schema, optional=True), progress=progress,
+            partition=partition, partition_by=partition_by)
 
 
 GoogleUploadMode = Literal["fail","replace","append","upsert"]
@@ -289,15 +294,13 @@ class GoogleUploader(BaseSession):
     def upload_data(self, data: TabularData, uploadInfo: GoogleUploadInfo=dict(), reauth=False,
                     audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None, **context):
         data = to_dataframe(data)
-        __exists = df_exists(data)
-        if __exists: data = to_dataframe(data).copy()
         context = GCLOUD_CONTEXT(account=account, **context)
         gbq_auth = dict(reauth=reauth, audience=audience, credentials=credentials)
         for name, uploadContext in uploadInfo.items():
             if not isinstance(uploadContext, Dict): status = False
-            elif __exists and (len(kloc(uploadContext, [KEY, SHEET], if_null="drop")) == 2):
+            elif (not data.empty) and (len(kloc(uploadContext, [KEY, SHEET], if_null="drop")) == 2):
                 status = self.upload_gspread(data=data.copy(), **uploadContext, name=name, **context)
-            elif __exists and (len(kloc(uploadContext, [TABLE, PID], if_null="drop")) == 2):
+            elif (not data.empty) and (len(kloc(uploadContext, [TABLE, PID], if_null="drop")) == 2):
                 status = self.upload_gbq(data=data.copy(), **uploadContext, name=name, **gbq_auth, **context)
             elif len(kloc(uploadContext, FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")) == 4:
                 status = self.update_data(**uploadContext, name=name, **gbq_auth, **context)
@@ -313,19 +316,16 @@ class GoogleUploader(BaseSession):
                         mode: Literal["replace","append","upsert"]="append", cell=str(), base_sheet=str(), default=None,
                         head=1, headers=None, str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="desc",
                         rename: Optional[RenameMap]=None, name=str(), account: Account=dict(), **context) -> bool:
-        data = self.map_gs_data(data, name=name, **context)
         if base_sheet or (mode == "upsert"):
             base_sheet = sheet if mode == "upsert" else base_sheet
             base = self.read_gs_base(key, base_sheet, name, account, default, head, headers, str_cols, rename=rename)
             data = self.map_gs_base(data, base, name=name, **context)
+        data = self.map_gs_data(data, name=name, **context)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
         update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
         return True
-
-    def map_gs_data(self, data: pd.DataFrame, name=str(), **context) -> pd.DataFrame:
-        return data
 
     def read_gs_base(self, key: str, sheet: str, name=str(), account: Account=dict(), default=None,
                     head=1, headers=None, str_cols: NumericiseIgnore=list(),
@@ -339,6 +339,9 @@ class GoogleUploader(BaseSession):
     def map_gs_base(self, data: pd.DataFrame, base: pd.DataFrame, name=str(), **context) -> pd.DataFrame:
         return cloc(data, base.columns, if_null="pass")
 
+    def map_gs_data(self, data: pd.DataFrame, name=str(), **context) -> pd.DataFrame:
+        return data
+
     ###################################################################
     ######################### Google BigQuery #########################
     ###################################################################
@@ -350,13 +353,13 @@ class GoogleUploader(BaseSession):
                     partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
                     name=str(), reauth=False, audience=str(), account: Account=dict(),
                     credentials: Optional[IDTokenCredentials]=None, **context) -> bool:
-        schema = schema if schema and is_records(schema, how="all") else self.get_gbq_schema(name=name, schema=schema, **context)
-        data = self.map_gbq_data(data, schema=schema, name=name, **context)
+        schema = validate_gbq_schema(schema if schema else self.get_gbq_schema(name=name, schema=schema, **context))
         gbq_auth = dict(reauth=reauth, audience=audience, account=account, credentials=credentials)
         if base_query or (mode == "upsert"):
             base_query = table if mode == "upsert" else base_query
-            base = self.read_gbq_base(base_query, project_id, name, **gbq_auth)
-            data = self.map_gbq_base(data, base, name=name, schema=schema, **context)
+            base = self.read_gbq_base(base_query, project_id, name=name, **gbq_auth)
+            data = self.map_gbq_base(data, base, table=table, project_id=project_id, schema=schema, name=name, **gbq_auth, **context)
+        data = self.map_gbq_data(data, table=table, project_id=project_id, schema=schema, name=name, **gbq_auth, **context)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, schema=schema, dump=self.logJson))
         to_gbq(table, project_id, data, if_exists=("replace" if mode == "upsert" else mode), schema=schema, progress=progress,
@@ -366,12 +369,6 @@ class GoogleUploader(BaseSession):
     def get_gbq_schema(self, name=str(), **context) -> BigQuerySchema:
         ...
 
-    def map_gbq_data(self, data: pd.DataFrame, schema: BigQuerySchema, name=str(), **context) -> pd.DataFrame:
-        columns = [field["name"] for field in schema if field["name"] in data]
-        data = cloc(data, columns, if_null="drop", reorder=True)
-        if len(data.columns) != len(columns): raise ValueError(INVALID_SCHEMA_MSG)
-        else: return data
-
     def read_gbq_base(self, query: str, project_id: str, name=str(), reauth=False, audience=str(),
                         account: Account=dict(), credentials: Optional[IDTokenCredentials]=None) -> pd.DataFrame:
         data = read_gbq(query, project_id, reauth=reauth, audience=audience, account=account, credentials=credentials)
@@ -379,11 +376,16 @@ class GoogleUploader(BaseSession):
         self.logger.info(log_table(data, name=name, query=query, pid=project_id, dump=self.logJson))
         return data
 
-    def map_gbq_base(self, data: pd.DataFrame, base: pd.DataFrame, key=str(),
-                    schema: Optional[BigQuerySchema]=None, **context) -> pd.DataFrame:
-        key = _validate_upsert_key(data, base, key, schema)
+    def map_gbq_base(self, data: pd.DataFrame, base: pd.DataFrame, schema: BigQuerySchema, **context) -> pd.DataFrame:
+        key = validate_primary_key(data, base, schema=schema)
         data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
         return data[data[key].notna()].drop_duplicates(key)
+
+    def map_gbq_data(self, data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, name=str(), **context) -> pd.DataFrame:
+        columns = [field["name"] for field in schema if field["name"] in data]
+        data = cloc(data, columns, if_null="drop", reorder=True)
+        if len(data.columns) != len(columns): raise ValueError(SCHEMA_MISMATCH_MSG)
+        else: return data
 
     ###################################################################
     ########################### Update Data ###########################
@@ -513,7 +515,7 @@ def _validate_schema(data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, 
     context = {field["name"]:BIGQUERY_TYPE_CAST(field["type"], fillna) for field in schema}
     data = apply_df(cloc(data, list(context.keys()), if_null="pass"), **context)
     if df_exists(data, drop_na=True): return data
-    else: raise InvalidSchema(INVALID_SCHEMA_MSG, local_schema=data.dtypes.to_frame().to_dict()[0], remote_schema=schema)
+    else: raise InvalidSchema(SCHEMA_MISMATCH_MSG, local_schema=data.dtypes.to_frame().to_dict()[0], remote_schema=schema)
 
 
 @gbq_authorized
@@ -556,13 +558,12 @@ def to_gbq_partition(table: str, project_id: str, data: pd.DataFrame, reauth=Fal
             data[data[partition]==part].to_gbq(**context)
 
 
-def _validate_upsert_key(data: pd.DataFrame, base: pd.DataFrame, key=str(),
+def validate_primary_key(data: pd.DataFrame, base: pd.DataFrame, key=str(),
                         schema: Optional[BigQuerySchema]=None, index=0) -> str:
-    if not (key and isinstance(key, str)) and (schema and is_records(schema)):
-        keys = [field.get("name") for field in schema if field.get("mode") == "REQUIRED"]
-        key = iloc(keys, index, default=str())
+    if not key:
+        key = validate_gbq_schema(schema).get_primary_key(index=index)
     if key and (key in data) and (key in base): return key
-    else: raise ValueError(INVALID_UPSERT_KEY_MSG)
+    else: raise ValueError(INVALID_PRIMARY_KEY_MSG)
 
 
 @gbq_authorized
@@ -573,6 +574,6 @@ def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, base: Optional[p
     if validate: data = _validate_schema(data, schema, fillna=fillna)
     context = dict(reauth=reauth, credentials=credentials)
     if df_empty(base): base = read_gbq(table, project_id, **context)
-    key = _validate_upsert_key(data, base, key, schema)
+    key = validate_primary_key(data, base, key, schema)
     data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
     data.to_gbq(table, project_id, if_exists=if_exists, table_schema=schema, progress_bar=progress, **context)

@@ -108,13 +108,13 @@ def cast_datetime(__object: DateFormat, default=None, tzinfo: Optional[Timezone]
 
 def cast_time(__object: DateFormat, default=None, tzinfo: Optional[Timezone]=None,
                 astimezone: Optional[Timezone]=None) -> dt.time:
-    __datetime = cast_datetime(**locals())
+    __datetime = cast_datetime(__object, default, tzinfo, astimezone, droptz=False)
     if isinstance(__datetime, dt.datetime): return __datetime.time()
 
 
 def cast_timestamp(__object: DateFormat, default=None, tzinfo: Optional[Timezone]=None,
                     astimezone: Optional[Timezone]=None, tsUnit: Literal["ms","s"]="ms") -> int:
-    __datetime = cast_datetime(**locals())
+    __datetime = cast_datetime(__object, default, tzinfo, astimezone, droptz=False)
     if isinstance(__datetime, dt.datetime):
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
 

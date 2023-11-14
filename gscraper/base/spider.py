@@ -17,7 +17,9 @@ from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
 from gscraper.utils.map import to_array, align_array, kloc, exists_dict, chain_dict, drop_dict, diff
-from gscraper.utils.map import exists_one, unique, apply_records, rename_data, filter_data, chain_exists, between_data, re_get
+from gscraper.utils.map import exists_one, unique, apply_records, rename_data, filter_data
+from gscraper.utils.map import chain_exists, between_data, re_get
+from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
@@ -30,7 +32,7 @@ import inspect
 import requests
 import time
 
-from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
@@ -263,6 +265,7 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     ssl = None
     responseType = "records"
     returnType = "records"
+    mappedReturn = False
     root = list()
     groupby = list()
     groupSize = dict()
@@ -385,10 +388,6 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
             return data
         return wrapper
 
-    def with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
-        if self.localSave: self.save_data(data, ext="dataframe")
-        self.upload_data(data, uploadInfo, **context)
-
     def requests_filter(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context):
@@ -408,9 +407,6 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         elif isinstance(self.delay, Tuple):
             random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
         else: return 0.
-
-    def log_results(self, data: Data, **context):
-        self.logger.info(log_data(data, **self.get_iterator(**context)))
 
     ###################################################################
     ####################### Parameter Validator #######################
@@ -464,7 +460,8 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
         if count: iterator, context = self._init_count(*args, count=count, progress=progress, **context)
         else: iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         message = self.get_gather_message(*args, **context)
-        data = [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        data = [self.fetch(**__i, fields=(fields if isinstance(fields, Sequence) else list()), **context)
+                for __i in tqdm(iterator, desc=message, disable=(not progress))]
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
@@ -514,16 +511,26 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     def get_count_message(self, *args, which=str(), by=str(), **context) -> str:
         return GATHER_MSG(which, self.where, by)
 
+    ###################################################################
+    ########################### Reduce Data ###########################
+    ###################################################################
+
     def filter_data(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context):
             data = func(self, *args, **context)
-            return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
+            if self.mappedReturn and isinstance(data, Dict):
+                if isinstance(fields, Dict):
+                    return {__key: filter_data(data[__key], fields=__fields, if_null="pass", return_type=returnType)
+                            for __key, __fields, in fields.items() if __key in data}
+                else: return {__key: filter_data(__data, fields=fields, if_null="pass", return_type=returnType)
+                            for __key, __data, in data.items()}
+            else: return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
         return wrapper
 
     def filter_date(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, byDate: IndexLabel,
+        def wrapper(self: Spider, *args, byDate: IndexLabel=list(),
                     fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **context) -> Data:
             data = func(self, *args, **context)
             if byDate:
@@ -659,6 +666,32 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
             if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise requests.ConnectionError(INVALID_STATUS_MSG(self.where))
 
+    def log_results(self, data: Data, **context):
+        self.logger.info(log_data(data, **self.get_iterator(**context)))
+
+    ###################################################################
+    ############################ With Data ############################
+    ###################################################################
+
+    def with_mapped_data(func):
+        @functools.wraps(func)
+        def wrapper(self: Spider, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
+            if self.mappedReturn and isinstance(data, Dict):
+                for __key, __data in data.items():
+                    func(self, __data, prefix=__key, uploadInfo=kloc(uploadInfo, [__key], if_null="drop"), **context)
+            else: func(self, data, prefix=prefix, uploadInfo=uploadInfo, **context)
+        return wrapper
+
+    @with_mapped_data
+    def with_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
+        if self.localSave:
+            self.save_data(data, prefix=self.get_save_name(prefix), ext="dataframe")
+        if uploadInfo:
+            self.upload_data(data, uploadInfo, **context)
+
+    def get_save_name(self, prefix=str()) -> str:
+        return prefix if prefix else self.operation
+
 
 ###################################################################
 ########################### Async Spider ##########################
@@ -691,6 +724,7 @@ class AsyncSpider(Spider):
     ssl = None
     responseType = "records"
     returnType = "records"
+    mappedReturn = False
     root = list()
     groupby = list()
     groupSize = dict()
@@ -812,7 +846,8 @@ class AsyncSpider(Spider):
         else: iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         message = self.get_gather_message(*args, **context)
         data = await tqdm.gather(*[
-                self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+                self.fetch(**__i, fields=(fields if isinstance(fields, Sequence) else list()), **context)
+                for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
@@ -986,7 +1021,8 @@ class AsyncSpider(Spider):
         iterator, context = self._init_iterator(args, context, redirectArgs, self.redirectProduct, self.pagination)
         message = self.get_redirect_message(*args, **context)
         data = await tqdm.gather(*[
-                self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+                self.fetch_redirect(**__i, fields=(fields if isinstance(fields, Sequence) else list()), **context)
+                for __i in iterator], desc=message, disable=(not progress))
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
@@ -1192,6 +1228,7 @@ class EncryptedSpider(Spider):
     ssl = None
     responseType = "records"
     returnType = "records"
+    mappedReturn = False
     root = list()
     groupby = list()
     groupSize = dict()
@@ -1337,6 +1374,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedSpider):
     ssl = None
     responseType = "records"
     returnType = "records"
+    mappedReturn = False
     root = list()
     groupby = list()
     groupSize = dict()
@@ -1455,6 +1493,7 @@ class Pipeline(EncryptedSpider):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
+    mappedReturn = False
     schemaInfo = SchemaInfo()
     dags = Dag()
 
@@ -1463,33 +1502,88 @@ class Pipeline(EncryptedSpider):
     def crawl(self, **context) -> Data:
         return self.gather(**context)
 
+    ###################################################################
+    ########################### Gather Task ###########################
+    ###################################################################
+
     def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        gatherFields = diff(cast_list(fields), cast_list(self.derivFields)) if self.derivFields else fields
         for task in self.dags:
-            method, params = self.from_task(task, fields=gatherFields, data=data, **context)
+            method, params = self.from_task(task, fields=self.get_fields(fields, task[DATANAME]), data=data, **context)
             response = method(**params)
             self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
             data[task[DATANAME]] = response
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
+    def get_mapped_fields(func):
+        @functools.wraps(func)
+        def wrapper(self: Pipeline, fields: IndexLabel=list(), name=str()):
+            if self.mappedReturn and isinstance(fields, Dict):
+                fields = fields.get(name, list())
+                if isinstance(fields, Dict):
+                    return {__key: func(self, __fields) for __key, __fields in fields.items()}
+            return func(self, fields)
+        return wrapper
+
+    @get_mapped_fields
+    def get_fields(self, fields: IndexLabel, name=str()) -> IndexLabel:
+        return diff(cast_list(fields), cast_list(self.derivFields)) if self.derivFields else fields
+
     def from_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Tuple[Callable,Context]:
         method = getattr(self, task[TASK])
-        fields = task[FIELDS] if isinstance(task[FIELDS], Tuple) else unique(*cast_list(task[FIELDS]), *fields)
+        fields = self.get_task_fields(task[FIELDS], fields)
         context = dict(context, fields=fields, returnType=task.get(DATATYPE), **task.get(CONTEXT,dict()))
         worker = task[OPERATOR](**kloc(context, WORKER_UNIQUE, if_null="drop"))
         params = kloc(context, task[PARAMS], if_null="drop") if PARAMS in task else PROXY_CONTEXT(**context)
         derivData = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
         return method, dict(params, worker=worker, **derivData)
 
+    def get_mapped_task_fields(func):
+        @functools.wraps(func)
+        def wrapper(self: Pipeline, task_fields: IndexLabel=list(), fields: IndexLabel=list()):
+            if self.mappedReturn and isinstance(task_fields, Dict):
+                if isinstance(fields, Dict):
+                    return {__key: func(self, task_fields[__key], __fields)
+                            for __key, __fields in fields.items() if __key in task_fields}
+                else: return {__key: func(self, __fields, fields)
+                            for __key, __fields in task_fields.items()}
+            else: return func(self, task_fields, fields)
+        return wrapper
+
+    @get_mapped_task_fields
+    def get_task_fields(self, task_fields: IndexLabel=list(), fields: IndexLabel=list()) -> IndexLabel:
+        if isinstance(task_fields, Tuple): return task_fields
+        else: return unique(*cast_list(task_fields), *fields)
+
     @Spider.requests_limit
     def request_crawl(self, worker: Spider, **params) -> Data:
         return worker.crawl(**params)
+
+    ###################################################################
+    ############################ Map Reduce ###########################
+    ###################################################################
 
     @abstractmethod
     @Spider.filter_data
     def map_reduce(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         ...
+
+    def arrange_data(func):
+        @functools.wraps(func)
+        def wrapper(self: Pipeline, convert_dtypes=False, sortby=str(), reset_index=False, **context):
+            data = func(self, **context)
+            arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+            if self.mappedReturn and isinstance(data, Dict):
+                return {__key: self._arrange_data(__data, **arrange_context) for __key, __data in data.items()}
+            else: return self._arrange_data(data, **arrange_context)
+        return wrapper
+
+    def _arrange_data(self, data: pd.DataFrame, convert_dtypes=False, sortby=str(), reset_index=False) -> pd.DataFrame:
+        if not isinstance(data, pd.DataFrame): return data
+        if convert_dtypes: data = _convert_dtypes(data)
+        if sortby: data = data.sort_values(sortby)
+        if reset_index: data = data.reset_index(drop=True)
+        return data
 
 
 class AsyncPipeline(EncryptedAsyncSpider, Pipeline):
@@ -1502,6 +1596,7 @@ class AsyncPipeline(EncryptedAsyncSpider, Pipeline):
     tzinfo = None
     datetimeUnit = "second"
     returnType = "dataframe"
+    mappedReturn = False
     schemaInfo = SchemaInfo()
     dags = Dag()
 
@@ -1512,9 +1607,8 @@ class AsyncPipeline(EncryptedAsyncSpider, Pipeline):
 
     async def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        gatherFields = diff(cast_list(fields), cast_list(self.derivFields)) if self.derivFields else fields
         for task in self.dags:
-            method, params = self.from_task(task, fields=gatherFields, data=data, **context)
+            method, params = self.from_task(task, fields=self.get_fields(fields, task[DATANAME]), data=data, **context)
             response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
             self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
             data[task[DATANAME]] = response

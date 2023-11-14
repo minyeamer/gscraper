@@ -28,7 +28,7 @@ MAP_CONTEXT = lambda responseType=None, match=None, root=None, groupby=None, cou
                     schema=None, __index=None, **context: context
 
 
-SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, **context: context
+SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedReturn=None, **context: context
 
 
 ASYNCIO_CONTEXT = lambda redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
