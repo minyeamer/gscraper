@@ -20,8 +20,9 @@ LOG_CONTEXT = lambda debug=None, localSave=None, extraSave=None, interrupt=None,
                     errors=None, func=None, **context: context
 
 
-ITERATOR_CONTEXT = lambda iterateArgs=None, iterateProduct=None, pagination=None, pageUnit=None, pageLimit=None, \
-                        fromNow=None, __i=None, **context: context
+ITERATOR_CONTEXT = lambda iterator=None, iterateArgs=None, iterateCount=None, iterateProduct=None, pagination=None, \
+                        pageFrom=None, offsetFrom=None, pageUnit=None, pageLimit=None, fromNow=None, __i=None, \
+                        **context: context
 
 
 MAP_CONTEXT = lambda responseType=None, match=None, root=None, groupby=None, countby=None, schemaInfo=None, \
@@ -38,21 +39,21 @@ UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, deriv
     ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 
-TASK_CONTEXT = lambda init=None, data=None, locals=None, how=None, default=None, dropna=None, strict=None, unique=None, \
-                        drop=None, index=None, count=None, depth=None, hier=None, log=None, to=None, **context: context
+PARAMS_CONTEXT = lambda init=None, data=None, locals=None, which=None, where=None, by=None, how=None, default=None, \
+                        dropna=None, strict=None, unique=None, drop=None, index=None, depth=None, hier=None, \
+                        log=None, to=None, countPath=None, hasSize=None, **context: context
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, cookies=None, \
                         allow_redirects=None, validate=None, exception=None, valid=None, invalid=None, \
                         close=None, encoding=None, features=None, html=None, table_header=None, table_idx=None, \
-                        engine=None, **context: TASK_CONTEXT(**context)
+                        engine=None, **context: context
 
 
 RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
                         delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, \
-                        redirectUnit=None, index=0, **context: \
-                        dict(REQUEST_CONTEXT(**context), index=index)
+                        redirectUnit=None, **context: context
 
 
 GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
@@ -62,25 +63,26 @@ GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, b
 
 
 UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, \
-                        which=None, where=None, by=None, **context: context
+                        **context: context
 
 
-SESSION_CONTEXT = lambda session=None, semaphore=None, **context: UPLOAD_CONTEXT(**context)
+TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
 
 
-LOGIN_CONTEXT = lambda userid=None, passwd=None, domain=None, naverId=None, naverPw=None, \
-                        **context: SESSION_CONTEXT(**context)
+SESSION_CONTEXT = lambda session=None, semaphore=None, cookies=str(), **context: \
+                        dict(UPLOAD_CONTEXT(**REQUEST_CONTEXT(**PARAMS_CONTEXT(**context))), cookies=cookies)
 
 
-PROXY_CONTEXT = lambda **context: UNIQUE_CONTEXT(**UPLOAD_CONTEXT(**context))
+LOGIN_CONTEXT = lambda userid=None, passwd=None, **context: SESSION_CONTEXT(**context)
 
 
-REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, cookies=str(), **context: \
-    UPLOAD_CONTEXT(**REQUEST_CONTEXT(**context), cookies=cookies)
+PROXY_CONTEXT = lambda session=None, semaphore=None, **context: UNIQUE_CONTEXT(**UPLOAD_CONTEXT(**context))
 
 
-LOCAL_CONTEXT = lambda apiRedirect=None, returnType=None, session=None, semaphore=None, **context: \
-    UPLOAD_CONTEXT(**context)
+LOCAL_CONTEXT = lambda apiRedirect=None, returnType=None, **context: SESSION_CONTEXT(**context)
+
+
+REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, **context: SESSION_CONTEXT(**context)
 
 
 ###################################################################

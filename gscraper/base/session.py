@@ -354,6 +354,8 @@ class Iterator(CustomDict):
     iterateProduct = list()
     iterateUnit = 1
     pagination = False
+    pageFrom = 1
+    offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
     interval = str()
@@ -490,38 +492,47 @@ class Iterator(CustomDict):
                                 pageSize=0, pageStart=1, offset=1, **context) -> Tuple[List[List],Context]:
         pages = list()
         for label in labels:
-            size = self.get_size_by_label(label, size=size, **context)
-            pageSize = self.get_page_size_by_label(label, pageSize=pageSize, **context)
-            pageStart = self.get_page_start_by_label(label, pageStart=pageStart, **context)
-            offset = self.get_offset_by_label(label, offset=offset, **context)
+            size = self.get_size_by_label(label, size=size, pagination=pagination, **context)
+            pageSize = self.get_page_size_by_label(label, pageSize=pageSize, pagination=pagination, **context)
+            pageStart = self.get_page_start_by_label(label, pageStart=pageStart, pagination=pagination, **context)
+            offset = self.get_offset_by_label(label, offset=offset, pagination=pagination, **context)
             iterator = self.get_pages(size, pageSize, pageStart, offset, how="all")
             num_pages = len(iterator[0])
             params = ((size,)*num_pages, (pageSize,)*num_pages, (pageStart,)*num_pages, (offset,)*num_pages)
             pages.append(tuple(map(tuple, transpose_array(((label,)*num_pages,)+iterator+params))))
         return args+(pages,), context
 
-    def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0, **context) -> int:
-        if (pageUnit > 0) and (pageSize & pageUnit != 0):
-            pageSize = round(pageSize / pageUnit) * pageUnit
-        if pageLimit > 0:
-            pageSize = min(pageSize, pageLimit)
-        return pageSize
-
     def get_pages(self, size: Unit, pageSize: int, pageStart=1, offset=1, pageUnit=0, pageLimit=0,
-                    how: Literal["all","page","start"]="all", **context) -> Union[Pages,List[Pages]]:
+                    how: Literal["all","page","start"]="all") -> Union[Pages,List[Pages]]:
         pageSize = self.validate_page_size(pageSize, pageUnit, pageLimit)
+        pageStart, offset = self.validate_page_start(size, pageSize, pageStart, offset)
         if isinstance(size, int):
             return self.calc_pages(cast_int1(size), pageSize, pageStart, offset, how)
         elif is_array(size):
             return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, offset, how) for __sz in size]
         else: return tuple()
 
+    def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
+        if (pageUnit > 0) and (pageSize & pageUnit != 0):
+            pageSize = round(pageSize / pageUnit) * pageUnit
+        if pageLimit > 0:
+            pageSize = min(pageSize, pageLimit)
+        return pageSize
+
+    def validate_page_start(self, size: int, pageSize: int, pageStart=1, offset=1) -> Tuple[int,int]:
+        if pageStart == self.pageFrom:
+            pageStart = pageStart + (offset-self.offsetFrom)//pageSize
+        if offset == self.offsetFrom:
+            offset = offset + (pageStart-self.pageFrom)*size
+        return pageStart, offset
+
     def calc_pages(self, size: int, pageSize: int, pageStart=1, offset=1,
-                    how: Literal["all","page","start"]="all", **context) -> Pages:
+                    how: Literal["all","page","start"]="all") -> Pages:
         pages = tuple(range(pageStart, (((size-1)//pageSize)+1)+pageStart))
         if how == "page": return pages
         starts = tuple(range(offset, size+offset, pageSize))
         if how == "start": return starts
+        size = size + (offset-self.offsetFrom)
         dataSize = tuple(min(size-start+1, pageSize) for start in starts)
         return (pages, starts, dataSize)
 
@@ -838,6 +849,8 @@ def validate_info(info: Any) -> SchemaInfo:
 class Mapper(BaseSession):
     __metaclass__ = ABCMeta
     operation = "mapper"
+    pageFrom = 1
+    offsetFrom = 1
     responseType = "dict"
     root = list()
     schemaInfo = SchemaInfo()
@@ -1222,6 +1235,8 @@ def _is_single_path_by_data(data: ResponseData, path: _KT, hier=False) -> bool:
 class SequenceMapper(Mapper):
     __metaclass__ = ABCMeta
     operation = "mapper"
+    pageFrom = 1
+    offsetFrom = 1
     responseType = "records"
     root = list()
     groupby = list()
@@ -1307,12 +1322,12 @@ class SequenceMapper(Mapper):
         return data
 
     def get_start_by(self, by: Optional[Literal["page","start"]]=None, count: Optional[int]=0,
-                    page=1, start=1, pageStart=1, offset=1, dataSize: Optional[int]=None, **context) -> int:
+                    page=1, start=1, dataSize: Optional[int]=None, **context) -> int:
         if (by == "page") and isinstance(page, int):
             dataSize = dataSize if isinstance(dataSize, int) else count
-            return (page if pageStart == 0 else page-1)*dataSize+1
+            return (page if self.pageFrom == 0 else page-1)*dataSize+1
         elif by == "start" and isinstance(start, int):
-            return start+1 if offset == 0 else start
+            return start+1 if self.offsetFrom == 0 else start
         else: return None
 
     ###################################################################
@@ -1341,6 +1356,9 @@ class Parser(SequenceMapper):
     __metaclass__ = ABCMeta
     operation = "parser"
     fields = list()
+    iterateCount = dict()
+    pageFrom = 1
+    offsetFrom = 1
     responseType = "records"
     root = list()
     groupby = list()
@@ -1369,8 +1387,10 @@ class Parser(SequenceMapper):
 
     def validate_response(func):
         @functools.wraps(func)
-        def wrapper(self: Parser, response: Any, *args, returnPath: Optional[_KT]=None, **context):
+        def wrapper(self: Parser, response: Any, *args, countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context):
             is_valid = self.is_valid_response(response)
+            if notna(countPath) and (ITER_INDEX in context):
+                self.iterateCount[context[ITER_INDEX]] = cast_int(get_value(response, countPath))
             if notna(returnPath):
                 return get_value(response, returnPath)
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
@@ -1386,7 +1406,7 @@ class Parser(SequenceMapper):
         self.logger.info(log_data(data, **context))
 
     @validate_response
-    def parse(self, response: Any, returnPath: Optional[_KT]=None, **context) -> Data:
+    def parse(self, response: Any, countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context) -> Data:
         return self.map(response, **context)
 
 

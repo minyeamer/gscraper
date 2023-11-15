@@ -173,10 +173,10 @@ NumericiseIgnore = Union[Sequence[int], bool]
 class GspreadReadContext(TypedDict):
     def __init__(self, key: str, sheet: str, fields: Optional[IndexLabel]=None, default: Optional[Any]=None,
                 if_null: Literal["drop","pass"]="pass", head=1, headers: Optional[IndexLabel]=None,
-                str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="desc",
+                str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
                 return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None):
         super().__init__(key=key, sheet=sheet, fields=fields)
-        self.update_default(dict(if_null="pass", head=1, to="desc", return_type="dataframe"),
+        self.update_default(dict(if_null="pass", head=1, to="name", return_type="dataframe"),
             default=default, if_null=if_null, head=head, headers=headers,
             str_cols=str_cols, to=to, return_type=return_type, rename=rename)
 
@@ -185,7 +185,7 @@ class GoogleQueryContext(GspreadReadContext):
     def __init__(self, key: str, sheet: str, fields: IndexLabel, default: Optional[Any]=None,
                 if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, strict=True, unique=False,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
-                arr_cols: Optional[IndexLabel]=None, to: Optional[Literal["desc","name"]]="desc",
+                arr_cols: Optional[IndexLabel]=None, to: Optional[Literal["desc","name"]]="name",
                 return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None):
         super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, return_type, rename)
         self.update_default(dict(axis=0, dropna=True, strict=True, unique=False),
@@ -211,7 +211,7 @@ class GoogleQueryReader(BaseSession):
 
     def read_gspread(self, key: str, sheet: str, fields: IndexLabel=list(), default=None,
                     if_null: Literal["drop","pass"]="pass", head=1, headers=None,
-                    str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="desc",
+                    str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="name",
                     return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
                     name=str(), account: Account=dict()) -> TabularData:
         context = dict(default=default, if_null=if_null, head=head, headers=headers, numericise_ignore=str_cols,
