@@ -123,7 +123,9 @@ RenameMap = Dict[str,str]
 NestedData = Union[NestedSequence, NestedDict]
 TabularData = Union[Records, DataFrame]
 MappingData = Union[Records, DataFrame, Dict]
+
 Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
+MappedData = Dict[str,Data]
 
 JsonData = Union[Dict, List]
 JSON_DATA = (Dict, List)
