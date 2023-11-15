@@ -17,8 +17,8 @@ from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
 from gscraper.utils.map import to_array, align_array, transpose_array, kloc, exists_dict, drop_dict
-from gscraper.utils.map import exists_one, unique, apply_records, rename_data, filter_data
-from gscraper.utils.map import chain_exists, between_data, re_get, diff
+from gscraper.utils.map import vloc, apply_records, rename_data, filter_data
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get, diff
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
@@ -1538,11 +1538,15 @@ class Pipeline(EncryptedSpider):
     def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
         for task in self.dags:
-            method, params = self.from_task(task, fields=self.get_fields(fields, task[DATANAME]), data=data, **context)
-            response = method(**params)
-            self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
-            data[task[DATANAME]] = response
+            data[task[DATANAME]] = self.run_task(task, fields=fields, data=data, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
+
+    def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
+        fields = self.get_fields(fields, task[DATANAME])
+        method, params = self.from_task(task, fields=fields, data=data, **context)
+        response = method(**params)
+        self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
+        return response
 
     def get_mapped_fields(func):
         @functools.wraps(func)
@@ -1637,11 +1641,20 @@ class AsyncPipeline(EncryptedAsyncSpider, Pipeline):
     async def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
         for task in self.dags:
-            method, params = self.from_task(task, fields=self.get_fields(fields, task[DATANAME]), data=data, **context)
-            response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
-            self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
-            data[task[DATANAME]] = response
+            data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
+
+    async def async_gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        response = await asyncio.gather(*[self.run_task(task, fields=fields, data=data, **context) for task in self.dags])
+        data = dict(zip(vloc(self.dags, DATANAME), response))
+        return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
+
+    async def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
+        fields = self.get_fields(fields, task[DATANAME])
+        method, params = self.from_task(task, fields=fields, data=data, **context)
+        response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
+        self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
+        return response
 
     @AsyncSpider.asyncio_limit
     async def async_crawl(self, worker: AsyncSpider, **params) -> Data:
