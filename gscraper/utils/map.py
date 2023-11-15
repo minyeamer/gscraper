@@ -213,7 +213,7 @@ def hloc(__m: Dict, keys: Sequence[_KT], default=None, if_null: Literal["drop","
     return list(__m.values()) if values_only else __m
 
 
-def vloc(__r: List[Dict], keys: _KT, default=None, if_null: Literal["drop","pass"]="drop", reorder=True,
+def vloc(__r: Records, keys: _KT, default=None, if_null: Literal["drop","pass"]="drop", reorder=True,
         values_only=False, hier=False, key_alias: Sequence[_KT]=list(), axis=0) -> Union[Records,List,Dict[_KT,List]]:
     if axis == 1:
         __m = {__key: vloc(__r, __key, default=default, if_null=if_null, hier=hier) for __key in cast_tuple(keys)}
@@ -711,7 +711,7 @@ def apply_dict(__m: Dict, __keys: Optional[_KT]=list(), __applyFunc: Optional[Ap
     return __m
 
 
-def apply_records(__r: List[Dict], __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
+def apply_records(__r: Records, __keys: Optional[_KT]=list(), __applyFunc: Optional[ApplyFunction]=list(),
                     apply: Optional[ApplyFunction]=None, all_keys=False, scope: Literal["keys","dict"]="keys",
                     __default=None, **context) -> Records:
     if not __r: return __r
@@ -799,7 +799,7 @@ def match_dict(__m: Dict, __keys: Optional[_KT]=list(), __matchFunc: Optional[Ma
     else: return all(matches.values()) if how == "all" else matches
 
 
-def match_records(__r: List[Dict], __keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
+def match_records(__r: Records, __keys: Optional[_KT]=list(), __matchFunc: Optional[MatchFunction]=list(),
                 match: Optional[MatchFunction]=None, all_keys=False, how: Literal["filter","all","indexer"]="filter",
                 scope: Literal["keys","dict"]="keys", __default=None, **context) -> Union[Records,_BOOL]:
     if not __r: return False if how == "all" else list()
