@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gscraper.base.abstract import TypedDict, TypedRecords
+from gscraper.base.abstract import TypedDict, TypedList
 from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, LOGIN_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
@@ -532,26 +532,34 @@ class Spider(Parser, Iterator, GoogleQueryReader, GoogleUploader):
     def filter_data(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context):
-            data = func(self, *args, **context)
+            data = func(self, *args, fields=fields, returnType=returnType, **context)
             if self.mappedReturn and isinstance(data, Dict):
-                if isinstance(fields, Dict):
-                    return {__key: filter_data(data[__key], fields=__fields, if_null="pass", return_type=returnType)
-                            for __key, __fields, in fields.items() if __key in data}
-                else: return {__key: filter_data(__data, fields=fields, if_null="pass", return_type=returnType)
-                            for __key, __data, in data.items()}
+                return self.filter_mapped_data(data, fields=fields, returnType=returnType)
             else: return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
         return wrapper
+
+    def filter_mapped_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None) -> Data:
+        if isinstance(fields, Dict):
+            return {__key: filter_data(data[__key], fields=__fields, if_null="pass", return_type=returnType)
+                    for __key, __fields, in fields.items() if __key in data}
+        else: return {__key: filter_data(__data, fields=fields, if_null="pass", return_type=returnType)
+                    for __key, __data, in data.items()}
 
     def filter_date(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, byDate: IndexLabel=list(),
                     fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **context) -> Data:
-            data = func(self, *args, **context)
-            if byDate:
-                between_context = {field: (fromDate, toDate) for field in cast_tuple(byDate)}
-                return between_data(data, **between_context)
-            else: return data
+            data = func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
+            if self.mappedReturn and isinstance(data, Dict): return data
+            else: return self.between_data(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
         return wrapper
+
+    def between_data(self, data: Data, byDate: IndexLabel=list(),
+                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None) -> Data:
+        if byDate and (fromDate or toDate):
+            between_context = {field: (fromDate, toDate) for field in cast_tuple(byDate)}
+            return between_data(data, **between_context)
+        else: return data
 
     @filter_data
     @filter_date
@@ -1506,8 +1514,8 @@ class Task(TypedDict):
         self.update_exists(dataType=dataType, params=params, derivData=derivData, context=context)
 
 
-class Dag(TypedRecords):
-    def __init__(self, *args: Task):
+class Dag(TypedList):
+    def __init__(self, *args: Union[Task,Sequence[Task]]):
         super().__init__(*args)
 
 
@@ -1641,12 +1649,11 @@ class AsyncPipeline(EncryptedAsyncSpider, Pipeline):
     async def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
         for task in self.dags:
-            data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, **context)
-        return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
-
-    async def async_gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        response = await asyncio.gather(*[self.run_task(task, fields=fields, data=data, **context) for task in self.dags])
-        data = dict(zip(vloc(self.dags, DATANAME), response))
+            if isinstance(task, Sequence):
+                response = await asyncio.gather(*[
+                    self.run_task(subtask, fields=fields, data=data, **context) for subtask in task])
+                data = dict(data, **dict(zip(vloc(task, DATANAME), response)))
+            else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     async def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:

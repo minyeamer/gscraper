@@ -224,7 +224,7 @@ class BaseSession(CustomDict):
 
     def save_dataframe(self, data: Data, file: str):
         file = self._validate_file(file)
-        if is_dfarray(data): data = data[0]
+        if is_dfarray(data, empty=False): data = data[0]
         else: data = to_dataframe(data)
         data = data.rename(columns=self.get_rename_map())
         try: data.to_excel(file, index=False)
@@ -777,6 +777,10 @@ class Schema(TypedRecords):
         if not (values_only or __key): return schema
         else: return vloc(list(schema), __key, if_null="drop", values_only=values_only)
 
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc") -> RenameMap:
+        __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
+        return {field[__from]: field[__to] for field in self}
+
     @TypedRecords.copyable
     def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,Schema]:
         return drop_duplicates(self, "name", keep=keep) if keep != True else self
@@ -834,6 +838,12 @@ class SchemaInfo(TypedDict):
     def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
                             keep: Literal["fist","last",True,False]=True) -> List[str]:
         return self.get_schema_by_type(__type, keys="name", values_only=True, schema_names=schema_names, keep=keep)
+
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first") -> RenameMap:
+        __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
+        schema = self.get_schema(schema_names=schema_names, keep=keep)
+        return {field[__from]: field[__to] for field in schema}
 
 
 def validate_info(info: Any) -> SchemaInfo:
@@ -1369,9 +1379,7 @@ class Parser(SequenceMapper):
     def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first") -> RenameMap:
         if to in ("desc", "name"):
-            __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
-            schema = self.schemaInfo.get_schema(schema_names=schema_names, keep=keep)
-            return {field[__from]: field[__to] for field in schema}
+            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep)
         else: return dict()
 
     def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):

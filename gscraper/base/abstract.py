@@ -186,6 +186,15 @@ class CustomList(list):
         return wrapper
 
 
+class TypedList(CustomList):
+    def __init__(self,  *args):
+        super().__init__(args)
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,TypedList]:
+        if __instance: return __instance.__class__(*self)
+        else: return self.__class__(*self)
+
+
 ###################################################################
 ########################## Custom Records #########################
 ###################################################################
