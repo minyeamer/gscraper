@@ -1065,6 +1065,11 @@ def drop_dict(__m: Dict, keys: _KT, inplace=False) -> Dict:
     if not inplace: return __m
 
 
+def split_dict(__m: Dict, keys: _KT) -> Tuple[Dict,Dict]:
+    keys = cast_tuple(keys)
+    return kloc(__m, keys, if_null="drop"), drop_dict(__m, keys, inplace=False)
+
+
 def drop_records(__r: Records, keys: _KT) -> Records:
     return [drop_dict(__m, keys, inplace=False) for __m in __r]
 

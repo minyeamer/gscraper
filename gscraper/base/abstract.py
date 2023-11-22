@@ -16,8 +16,7 @@ BASE_CONTEXT = lambda self=None, operation=None, initTime=None, prefix=None, ren
                         inplace=None, self_var=None, **context: context
 
 
-LOG_CONTEXT = lambda debug=None, localSave=None, extraSave=None, interrupt=None, logger=None, logJson=None, \
-                    errors=None, func=None, **context: context
+LOG_CONTEXT = lambda logger=None, logJson=None, errors=None, func=None, **context: context
 
 
 ITERATOR_CONTEXT = lambda iterator=None, iterateArgs=None, iterateCount=None, iterateProduct=None, pagination=None, \
@@ -39,9 +38,9 @@ UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, deriv
     ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 
-PARAMS_CONTEXT = lambda init=None, data=None, locals=None, which=None, where=None, by=None, how=None, default=None, \
-                        dropna=None, strict=None, unique=None, drop=None, index=None, depth=None, hier=None, \
-                        log=None, to=None, countPath=None, hasSize=None, **context: context
+PARAMS_CONTEXT = lambda init=None, data=None, task=None, locals=None, which=None, where=None, by=None, how=None, \
+                        default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
+                        depth=None, hier=None, to=None, countPath=None, hasSize=None, **context: context
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \

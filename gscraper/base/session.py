@@ -152,29 +152,29 @@ class BaseSession(CustomDict):
     datetimeUnit = "second"
     errors = list()
 
-    def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second",
-                logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False, **context):
+    def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None, **context):
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
-        super().__init__(**context)
+        super().__init__(context)
 
-    def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Literal["second","minute","hour","day"]="second"):
+    def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None):
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
 
-    def set_logger(self, logName=str(), logLevel: LogLevel="WARN", logFile=str(),
-                    debug: Keyword=list(), extraSave: Keyword=list(), interrupt=str(), localSave=False):
+    def set_logger(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
         self.logJson = bool(logFile)
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
+        self.localSave = localSave
         self.debug = cast_list(debug)
         self.extraSave = cast_list(extraSave)
         self.interrupt = interrupt
-        self.localSave = localSave
 
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, droptz=True, droptime=False, unit=str()) -> Union[dt.datetime,dt.date,str]:
@@ -362,10 +362,13 @@ class Iterator(CustomDict):
     fromNow = None
 
     def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
+        self.set_iterator_unit(iterateUnit, interval, fromNow)
+        super().__init__()
+
+    def set_iterator_unit(self, iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None):
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
         self.fromNow = fromNow if notna(fromNow) else self.fromNow
-        super().__init__()
 
     def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
         fromNow = fromNow if fromNow else self.fromNow
