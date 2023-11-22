@@ -10,17 +10,17 @@ from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
+from gscraper.base.types import Records, RenameMap, Data, MappedData, JsonData, RedirectData
 from gscraper.base.types import Account
 from gscraper.base.types import is_array, is_int_array, init_origin
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
-from gscraper.utils.date import get_date
+from gscraper.utils.date import get_date, is_daily_frequency
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
 from gscraper.utils.map import to_array, align_array, transpose_array
 from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
-from gscraper.utils.map import vloc, apply_records, rename_data, filter_data
+from gscraper.utils.map import vloc, apply_records, rename_data, filter_data, set_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get, diff
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
@@ -250,6 +250,7 @@ def encode_object(__object: str) -> str:
 class UploadSession(GoogleQueryReader, GoogleUploader):
     __metaclass__ = ABCMeta
     operation = "session"
+    schemaInfo = SchemaInfo()
 
     def __init__(self, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
@@ -261,6 +262,24 @@ class UploadSession(GoogleQueryReader, GoogleUploader):
                         account: Account=dict(), credentials=None):
         self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
 
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first") -> RenameMap:
+        if to in ("desc", "name"):
+            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep)
+        else: return dict()
+
+    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval: Timedelta=str(), **context) -> Data:
+        updateDate = date if date and is_daily_frequency(interval) else self.today()
+        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
+
+    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
+        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
+
+    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
+                    indent=2, step=2, sep=' '):
+        log_object = self.eval_log(log_string, func=func)
+        self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
+
 
 class RequestSession(UploadSession):
     __metaclass__ = ABCMeta
@@ -271,6 +290,7 @@ class RequestSession(UploadSession):
     datetimeUnit = "second"
     returnType = None
     mappedReturn = False
+    schemaInfo = SchemaInfo()
 
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -769,6 +789,7 @@ class AsyncSession(RequestSession):
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
+    schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1323,6 +1344,7 @@ class EncryptedSession(RequestSession):
     datetimeUnit = "second"
     returnType = None
     mappedReturn = False
+    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
     sessionCookies = True
@@ -1502,6 +1524,10 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
+    schemaInfo = SchemaInfo()
+    auth = LoginSpider
+    decryptedKey = dict()
+    sessionCookies = True
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1686,9 +1712,6 @@ class Pipeline(EncryptedSession):
             if __key in rename:
                 context[__key] = rename_data(context[__key], rename=rename[__key])
         return context
-
-    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
     ###################################################################
     ########################### Gather Task ###########################

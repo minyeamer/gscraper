@@ -174,11 +174,12 @@ class GspreadReadContext(TypedDict):
     def __init__(self, key: str, sheet: str, fields: Optional[IndexLabel]=None, default: Optional[Any]=None,
                 if_null: Literal["drop","pass"]="pass", head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
-                return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None):
+                return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
+                size: Optional[int]=None):
         super().__init__(key=key, sheet=sheet, fields=fields)
         self.update_default(dict(if_null="pass", head=1, to="name", return_type="dataframe"),
             default=default, if_null=if_null, head=head, headers=headers,
-            str_cols=str_cols, to=to, return_type=return_type, rename=rename)
+            str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size)
 
 
 class GoogleQueryContext(GspreadReadContext):
@@ -186,8 +187,9 @@ class GoogleQueryContext(GspreadReadContext):
                 if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, strict=True, unique=False,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, to: Optional[Literal["desc","name"]]="name",
-                return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None):
-        super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, return_type, rename)
+                return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
+                size: Optional[int]=None):
+        super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, return_type, rename, size)
         self.update_default(dict(axis=0, dropna=True, strict=True, unique=False),
             axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols)
 
@@ -213,10 +215,11 @@ class GoogleQueryReader(BaseSession):
                     if_null: Literal["drop","pass"]="pass", head=1, headers=None,
                     str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="name",
                     return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
-                    name=str(), account: Account=dict()) -> TabularData:
+                    size: Optional[int]=None, name=str(), account: Account=dict()) -> TabularData:
         context = dict(default=default, if_null=if_null, head=head, headers=headers, numericise_ignore=str_cols,
                         return_type=return_type, rename=(rename if rename else self.get_rename_map(to=to)))
         data = read_gspread(key, sheet, account=account, fields=fields, **context)
+        if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         return data

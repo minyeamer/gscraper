@@ -1,9 +1,9 @@
 from __future__ import annotations
 from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, REQUEST_CONTEXT
 
-from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList, IndexLabel, PANDAS_DATA
+from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, TypeList, IndexLabel
 from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
-from gscraper.base.types import RenameMap, Records, NestedDict, Data, ResponseData, PandasData
+from gscraper.base.types import RenameMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
 from gscraper.base.types import is_numeric_or_date_type, is_dict_type, is_records_type, is_dataframe_type, is_tag_type
@@ -139,6 +139,8 @@ SCHEMA_OBJECT = "Schema"
 FIELD_OBJECT = "SchemaField"
 APPLY_FUNCTION = "ApplyFunction"
 MATCH_FUNCTION = "MatchFunction"
+
+UPDATE_DATE, UPDATE_TIME = "updateDate", "updateTime"
 
 
 ###################################################################
@@ -733,6 +735,12 @@ class Field(TypedDict):
                 self.update(strict=False)
         else: return
 
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Field,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Field:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
 
 def validate_field(field: Any) -> Field:
     if isinstance(field, Field): return field
@@ -766,6 +774,12 @@ def _to_match_func(match: Any) -> Match:
     else: raise TypeError(INVALID_OBJECT_TYPE_MSG(match, MATCH_FUNCTION))
 
 
+COMMON_FIELDS = [
+    Field(name="updateDate", path=[], type="DATE", mode="NULLABLE", desc=UPDATE_DATE),
+    Field(name="updateTime", path=[], type="DATETIME", mode="NULLABLE", desc=UPDATE_TIME),
+]
+
+
 ###################################################################
 ############################## Schema #############################
 ###################################################################
@@ -774,15 +788,26 @@ class Schema(TypedRecords):
     def __init__(self, *args: Field):
         super().__init__(*[validate_field(field) for field in args])
 
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedRecords,Any]:
+        return super().copy(__instance)
+
+    def _with_common_fields(self) -> Schema:
+        return Schema(*self, *COMMON_FIELDS)
+
     def get(self, __key: _KT, values_only=False, keep: Literal["fist","last",True,False]=True,
-            match: Optional[MatchFunction]=None, **match_by_key) -> Union[Schema,List,Dict,str]:
+            match: Optional[MatchFunction]=None, common_fields=False, **match_by_key) -> Union[Schema,List,Dict,str]:
+        if common_fields: self = self._with_common_fields()
         schema = self.unique(keep=keep).filter(match, **match_by_key)
         if not (values_only or __key): return schema
         else: return vloc(list(schema), __key, if_null="drop", values_only=values_only)
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc") -> RenameMap:
-        __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
-        return {field[__from]: field[__to] for field in self}
+    def get_schema_map(self, key: str, value: str, common_fields=False) -> Dict:
+        if common_fields: self = self._with_common_fields()
+        return {field[key]: field[value] for field in self if (key in field) and (value in field)}
+
+    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", common_fields=True) -> RenameMap:
+        key, value = (DESC, NAME) if to == "name" else (NAME, DESC)
+        return self.get_schema_map(key, value, common_fields=common_fields)
 
     @TypedRecords.copyable
     def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,Schema]:
@@ -804,6 +829,12 @@ class SchemaContext(TypedDict):
         super().__init__(schema=validate_schema(schema))
         self.update_notna(root=root, match=_to_match_func(match))
 
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaContext,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaContext:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
 
 def validate_context(context: Any) -> SchemaContext:
     if isinstance(context, SchemaContext): return context
@@ -820,33 +851,48 @@ class SchemaInfo(TypedDict):
         super().__init__({
             name: validate_context(context) for name, context in kwargs.items()})
 
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaInfo,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaInfo:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
     def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
                     keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
-                    **match_by_key) -> Union[Schema,_VT]:
+                    common_fields=False, **match_by_key) -> Union[Schema,_VT]:
         context = kloc(self, cast_tuple(schema_names), default=dict(), if_null="pass", values_only=True)
-        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)))
+        common_fields = COMMON_FIELDS if common_fields else list()
+        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)), *common_fields)
         return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
 
     def get_schema_by_name(self, name: _KT, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
+                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> Union[Schema,_VT]:
         match = lambda __name: __name in cast_tuple(name)
-        return self.get_schema(keys, values_only=values_only, schema_names=schema_names, keep=keep, name=match)
+        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema(keys, name=match, **context)
 
     def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(), values_only=False,
-                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
+                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True,
+                            common_fields=False) -> Union[Schema,_VT]:
         __types = tuple(map(get_type, cast_tuple(__type)))
         match = lambda __type: is_type(__type, __types)
-        return self.get_schema(keys, values_only=values_only, schema_names=schema_names, keep=keep, type=match)
+        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema(keys, type=match, **context)
 
     def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True) -> List[str]:
-        return self.get_schema_by_type(__type, keys="name", values_only=True, schema_names=schema_names, keep=keep)
+                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> List[str]:
+        context = dict(schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema_by_type(__type, keys="name", values_only=True, **context)
+
+    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
+        schema = self.get_schema(schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return {field[key]: field[value] for field in schema if (key in field) and (value in field)}
 
     def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first") -> RenameMap:
-        __from, __to = (DESC, NAME) if to == "name" else (NAME, DESC)
-        schema = self.get_schema(schema_names=schema_names, keep=keep)
-        return {field[__from]: field[__to] for field in schema}
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
+        key, value = (DESC, NAME) if to == "name" else (NAME, DESC)
+        return self.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
 
 
 def validate_info(info: Any) -> SchemaInfo:

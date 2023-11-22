@@ -93,7 +93,7 @@ class CustomDict(dict):
         super().update(self.__dict__)
         super().__init__(dict(__m, **kwargs))
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomDict]:
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[CustomDict,Any]:
         if __instance: return __instance.__class__(**self)
         else: return self.__class__(**self)
 
@@ -138,8 +138,14 @@ class CustomDict(dict):
 
 
 class TypedDict(CustomDict):
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedDict,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> TypedDict:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
     def update_default(self, __default: Dict=dict(), __how: Literal["notna","exists"]="notna",
-                        inplace=True, self_var=False, **kwargs) -> Union[bool,CustomDict]:
+                        inplace=True, self_var=False, **kwargs) -> Union[bool,TypedDict]:
         kwargs = {__k: __v for __k, __v in kwargs.items() if __default.get(__k) != __v}
         if __how == "notna": return self.update_notna(kwargs, inplace=inplace)
         else: return self.update_exists(kwargs, inplace=inplace, self_var=self_var)
@@ -153,7 +159,7 @@ class CustomList(list):
     def __init__(self,  __iterable: Iterable):
         super().__init__(__iterable)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomList]:
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[CustomList,Any]:
         if __instance: return __instance.__class__(self)
         else: return self.__class__(self)
 
@@ -189,7 +195,7 @@ class TypedList(CustomList):
     def __init__(self,  *args):
         super().__init__(args)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,TypedList]:
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedList,Any]:
         if __instance: return __instance.__class__(*self)
         else: return self.__class__(*self)
 
@@ -202,7 +208,7 @@ class CustomRecords(CustomList):
     def __init__(self,  __iterable: Iterable):
         super().__init__([__i for __i in __iterable if isinstance(__i, Dict)])
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,CustomRecords]:
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[CustomRecords,Any]:
         if __instance: return __instance.__class__(self)
         else: return self.__class__(self)
 
@@ -234,6 +240,6 @@ class TypedRecords(CustomRecords):
     def __init__(self,  *args):
         super().__init__(args)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Any,TypedRecords]:
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedRecords,Any]:
         if __instance: return __instance.__class__(*self)
         else: return self.__class__(*self)

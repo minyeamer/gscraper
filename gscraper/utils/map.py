@@ -231,11 +231,11 @@ def cloc(df: PandasData, columns: IndexLabel, default=None, if_null: Literal["dr
     left, right = get_columns(df), cast_tuple(columns)
     __inter = inter(right, left) if reorder else inter(left, right)
     if not __inter:
-        return init_df(df) if if_null == "drop" else df
+        return init_df(df, columns=list()) if if_null == "drop" else df
     elif not is_array(columns): df = df[columns]
     elif (if_null == "pass") and (len(columns) != len(__inter)):
-        if reorder: df = pd.concat([init_df(df),df])
-        else: df = pd.concat([init_df(df, columns=unique(*__inter,*columns)),df])
+        columns = columns if reorder else unique(*__inter, *columns)
+        df = pd.concat([init_df(df, columns=columns), df[__inter]])
     else: df = df[__inter]
     df = fillna_data(df, default)
     if isinstance(df, pd.Series): return df.tolist() if values_only else df
@@ -1329,9 +1329,9 @@ def unit_array(__s: Sequence, unit=1) -> List[Sequence]:
 ############################ DataFrame ############################
 ###################################################################
 
-def init_df(df: PandasData, columns: IndexLabel=list()) -> PandasData:
+def init_df(df: PandasData, columns: Optional[IndexLabel]=None) -> PandasData:
     if isinstance(df, pd.DataFrame):
-        return pd.DataFrame(columns=(columns if columns else df.columns))
+        return pd.DataFrame(columns=(columns if is_array(columns) else df.columns))
     elif isinstance(df, pd.Series):
         return pd.Series(index=(columns if columns else df.index), dtype=df.dtypes)
     else: return
