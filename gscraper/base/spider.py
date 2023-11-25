@@ -10,18 +10,16 @@ from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, RenameMap, Data, MappedData, JsonData, RedirectData
-from gscraper.base.types import Account
+from gscraper.base.types import Records, RenameMap, Data, MappedData, JsonData, RedirectData, Account
 from gscraper.base.types import is_array, is_int_array, init_origin
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
-from gscraper.utils.date import get_date, is_daily_frequency
-from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data, log_exception
-from gscraper.utils.map import to_array, align_array, transpose_array
-from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
-from gscraper.utils.map import vloc, apply_records, rename_data, filter_data, set_data
-from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get, diff
+from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
+from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, inter, diff
+from gscraper.utils.map import kloc, notna_dict, exists_dict, drop_dict, split_dict
+from gscraper.utils.map import vloc, apply_records, convert_data, rename_data, filter_data
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
@@ -82,7 +80,7 @@ WORKER_UNIQUE = PIPELINE_UNIQUE + SPIDER_UNIQUE + ASYNC_UNIQUE + REDIRECT_UNIQUE
 WORKER_EXTRA = GATHER_UNIQUE + DATE_UNIQUE
 
 NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName", "dataType"
-FIELDS, PARAMS, DERIV, CONTEXT = "fields", "params", "derivData", "context"
+FIELDS, ALLOWED, PARAMS, DERIV, CONTEXT = "fields", "allowedFields", "params", "derivData", "context"
 
 SUCCESS_RESULT = [{"response": "completed"}]
 
@@ -101,6 +99,7 @@ REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
 INVALID_REDIRECT_LOG_MSG = "Please verify that the both results and errors are in redierct returns."
 
 INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
+INVALID_API_INFO_MSG = lambda where=str(): f"{re.sub(' API$','',where)} API information is not valid.".strip()
 
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
@@ -138,7 +137,7 @@ def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
 
 def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
                 origin: Union[bool,str]=False, secure=False,
-                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict:
+                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict[str,str]:
     headers = HEADERS.copy()
     if authority: headers["Authority"] = urlparse(authority).hostname
     if referer: headers["referer"] = referer
@@ -194,10 +193,12 @@ def parse_invalid_json(raw_json: str, key: str, value_type: Literal["any","dict"
 ############################## Urllib #############################
 ###################################################################
 
-encrypt = lambda s=str(), count=0, *args: encrypt(
-    base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
-decrypt = lambda s=str(), count=0, *args: decrypt(
-    base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
+def encrypt(s: str, count=1) -> str:
+    return encrypt(base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
+
+
+def decrypt(s: str, count=1) -> str:
+    return decrypt(base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
 
 
 def get_cookies(session, encode=True, raw=False, url=None) -> Union[str,Dict,RequestsCookieJar,SimpleCookie]:
@@ -268,10 +269,6 @@ class UploadSession(GoogleQueryReader, GoogleUploader):
             return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep)
         else: return dict()
 
-    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval: Timedelta=str(), **context) -> Data:
-        updateDate = date if date and is_daily_frequency(interval) else self.today()
-        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
-
     def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
         pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
@@ -318,85 +315,97 @@ class RequestSession(UploadSession):
     def set_date_filter(self, byDate: IndexLabel, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None):
         if byDate:
             self.byDate = cast_list(byDate)
-            self.fromDate = get_date(fromDate, if_null=None)
-            self.toDate = get_date(toDate, if_null=None)
+            self.fromDate, self.toDate = self.get_date_pair(fromDate, toDate, if_null=(None, None))
 
     ###################################################################
     ######################### Request Managers ########################
     ###################################################################
 
-    def init_context(self, context: Context, self_var=True, mapper: Optional[Callable]=None) -> Context:
+    def init_context(self, args: Arguments, context: Context, self_var=True,
+                    mapper: Optional[Callable]=None) -> Tuple[Arguments,Context]:
         if self_var: context = dict(self, **context)
-        if isinstance(mapper, Callable): context = mapper(**context)
-        return UNIQUE_CONTEXT(**context)
+        context = mapper(**context) if isinstance(mapper, Callable) else UNIQUE_CONTEXT(**context)
+        self.checkpoint("context", where="init_context", msg={"args":args, "context":context})
+        return args, context
 
     def init_task(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             data = func(self, *args, **TASK_CONTEXT(**context))
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def init_session(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             with requests.Session() as session:
                 data = func(self, *args, session=session, **SESSION_CONTEXT(**context))
             time.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def limit_request(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, **context):
-            if self.delay: time.sleep(self.get_delay())
-            return func(self, *args, **context)
+            response = func(self, *args, **context)
+            self.sleep()
+            return response
         return wrapper
 
+    def sleep(self, tsUnit: Literal["ms","s"]="ms"):
+        delay = self.get_delay(tsUnit)
+        if delay: time.sleep(delay)
+
     def get_delay(self, tsUnit: Literal["ms","s"]="ms") -> Union[float,int]:
-        if isinstance(self.delay, (float,int)): return self.delay
+        if isinstance(self.delay, (float,int)):
+            return self.delay
         elif isinstance(self.delay, Tuple):
             random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
         else: return 0.
 
     ###################################################################
-    ########################### Filter Data ###########################
+    ########################## Validate Data ##########################
     ###################################################################
 
-    def filter_data(func):
+    def validate_data(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context):
-            data = func(self, *args, fields=fields, returnType=returnType, **context)
+        def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
+            data = func(self, *args, fields=fields, returnType=returnType, **params)
             if self.mappedReturn and isinstance(data, Dict):
                 return self.filter_mapped_data(data, fields=fields, returnType=returnType)
-            else: return filter_data(data, fields=fields, if_null="pass", return_type=returnType)
+            else: return self.filter_data(data, fields=fields, returnType=returnType)
         return wrapper
+
+    def filter_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                    default=None, if_null: Literal["drop","pass"]="pass") -> Data:
+        data = convert_data(data, return_type=returnType)
+        data = filter_data(data, fields=fields, default=default, if_null=if_null)
+        return data
 
     def filter_mapped_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None) -> MappedData:
         if isinstance(fields, Dict):
-            return {__key: filter_data(data[__key], fields=__fields, if_null="pass", return_type=returnType)
+            return {__key: self.filter_data(data[__key], __fields, returnType)
                     for __key, __fields, in fields.items() if __key in data}
-        else: return {__key: filter_data(__data, fields=fields, if_null="pass", return_type=returnType)
-                    for __key, __data, in data.items()}
+        else: return {__key: self.filter_data(__data, fields, returnType) for __key, __data, in data.items()}
 
-    def filter_date(func):
+    ###################################################################
+    ########################## Validate Date ##########################
+    ###################################################################
+
+    def validate_date(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, byDate: IndexLabel=list(),
-                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **context) -> Data:
-            data = func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
-            if self.mappedReturn and isinstance(data, Dict): return data
-            else: return self.between_data(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
+        def wrapper(self: Pipeline, *args, byDate: IndexLabel=list(),
+                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
+            data = func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
+            if self.mappedReturn: return data
+            else: return self.filter_date(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
         return wrapper
 
-    def between_data(self, data: Data, byDate: IndexLabel=list(),
+    def filter_date(self, data: Data, byDate: IndexLabel=list(),
                     fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None) -> Data:
         if byDate and (fromDate or toDate):
             between_context = {field: (fromDate, toDate) for field in cast_tuple(byDate)}
@@ -404,22 +413,58 @@ class RequestSession(UploadSession):
         else: return data
 
     ###################################################################
+    ########################### Arrange Data ##########################
+    ###################################################################
+
+    def arrange_data(func):
+        @functools.wraps(func)
+        def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                    convert_dtypes=False, sortby=str(), reset_index=False, **context):
+            data = func(self, *args, fields=fields, returnType=returnType, **context)
+            arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+            if self.mappedReturn and isinstance(data, Dict):
+                return self.arrange_mapped_data(data, fields=fields, returnType=returnType, **arrange_context)
+            else: return self.arrange_single_data(data, fields=fields, returnType=returnType, **arrange_context)
+        return wrapper
+
+    def arrange_mapped_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                            convert_dtypes=False, sortby=str(), reset_index=False) -> MappedData:
+        context = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+        if isinstance(fields, Dict):
+            return {__key: self.arrange_single_data(data[__key], __fields, **context)
+                    for __key, __fields, in fields.items() if __key in data}
+        else: return {__key: self.arrange_single_data(__data, fields, **context) for __key, __data, in data.items()}
+
+    def arrange_single_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                            convert_dtypes=False, sortby=str(), reset_index=False) -> Data:
+        data = self.filter_data(data, fields=fields, returnType=returnType)
+        if not isinstance(data, pd.DataFrame): return data
+        else: return self.arrange_dataframe(data, convert_dtypes, sortby, reset_index)
+
+    def arrange_dataframe(self, data: pd.DataFrame, convert_dtypes=False, sortby=str(), reset_index=False) -> pd.DataFrame:
+        if convert_dtypes: data = _convert_dtypes(data)
+        if sortby: data = data.sort_values(sortby)
+        if reset_index: data = data.reset_index(drop=True)
+        return data
+
+    ###################################################################
     ############################ With Data ############################
     ###################################################################
 
-    def with_mapped_data(func):
-        @functools.wraps(func)
-        def wrapper(self: Spider, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
-            if self.mappedReturn and isinstance(data, Dict):
-                for __key, __data in data.items():
-                    func(self, __data, prefix=__key, uploadInfo=kloc(uploadInfo, [__key], if_null="drop"), **context)
-            else: func(self, data, prefix=prefix, uploadInfo=uploadInfo, **context)
-        return wrapper
+    def with_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(),
+                    func=str(), **context):
+        self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
+        if self.mappedReturn and isinstance(data, Dict):
+            self.with_mapped_data(data, uploadInfo=uploadInfo, **context)
+        else: self.with_single_data(data, prefix=prefix, uploadInfo=uploadInfo, **context)
 
-    @with_mapped_data
-    def with_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
+    def with_mapped_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
+        for __key, __data in data.items():
+            self.with_single_data(__data, prefix=__key, uploadInfo=kloc(uploadInfo, [__key], if_null="drop"), **context)
+
+    def with_single_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
         if self.localSave:
-            self.save_data(data, prefix=prefix, ext="dataframe")
+            self.save_data(data, prefix=self.get_save_name(prefix), ext="dataframe")
         if uploadInfo:
             self.upload_data(data, uploadInfo, **context)
 
@@ -467,24 +512,24 @@ class Spider(RequestSession, Iterator, Parser):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
-                discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_iterator_unit(iterateUnit, interval, fromNow)
+        self.set_iterator_unit(iterateUnit, interval)
         self.set_request_variables(delay, cookies)
-        self.set_spider_variables(discard, progress)
+        self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
         self._disable_warnings()
 
-    def set_spider_variables(self, discard=True, progress=True):
+    def set_spider_variables(self, fromNow: Optional[Unit]=None, discard=True, progress=True):
+        self.fromNow = fromNow
         self.discard = discard
         self.progress = progress
 
@@ -500,10 +545,22 @@ class Spider(RequestSession, Iterator, Parser):
             import urllib3
             urllib3.disable_warnings(InsecureRequestWarning)
 
-    def log_errors(self, *args, **context):
-        iterator = self.get_iterator(**context)
-        if iterator: self.errors.append(iterator)
-        else: super().log_errors(self, *args, **context)
+    ###################################################################
+    ############################# Override ############################
+    ###################################################################
+
+    def log_errors(self, func: Callable, msg: Dict):
+        iterator = self.get_iterator(**msg.get("context", dict()))
+        super().log_errors(func=func, msg=(iterator if iterator else msg))
+
+    def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
+        if_null = if_null if if_null else self.fromNow
+        return super().get_date(date, if_null=get_scala(if_null, index), busdate=busdate)
+
+    def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
+        if_null = if_null if if_null else self.fromNow
+        return super().get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
 
     ###################################################################
     ######################### Local Variables #########################
@@ -591,8 +648,8 @@ class Spider(RequestSession, Iterator, Parser):
         by = by if by else self.by
         return GATHER_MSG(which, where, by)
 
-    @RequestSession.filter_data
-    @RequestSession.filter_date
+    @RequestSession.arrange_data
+    @RequestSession.validate_date
     def reduce(self, data: List[Data], fields: IndexLabel=list(), byDate: IndexLabel=list(),
                 fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                 returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -818,26 +875,22 @@ class AsyncSession(RequestSession):
     def init_task(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             data = await func(self, *args, semaphore=semaphore, **TASK_CONTEXT(**context))
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def init_session(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **SESSION_CONTEXT(**context))
             await asyncio.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
@@ -848,13 +901,21 @@ class AsyncSession(RequestSession):
     def limit_request(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, semaphore: Optional[asyncio.Semaphore]=None, **context):
-            if self.delay:
-                await asyncio.sleep(self.delay)
             if semaphore:
                 async with semaphore:
-                    return await func(self, *args, **context)
-            return await func(self, *args, **context)
+                    response = await func(self, *args, **context)
+            else: response = await func(self, *args, **context)
+            await self.async_sleep()
+            return response
         return wrapper
+
+    async def async_sleep(self, tsUnit: Literal["ms","s"]="ms"):
+        delay = self.get_delay(tsUnit)
+        if delay: await asyncio.sleep(delay)
+
+    ###################################################################
+    ########################## Async Override #########################
+    ###################################################################
 
     def catch_exception(func):
         @functools.wraps(func)
@@ -863,13 +924,32 @@ class AsyncSession(RequestSession):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if ("exception" in self.debug) or ("all" in self.debug):
-                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
-                    raise exception
-                self.log_errors(*args, **context)
-                name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(name, *args, json=self.logJson, **REQUEST_CONTEXT(**context)))
-                return init_origin(func)
+                return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+        return wrapper
+
+    def ignore_exception(func):
+        @functools.wraps(func)
+        async def wrapper(self: AsyncSession, *args, **context):
+            try: return await func(self, *args, **context)
+            except: return init_origin(func)
+        return wrapper
+
+    def validate_data(func):
+        @functools.wraps(func)
+        async def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
+            data = await func(self, *args, fields=fields, returnType=returnType, **params)
+            if self.mappedReturn and isinstance(data, Dict):
+                return self.filter_mapped_data(data, fields=fields, returnType=returnType)
+            else: return self.filter_data(data, fields=fields, returnType=returnType)
+        return wrapper
+
+    def validate_date(func):
+        @functools.wraps(func)
+        async def wrapper(self: Pipeline, *args, byDate: IndexLabel=list(),
+                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
+            data = await func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
+            if self.mappedReturn: return data
+            else: return self.filter_date(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
         return wrapper
 
 
@@ -915,22 +995,21 @@ class AsyncSpider(Spider, AsyncSession):
     schemaInfo = SchemaInfo()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
-                discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_iterator_unit(iterateUnit, interval, fromNow)
+        self.set_iterator_unit(iterateUnit, interval)
         self.set_async_variables(delay, numTasks, cookies)
-        self.set_spider_variables(discard, progress)
+        self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         self.set_redirect_variables(apiRedirect, redirectUnit)
@@ -1346,10 +1425,11 @@ class EncryptedSession(RequestSession):
     mappedReturn = False
     schemaInfo = SchemaInfo()
     auth = LoginSpider
+    authKey = list()
     decryptedKey = dict()
     sessionCookies = True
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
@@ -1363,6 +1443,7 @@ class EncryptedSession(RequestSession):
 
     def set_secret(self, encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None):
         if self.cookies or ((encryptedKey is None) and (decryptedKey is None)): return
+        elif isinstance(decryptedKey, Dict): pass
         elif isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
             try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
@@ -1378,28 +1459,32 @@ class EncryptedSession(RequestSession):
     def login_task(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
-                data = func(self, *args, **TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context)))
+            args, context = self.init_context(args, context, self_var=self_var)
+            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as session:
+                login_context = TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context))
+                data = func(self, *args, **login_context)
             time.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def login_session(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as session:
-                data = func(self, *args, session=session, **LOGIN_CONTEXT(**self.validate_account(session, **context)))
+            args, context = self.init_context(args, context, self_var=self_var)
+            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as session:
+                login_context = LOGIN_CONTEXT(**self.validate_account(session, **context))
+                data = func(self, *args, session=session, **login_context)
             time.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
+
+    def get_auth_params(self, **context) -> Context:
+        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="drop")
+        if self.authKey and not (auth_info and all(auth_info.values())):
+            raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        else: return dict(auth_info, **notna_dict(kloc(context, PROXY_LOG, if_null="drop")))
 
     def validate_account(self, auth: LoginSpider, sessionCookies=True, **context) -> Context:
         if self.cookies:
@@ -1426,34 +1511,35 @@ class EncryptedSession(RequestSession):
     def api_task(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
-            data = func(self, *args, **self.validate_secret(**TASK_CONTEXT(**context)))
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            args, context = self.init_context(args, context, self_var=self_var)
+            api_context = TASK_CONTEXT(**self.validate_secret(**context))
+            data = func(self, *args, **api_context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def api_session(func):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             with requests.Session() as session:
-                data = func(self, *args, session=session, **self.validate_secret(**SESSION_CONTEXT(**context)))
+                api_context = SESSION_CONTEXT(**self.validate_secret(**context))
+                data = func(self, *args, session=session, **api_context)
             time.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def validate_secret(self, **context) -> Context:
-        context["headers"] = self.set_headers(**dict(context, **self.decryptedKey))
-        self.checkpoint("api", where="set_headers", msg={"headers":context["headers"]})
-        return context
+        api_info = self.get_api_info(**context)
+        self.checkpoint("api", where="set_headers", msg={"api_info":api_info})
+        return dict(context, **api_info)
 
-    def set_headers(self, **context) -> Dict:
-        return dict()
+    def get_api_info(self, **context) -> Context:
+        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="drop")
+        if self.authKey and not (auth_info and all(auth_info.values())):
+            raise ValueError(INVALID_API_INFO_MSG(self.where))
+        else: return auth_info
 
 
 ###################################################################
@@ -1495,14 +1581,13 @@ class EncryptedSpider(Spider, EncryptedSession):
     decryptedKey = dict()
     sessionCookies = True
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
-                delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
-                discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1548,32 +1633,28 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     def login_task(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as auth:
+            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as auth:
                 login_context = TASK_CONTEXT(**self.validate_account(auth, sessionCookies=False, **context))
                 data = await func(self, *args, semaphore=semaphore, **login_context)
             await asyncio.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def login_session(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**dict(context, **self.decryptedKey))) as auth:
-                login_context = LOGIN_CONTEXT(**self.validate_account(auth, **context))
+            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as auth:
                 cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**cookies) as session:
+                    login_context = LOGIN_CONTEXT(**self.validate_account(auth, **context))
                     data = await func(self, *args, session=session, semaphore=semaphore, **login_context)
             await asyncio.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
@@ -1584,28 +1665,24 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     def api_task(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            data = await func(self, *args, semaphore=semaphore, **self.validate_secret(**TASK_CONTEXT(**context)))
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            api_context = TASK_CONTEXT(**self.validate_secret(**context))
+            data = await func(self, *args, semaphore=semaphore, **api_context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
     def api_session(func):
         @functools.wraps(func)
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
-            context = self.init_context(context, self_var=self_var)
-            self.checkpoint("context", where=func.__name__, msg={"args":args, "context":context})
+            args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            ssl = dict(connector=aiohttp.TCPConnector(ssl=False)) if self.ssl == False else dict()
-            async with aiohttp.ClientSession(**ssl) as session:
-                api_context = self.validate_secret(**SESSION_CONTEXT(**context))
+            async with aiohttp.ClientSession() as session:
+                api_context = SESSION_CONTEXT(**self.validate_secret(**context))
                 data = await func(self, *args, session=session, semaphore=semaphore, **api_context)
             await asyncio.sleep(.25)
-            self.checkpoint("crawl", where=func.__name__, msg={"data":data}, save=data)
-            self.with_data(data, **context)
+            self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
 
@@ -1655,14 +1732,13 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     sessionCookies = True
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
-                discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                apiRedirect=False, redirectUnit: Unit=0,
+                numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
                 reauth=False, audience=str(), account: Account=dict(), credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1676,10 +1752,11 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
 
 class Task(TypedDict):
     def __init__(self, operator: Spider, task: str, dataName: str, dataType: Optional[TypeHint]=None,
-                name=str(), fields: _KT=list(), params: Optional[_KT]=None, derivData: Optional[_KT]=None, **context):
+                name=str(), fields: IndexLabel=list(), allowedFields: IndexLabel=list(), params: Optional[_KT]=None,
+                derivData: Optional[_KT]=None, **context):
         name = name if name else operator.operation
-        super().__init__(name=name, operator=operator, task=task, fields=fields, dataName=dataName)
-        self.update_exists(dataType=dataType, params=params, derivData=derivData, context=context)
+        super().__init__(name=name, operator=operator, task=task, fields=fields, dataName=dataName, dataType=dataType)
+        self.update_exists(allowedFields=allowedFields, params=params, derivData=derivData, context=context)
 
 
 class Dag(TypedList):
@@ -1695,6 +1772,7 @@ class Pipeline(EncryptedSession):
     derivFields = list()
     tzinfo = None
     datetimeUnit = "second"
+    errors = dict()
     returnType = "dataframe"
     mappedReturn = False
     schemaInfo = SchemaInfo()
@@ -1724,52 +1802,62 @@ class Pipeline(EncryptedSession):
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
-        fields = self._get_fields(fields, task[DATANAME])
-        method, params = self.from_task(task, fields=fields, data=data, **context)
+        fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
+        method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = method(**params)
-        self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
+        self.errors[task[NAME]] = worker.errors
+        self.checkpoint(task[NAME], where=method.__name__, msg={"data":response}, save=response)
         return response
 
-    def _get_mapped_fields(func):
-        @functools.wraps(func)
-        def wrapper(self: Pipeline, fields: IndexLabel=list(), name=str()):
-            if self.mappedReturn and isinstance(fields, Dict):
-                fields = fields.get(name, list())
-                if isinstance(fields, Dict):
-                    return {__key: func(self, __fields) for __key, __fields in fields.items()}
-            return func(self, fields)
-        return wrapper
+    def _get_fields(self, fields: IndexLabel=list(), allowed: Optional[IndexLabel]=None, name=str()) -> IndexLabel:
+        if self.mappedReturn and isinstance(fields, Dict):
+            fields = fields.get(name, list())
+            if isinstance(fields, Dict):
+                return {__key: self._set_fields(__fields, allowed) for __key, __fields in fields.items()}
+        return self._set_fields(fields, allowed)
 
-    @_get_mapped_fields
-    def _get_fields(self, fields: IndexLabel, name=str()) -> IndexLabel:
-        return diff(cast_list(fields), cast_list(self.derivFields)) if self.derivFields else fields
+    def _set_fields(self, fields: IndexLabel, allowed: Optional[IndexLabel]=None) -> IndexLabel:
+        fields = cast_list(fields)
+        if self.derivFields:
+            fields = diff(fields, cast_list(self.derivFields))
+        if allowed:
+            fields = inter(fields, cast_list(allowed))
+        return fields
+
+    @EncryptedSession.limit_request
+    def request_crawl(self, worker: Spider, **params) -> Data:
+        return worker.crawl(**params)
+
+    @abstractmethod
+    @EncryptedSession.arrange_data
+    def map_reduce(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+        ...
 
     ###################################################################
     ############################ From Task ############################
     ###################################################################
 
-    def from_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Tuple[Callable,Context]:
+    def _from_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(),
+                    **context) -> Tuple[Callable,Spider,Context]:
         method = getattr(self, task[TASK])
-        fields = self._get_task_fields(task[FIELDS], fields)
-        context, params = self._get_task_params(task, fields=fields, returnType=task.get(DATATYPE), **context)
-        worker = task[OPERATOR](**context)
-        derivData = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
-        return method, dict(params, worker=worker, **derivData)
+        task_filter = dict(fields=self._get_task_fields(task[FIELDS], fields), returnType=task[DATATYPE])
+        configs, params = self._get_task_params(task, **context)
+        worker = task[OPERATOR](**task_filter, **configs)
+        data = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
+        params = dict(params, worker=worker, taskname=task[NAME], **task_filter, **data)
+        self.checkpoint("params", where=method.__name__, msg=dict(zip(["task","configs","params"],[task[NAME],configs,params])))
+        return method, worker, params
 
-    def _get_mapped_task_fields(func):
-        @functools.wraps(func)
-        def wrapper(self: Pipeline, task_fields: IndexLabel=list(), fields: IndexLabel=list()):
-            if isinstance(task_fields, Dict):
-                if isinstance(fields, Dict):
-                    return {__key: func(self, task_fields[__key], __fields)
-                            for __key, __fields in fields.items() if __key in task_fields}
-                else: return {__key: func(self, __fields, fields)
-                            for __key, __fields in task_fields.items()}
-            else: return func(self, task_fields, fields)
-        return wrapper
-
-    @_get_mapped_task_fields
     def _get_task_fields(self, task_fields: IndexLabel=list(), fields: IndexLabel=list()) -> IndexLabel:
+        if isinstance(task_fields, Dict):
+            if isinstance(fields, Dict):
+                return {__key: self._set_task_fields(task_fields[__key], __fields)
+                        for __key, __fields in fields.items() if __key in task_fields}
+            else: return {__key: self._set_task_fields(__fields, fields)
+                        for __key, __fields in task_fields.items()}
+        else: return self._set_task_fields(task_fields, fields)
+
+    def _set_task_fields(self, task_fields: IndexLabel=list(), fields: IndexLabel=list()) -> IndexLabel:
         if isinstance(task_fields, Tuple): return task_fields
         else: return unique(*cast_list(task_fields), *fields)
 
@@ -1793,37 +1881,6 @@ class Pipeline(EncryptedSession):
             params = dict(params, **drop_dict(task[CONTEXT], WORKER_EXTRA, inplace=False))
         return context, params
 
-    @EncryptedSession.limit_request
-    def request_crawl(self, worker: Spider, **params) -> Data:
-        return worker.crawl(**params)
-
-    ###################################################################
-    ############################ Map Reduce ###########################
-    ###################################################################
-
-    def arrange_data(func):
-        @functools.wraps(func)
-        def wrapper(self: Pipeline, convert_dtypes=False, sortby=str(), reset_index=False, **context):
-            data = func(self, **context)
-            arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
-            if self.mappedReturn and isinstance(data, Dict):
-                return {__key: self._arrange_dataframe(__data, **arrange_context) for __key, __data in data.items()}
-            else: return self._arrange_dataframe(data, **arrange_context)
-        return wrapper
-
-    def _arrange_dataframe(self, data: pd.DataFrame, convert_dtypes=False, sortby=str(), reset_index=False) -> pd.DataFrame:
-        if not isinstance(data, pd.DataFrame): return data
-        if convert_dtypes: data = _convert_dtypes(data)
-        if sortby: data = data.sort_values(sortby)
-        if reset_index: data = data.reset_index(drop=True)
-        return data
-
-    @abstractmethod
-    @EncryptedSession.filter_data
-    @arrange_data
-    def map_reduce(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
-        ...
-
 
 class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     __metaclass__ = ABCMeta
@@ -1832,6 +1889,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     derivFields = list()
     tzinfo = None
     datetimeUnit = "second"
+    errors = dict()
     returnType = "dataframe"
     mappedReturn = False
     schemaInfo = SchemaInfo()
@@ -1853,9 +1911,10 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     async def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
-        fields = self._get_fields(fields, task[DATANAME])
-        method, params = self.from_task(task, fields=fields, data=data, **context)
+        fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
+        method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
+        self.errors[task[NAME]] = worker.errors
         self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
         return response
 

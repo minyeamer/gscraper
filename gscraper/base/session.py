@@ -1,8 +1,8 @@
 from __future__ import annotations
-from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, REQUEST_CONTEXT
+from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords
 
-from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, TypeList, IndexLabel
-from gscraper.base.types import Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, TypeList
+from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
@@ -11,9 +11,9 @@ from gscraper.base.types import is_array, allin_instance, is_str_array, is_recor
 
 from gscraper.utils import isna, notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
-from gscraper.utils.date import now, today, get_date, get_busdate, set_date, is_daily_frequency, get_date_range
+from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
-from gscraper.utils.map import isna_plus, exists_one, df_exists, howin, safe_apply, safe_len, get_scala, unique
+from gscraper.utils.map import isna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, chain_dict, drop_dict, apply_dict
@@ -22,6 +22,7 @@ from gscraper.utils.map import get_value, filter_data, set_data, isin_data, chai
 
 from abc import ABCMeta
 from ast import literal_eval
+from math import ceil
 from itertools import product
 import functools
 import logging
@@ -101,6 +102,9 @@ USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 INVALID_OBJECT_MSG = lambda __object, __name: f"'{__object}' is not a valid {__name} object."
 INVALID_OBJECT_TYPE_MSG = lambda __object, __type: f"'{type(__object)}' is not a valid type for {__type} object."
 
+PAGINATION_ERROR_MSG = "Pagination params, size or pageStart are not valid."
+EMPTY_CONTEXT_QUERY_MSG = "One or more queries for crawling do not exist."
+
 INVALID_MATCH_KEY_MSG = "Match function requires at least one parameter: func, path, and query."
 INVALID_PATH_TYPE_MSG = lambda path: f"'{path}' is not supported type for schema path."
 
@@ -178,6 +182,10 @@ class BaseSession(CustomDict):
         self.extraSave = cast_list(extraSave)
         self.interrupt = interrupt
 
+    ###################################################################
+    ############################# Datetime ############################
+    ###################################################################
+
     def now(self, __format=str(), days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
             hours=0, weeks=0, droptz=True, droptime=False, unit=str()) -> Union[dt.datetime,dt.date,str]:
         return now(__format, days, seconds, microseconds, milliseconds, minutes, hours, weeks,
@@ -186,12 +194,27 @@ class BaseSession(CustomDict):
     def today(self, __format=str(), days=0, weeks=0, droptime=True) -> Union[dt.datetime,dt.date,str]:
         return today(__format, days, weeks, tzinfo=self.tzinfo, droptime=droptime)
 
-    def get_rename_map(self, to: Optional[str]=None) -> RenameMap:
-        return dict()
+    def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=None, busdate=False) -> dt.date:
+        return get_date(date, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate)
 
-    def rename(self, string: str, to: Optional[str]=None) -> str:
-        renameMap = self.get_rename_map(to=to)
-        return renameMap[string] if renameMap and (string in renameMap) else string
+    def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
+        return get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
+
+    def set_date(self, date: Optional[DateFormat]=None, __format="%Y-%m-%d",
+                if_null: Optional[Union[int,str]]=None, busdate=False) -> str:
+        date = self.get_date(date, if_null=if_null, busdate=busdate)
+        return set_date(date, __format)
+
+    def set_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, __format="%Y-%m-%d",
+                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[str,str]:
+        startDate, endDate = self.get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
+        return set_date(startDate, __format), set_date(endDate, __format)
+
+    def set_update_time(self, data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None) -> Data:
+        updateDate = date if isinstance(date, dt.date) else self.today()
+        updateTime = datetime if isinstance(date, dt.datetime) else self.now()
+        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=updateTime)
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -244,13 +267,12 @@ class BaseSession(CustomDict):
         with open(file, "w", encoding="utf-8") as f:
             f.write(str(data.prettify()))
 
-    def eval_log(self, log_string: str, func="checkpoint") -> Records:
-        log_string = re_get(f"(?<={func} - )"+r"({.*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
-        log_list = f"[{','.join(log_string)}]"
-        func_objects = re_get(r"\<[^>]+\>", log_list, index=None)
-        if func_objects: log_list = replace_map(log_list, **{__o: f"\"{__o}\"" for __o in func_objects})
-        try: return literal_eval(log_list)
-        except: return list()
+    def get_rename_map(self, to: Optional[str]=None) -> RenameMap:
+        return dict()
+
+    def rename(self, string: str, to: Optional[str]=None) -> str:
+        renameMap = self.get_rename_map(to=to)
+        return renameMap[string] if renameMap and (string in renameMap) else string
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
@@ -305,17 +327,58 @@ class BaseSession(CustomDict):
             except KeyboardInterrupt as interrupt:
                 raise interrupt
             except Exception as exception:
-                if ("exception" in self.debug) or ("all" in self.debug):
-                    self.checkpoint("exception", where=func.__name__, msg={"args":args, "context":context})
-                    raise exception
-                self.log_errors(*args, **context)
-                func_name = f"{func.__name__}({self.__class__.__name__})"
-                self.logger.error(log_exception(func_name, json=self.logJson, **REQUEST_CONTEXT(**context)))
-                return init_origin(func)
+                return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
         return wrapper
 
-    def log_errors(self, *args, **context):
-        self.errors.append(dict({"args":args}, **context))
+    def ignore_exception(func):
+        @functools.wraps(func)
+        def wrapper(self: BaseSession, *args, **context):
+            try: return func(self, *args, **context)
+            except: return init_origin(func)
+        return wrapper
+
+    def pass_exception(self, exception: Exception, func: Callable, msg: Dict) -> Any:
+        self.log_errors(func=func, msg=msg)
+        if ("exception" in self.debug) or ("all" in self.debug):
+            self.checkpoint("exception", where=func.__name__, msg=msg)
+            raise exception
+        return init_origin(func)
+
+    def log_errors(self, func: Callable, msg: Dict):
+        func_name = f"{func.__name__}({self.__class__.__name__})"
+        self.logger.error(log_exception(func_name, json=self.logJson, **msg))
+        self.errors.append(msg)
+
+    def eval_log(self, log_string: str, func="checkpoint") -> Records:
+        log_string = re_get(f"(?<={func} - )"+r"({[^|]*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
+        log_string = self.eval_function(f"[{','.join(log_string)}]")
+        log_string = self.eval_datetime(log_string, "datetime")
+        log_string = self.eval_datetime(log_string, "date")
+        log_string = self.eval_exception(log_string)
+        try: return literal_eval(log_string)
+        except: return list()
+
+    def eval_function(self, log_string: str) -> str:
+        func_objects = re_get(r"\<[^>]+\>", log_string, index=None)
+        if func_objects:
+            return replace_map(log_string, **{__o: f"\"{__o}\"" for __o in func_objects})
+        else: return log_string
+
+    def eval_datetime(self, log_string: str, __type: Literal["datetime","date"]="datetime") -> str:
+        datetime_objects = re_get(r"datetime.{}\([^)]+\)".format(__type), log_string, index=None)
+        if datetime_objects:
+            __init = dt.datetime if __type == "datetime" else dt.date
+            __format = "%Y-%m-%d" + (" %H:%M:%S" if __type == "datetime" else str())
+            get_date_tuple = lambda __o: literal_eval(str(__o).replace('datetime.'+__type,''))
+            format_date = lambda __o: __init(*get_date_tuple(__o)).strftime(__format)
+            return replace_map(log_string, **{__o: f"\"{format_date(__o)}\"" for __o in datetime_objects})
+        else: return log_string
+
+    def eval_exception(self, log_string: str) -> str:
+        exception = re_get(re.compile(r"'(Traceback.*)'}]$", re.DOTALL | re.MULTILINE), log_string)
+        if exception:
+            return log_string.replace(f"'{exception}'", f"\"\"\"{exception}\"\"\"")
+        else: return log_string
 
     ###################################################################
     ############################# Inspect #############################
@@ -361,39 +424,14 @@ class Iterator(CustomDict):
     pageUnit = 0
     pageLimit = 0
     interval = str()
-    fromNow = None
 
-    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str(), fromNow: Optional[Unit]=None):
-        self.set_iterator_unit(iterateUnit, interval, fromNow)
+    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str()):
+        self.set_iterator_unit(iterateUnit, interval)
         super().__init__()
 
-    def set_iterator_unit(self, iterateUnit: Unit=0, interval: Timedelta=str(), fromNow: Optional[Unit]=None):
+    def set_iterator_unit(self, iterateUnit: Unit=0, interval: Timedelta=str()):
         self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
         self.interval = interval if interval else self.interval
-        self.fromNow = fromNow if notna(fromNow) else self.fromNow
-
-    def get_date(self, date: Optional[DateFormat]=None, fromNow: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
-        fromNow = fromNow if fromNow else self.fromNow
-        if busdate: return get_busdate(date, if_null=get_scala(fromNow, index=index))
-        else: return get_date(date, if_null=get_scala(fromNow, index=index))
-
-    def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        fromNow: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
-        startDate = self.get_date(startDate, fromNow=fromNow, index=START, busdate=busdate)
-        endDate = self.get_date(endDate, fromNow=fromNow, index=END, busdate=busdate)
-        if startDate: startDate = min(startDate, endDate) if endDate else startDate
-        if endDate: endDate = max(startDate, endDate) if startDate else endDate
-        return startDate, endDate
-
-    def set_date(self, date: Optional[DateFormat]=None, __format="%Y-%m-%d",
-                fromNow: Optional[Unit]=None, index=0, busdate=False) -> str:
-        date = self.get_date(date, fromNow=fromNow, index=index, busdate=busdate)
-        return set_date(date, __format)
-
-    def set_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        __format="%Y-%m-%d", fromNow: Optional[Unit]=None, index=0, busdate=False) -> Tuple[str,str]:
-        startDate, endDate = self.get_date_pair(startDate, endDate, fromNow=fromNow, index=index, busdate=busdate)
-        return set_date(startDate, __format), set_date(endDate, __format)
 
     ###################################################################
     ########################### Set Iterator ##########################
@@ -411,6 +449,7 @@ class Iterator(CustomDict):
         if keys_only: return query
         else: return kloc(context, query, if_null=if_null, values_only=values_only)
 
+    @BaseSession.ignore_exception
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
                     iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(), indexing=True,
                     **context) -> Tuple[List[Context],Context]:
@@ -517,13 +556,22 @@ class Iterator(CustomDict):
             return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, offset, how) for __sz in size]
         else: return tuple()
 
+    def catch_pagination_error(func):
+        @functools.wraps(func)
+        def wrapper(self: Iterator, *args, **context):
+            try: return func(self, *args, **context)
+            except: raise ValueError(PAGINATION_ERROR_MSG)
+        return wrapper
+
+    @catch_pagination_error
     def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
         if (pageUnit > 0) and (pageSize & pageUnit != 0):
-            pageSize = round(pageSize / pageUnit) * pageUnit
+            pageSize = ceil(pageSize / pageUnit) * pageUnit
         if pageLimit > 0:
             pageSize = min(pageSize, pageLimit)
         return pageSize
 
+    @catch_pagination_error
     def validate_page_start(self, size: int, pageSize: int, pageStart=1, offset=1) -> Tuple[int,int]:
         if pageStart == self.pageFrom:
             pageStart = pageStart + (offset-self.offsetFrom)//pageSize
@@ -566,7 +614,7 @@ class Iterator(CustomDict):
 
     def _from_date(self, startDate: Optional[dt.date]=None, endDate: Optional[dt.date]=None,
                     interval: Timedelta="D", date: _PASS=None, **context) -> Tuple[List[DateQuery],Context]:
-        date_range = get_date_range(*self.get_date_pair(startDate, endDate), interval=interval, paired=True)
+        date_range = get_date_range(*get_date_pair(startDate, endDate), interval=interval, paired=True)
         map_pair = lambda pair: dict(startDate=pair[START], endDate=pair[END], date=pair[START])
         return list(map(map_pair, date_range)), dict(context, interval=interval)
 
@@ -577,6 +625,7 @@ class Iterator(CustomDict):
     def _from_context(self, iterateProduct: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
         if not iterateProduct: return list(), context
         query, context = kloc(context, iterateProduct, if_null="drop"), drop_dict(context, iterateProduct, inplace=False)
+        if not all(query.values()): raise ValueError(EMPTY_CONTEXT_QUERY_MSG)
         if any(map(lambda x: x>1, iterateUnit)): query = self._group_context(iterateProduct, iterateUnit, **query)
         else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
         return query, context
@@ -926,7 +975,7 @@ class Mapper(BaseSession):
         return filter_data(data, fields=fields, if_null="pass")
 
     def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval: Timedelta=str(), **context) -> Data:
-        updateDate = date if date and is_daily_frequency(interval) else self.today()
+        updateDate = date if isinstance(date, dt.date) and is_daily_frequency(interval) else self.today()
         return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
 
     ###################################################################
@@ -957,7 +1006,7 @@ class Mapper(BaseSession):
     def _merge_base(self, data: ResponseData, __base: Data) -> Data:
         if isinstance(data, Dict):
             return chain_dict([__base, data], keep="first")
-        elif isinstance(data, pd.DataFrame) and df_exists(__base):
+        elif isinstance(data, pd.DataFrame) and isinstance(__base, pd.DataFrame):
             return concat_df([__base, data], axis=1, keep="first")
         else: return data
 
@@ -1065,7 +1114,7 @@ class Mapper(BaseSession):
         apply_true, apply_false = get_scala(apply, index=0, default=dict()), get_scala(apply, index=-1, default=dict())
         df_true = self.get_value(df_true, path[0], apply=apply_true, context=context, name=name, log=True, **field)
         df_false = self.get_value(df_false, path[1], apply=apply_false, context=context, name=name, log=False, **field)
-        try: return pd.concat([df for df in data if df_exists(df)]).sort_index()
+        try: return concat_df([df_true, df_false]).sort_index()
         except: return __MISMATCH__
 
     def _get_value_iterate(self, data: ResponseData, path: Sequence, apply: Apply=dict(), match: Match=dict(),
@@ -1353,7 +1402,8 @@ class SequenceMapper(Mapper):
     def map_records(self, __r: Records, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
-        start = self.get_start_by(countby, count=len(__r), **context)
+        __r = self._limit_data_size(__r, **context)
+        start = self._get_start_by(countby, count=len(__r), **context)
         for __i, __m in enumerate(__r, start=(start if start else 0)):
             if not self._match_schema(__m, match, **context): continue
             __i = __m[RANK] if isinstance(__m.get(RANK), int) else __i
@@ -1363,7 +1413,8 @@ class SequenceMapper(Mapper):
 
     def map_dataframe(self, df: pd.DataFrame, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> pd.DataFrame:
-        start = self.get_start_by(countby, count=len(df), **context)
+        df = self._limit_data_size(df, **context)
+        start = self._get_start_by(countby, count=len(df), **context)
         if isinstance(start, int) and (RANK not in df):
             df[RANK] = range(start, len(df)+start)
         df = df[self._match_schema(df, match, **context)]
@@ -1373,14 +1424,20 @@ class SequenceMapper(Mapper):
     def map_tag_list(self, tag_list: Sequence[Tag], schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
-        start = self.get_start_by(countby, count=len(tag_list), **context)
+        tag_list = self._limit_data_size(tag_list, **context)
+        start = self._get_start_by(countby, count=len(tag_list), **context)
         for __i, __s in enumerate(tag_list, start=(start if start else 0)):
             if not (isinstance(__s, Tag) and self._match_schema(__s, match, **context)): continue
             kwargs = dict(context, count=len(tag_list), __i=__i)
             data.append(self.map_info(__s, schemaInfo, responseType="tag", match=True, **kwargs))
         return data
 
-    def get_start_by(self, by: Optional[Literal["page","start"]]=None, count: Optional[int]=0,
+    def _limit_data_size(self, data: Data, size: Optional[int]=None, dataSize: Optional[int]=None, **context) -> Data:
+        if isinstance(dataSize, int): return data[:dataSize]
+        elif isinstance(size, int) and (size < len(data)): return data[:size]
+        else: return data
+
+    def _get_start_by(self, by: Optional[Literal["page","start"]]=None, count: Optional[int]=0,
                     page=1, start=1, dataSize: Optional[int]=None, **context) -> int:
         if (by == "page") and isinstance(page, int):
             dataSize = dataSize if isinstance(dataSize, int) else count
@@ -1426,17 +1483,18 @@ class Parser(SequenceMapper):
     schemaInfo = SchemaInfo()
 
     def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first") -> RenameMap:
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
         if to in ("desc", "name"):
-            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep)
+            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
         else: return dict()
 
-    def print(self, __object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
-        pretty_print(__object, path=path, drop=drop)
+    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
+        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
-    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None):
+    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
+                    indent=2, step=2, sep=' '):
         log_object = self.eval_log(log_string, func=func)
-        self.print(log_object, path=path, drop=drop)
+        self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
     ###################################################################
     ######################### Parse Response #########################
@@ -1489,20 +1547,26 @@ def pretty_str(__object, indent=2, step=2) -> str:
         return '[\n'+',\n'.join([' '*indent+pretty_str(__e, indent=indent, step=step)
                 for __e in __object])+'\n'+' '*(indent-step)+']'
     elif isinstance(__object, str): return f"'{__object}'"
-    else: return str(__object)
+    else: return str(__object).replace('\n', '\\n')
 
 
-def pretty_print(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None):
+def pretty_object(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2) -> str:
     if notna(path): __object = hier_get(__object, path)
     if notna(drop): __object = drop_dict(__object, drop)
+    context = dict(indent=indent, step=step)
     if isinstance(__object, (TypedDict,TypedRecords)):
-        print(pretty_str(__object))
+        return pretty_str(__object, **context)
     elif isinstance(__object, Dict):
-        print(pretty_str(TypedDict(**__object)))
+        return pretty_str(TypedDict(**__object), **context)
     elif is_records(__object, how="all"):
-        print(pretty_str(TypedRecords(*__object)))
+        return pretty_str(TypedRecords(*__object), **context)
     elif isinstance(__object, pd.DataFrame):
-        print("pd.DataFrame("+pretty_str(TypedRecords(*__object.to_dict("records")))+")")
+        return "pd.DataFrame("+pretty_str(TypedRecords(*__object.to_dict("records")), **context)+")"
     elif isinstance(__object, pd.Series):
-        print("pd.Series("+pretty_str(__object.tolist())+")")
-    else: print(pretty_str(__object))
+        return "pd.Series("+pretty_str(__object.tolist(), **context)+")"
+    else: return pretty_str(__object)
+
+
+def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
+    if not args: print()
+    else: print(sep.join([pretty_object(__object, path=path, drop=drop, indent=indent, step=step) for __object in args]))

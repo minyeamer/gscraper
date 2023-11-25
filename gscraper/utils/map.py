@@ -3,8 +3,8 @@ from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequenc
 from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
 from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RegexFormat, PANDAS_DATA
 from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
-from gscraper.base.types import is_comparable, is_list_type, is_dict_type, is_records_type, is_dataframe_type
-from gscraper.base.types import is_kwargs_allowed
+from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type
+from gscraper.base.types import is_comparable, is_kwargs_allowed
 
 from gscraper.utils import isna, notna, empty, exists
 from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
@@ -12,6 +12,7 @@ from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
 from typing import Any, Callable, Dict, List, Set
 from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
 from bs4 import BeautifulSoup, Tag
+from pandas.core.indexes.base import Index as PandasIndex
 import pandas as pd
 
 from collections import defaultdict
@@ -30,11 +31,20 @@ SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
 LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are mismatched: [{left}, {right}]"
 
 
-arg_or = lambda *args: functools.reduce(lambda x,y: x|y, args)
-arg_and = lambda *args: functools.reduce(lambda x,y: x&y, args)
-union = lambda *arrays: functools.reduce(lambda x,y: x+y, arrays)
-inter = lambda *arrays: functools.reduce(lambda x,y: [e for e in x if e in y], arrays)
-diff = lambda *arrays: functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
+def arg_or(*args: bool) -> bool:
+    return functools.reduce(lambda x,y: x|y, args)
+
+def arg_and(*args: bool) -> bool:
+    return functools.reduce(lambda x,y: x&y, args)
+
+def union(*arrays) -> Any:
+    return functools.reduce(lambda x,y: x+y, arrays)
+
+def inter(*arrays: Sequence) -> List:
+    return functools.reduce(lambda x,y: [e for e in x if e in y], arrays)
+
+def diff(*arrays: Sequence) -> List:
+    return functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
 
 
 def isna_plus(__object, strict=True) -> bool:
@@ -82,7 +92,7 @@ def to_array(__object, default=None, dropna=False, strict=False, unique=False) -
     else: return __s
 
 
-def to_dict(__object: MappingData, orient: Optional[Literal["dict","list","index"]]="dict", depth=0) -> Dict:
+def to_dict(__object: MappingData, orient: Optional[Literal["dict","list","index"]]="dict", depth=1) -> Dict:
     if isinstance(__object, Dict): return __object
     elif is_records(__object, empty=True): return chain_dict(__object, keep="first")
     elif isinstance(__object, pd.DataFrame):
@@ -90,7 +100,7 @@ def to_dict(__object: MappingData, orient: Optional[Literal["dict","list","index
     else: return dict()
 
 
-def to_records(__object: MappingData, depth=0) -> Records:
+def to_records(__object: MappingData, depth=1) -> Records:
     if is_records(__object, empty=True): return __object
     elif isinstance(__object, pd.DataFrame):
         return fillna_records(__object.to_dict("records"), value=None, strict=True, depth=depth)
@@ -98,11 +108,11 @@ def to_records(__object: MappingData, depth=0) -> Records:
     else: return list()
 
 
-def to_dataframe(__object: MappingData, index: Optional[Sequence]=None) -> pd.DataFrame:
+def to_dataframe(__object: MappingData, columns: Optional[IndexLabel]=None, index: Optional[Sequence]=None) -> pd.DataFrame:
     if isinstance(__object, pd.DataFrame): pass
-    elif is_records(__object, empty=True): __object = convert_dtypes(pd.DataFrame(align_records(__object)))
+    elif is_records(__object, empty=False): __object = convert_dtypes(pd.DataFrame(align_records(__object)))
     elif isinstance(__object, (dict,pd.Series)): __object = pd.DataFrame([__object])
-    else: return pd.DataFrame()
+    else: return pd.DataFrame(columns=cast_columns(columns))
     if (index is not None) and (safe_len(index, -1) == len(__object)): __object.index = index
     return __object
 
@@ -110,29 +120,19 @@ def to_dataframe(__object: MappingData, index: Optional[Sequence]=None) -> pd.Da
 def to_series(__object: Union[pd.Series,Sequence,Any], index: Optional[Sequence]=None) -> pd.Series:
     if isinstance(__object, pd.Series): pass
     elif is_array(__object): __object = pd.Series(__object)
-    else: __object = pd.Series([__object]*safe_len(index, 1))
+    else: __object = pd.Series([__object]*safe_len(index, 1), dtype="object")
     if safe_len(index, -1) == len(__object): __object.index = index
     return __object
 
 
-def convert_data(data: Data, return_type: Optional[TypeHint]=None, depth=0, **kwargs) -> Data:
+def convert_data(data: Data, return_type: Optional[TypeHint]=None, depth=1) -> Data:
     if not return_type: return data
     elif is_records_type(return_type): return to_records(data, depth=depth)
     elif is_dataframe_type(return_type): return to_dataframe(data)
     elif is_dict_type(return_type): return to_dict(data, depth=depth)
     elif is_list_type(return_type): return cast_list(data)
-    else: return data
-
-
-def multitype_allowed(func):
-    @functools.wraps(func)
-    def wrapper(data: Data, *args, return_type: Optional[TypeHint]=None, convert_first=False, **kwargs):
-        if not return_type: return func(data, *args, **kwargs)
-        if convert_first: data, return_type = convert_data(data, return_type), None
-        data = func(data, *args, **kwargs)
-        if not convert_first: data = convert_data(data, return_type)
-        return data
-    return wrapper
+    try: return data if data else init_origin(return_type)
+    except: return None
 
 
 ###################################################################
@@ -148,26 +148,13 @@ def rename_records(__r: Records, rename: RenameMap) -> Records:
     return [rename_dict(__m, rename=rename) for __m in __r]
 
 
-@multitype_allowed
-def rename_data(data: MappingData, rename: RenameMap,
-                return_type: Optional[TypeHint]=None, convert_first=False, **kwargs) -> MappingData:
+def rename_data(data: MappingData, rename: RenameMap) -> MappingData:
     if not rename: return data
     elif isinstance(data, Dict): return rename_dict(data, rename)
     elif is_records(data): return rename_records(data, rename)
     elif isinstance(data, PANDAS_DATA): return data.rename(columns=rename)
     elif is_array(data): return [rename.get(__value,__value) for __value in data]
     else: return rename.get(data,data)
-
-
-def multitype_rename(func):
-    @functools.wraps(func)
-    def wrapper(data: Data, *args, rename: RenameMap=dict(), rename_first=False, **kwargs):
-        if not rename: return func(data, *args, **kwargs)
-        if rename_first: data = rename_data(data, rename)
-        data = func(data, *args, **kwargs)
-        if not rename_first: data = rename_data(data, rename)
-        return data
-    return wrapper
 
 
 ###################################################################
@@ -228,8 +215,8 @@ def vloc(__r: Records, keys: _KT, default=None, if_null: Literal["drop","pass"]=
 
 def cloc(df: PandasData, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
         reorder=True, values_only=False) -> Union[PandasData,_VT]:
-    left, right = get_columns(df), cast_tuple(columns)
-    __inter = inter(right, left) if reorder else inter(left, right)
+    columns = cast_columns(columns)
+    __inter = inter(columns, get_columns(df)) if reorder else inter(get_columns(df), columns)
     if not __inter:
         return init_df(df, columns=list()) if if_null == "drop" else df
     elif not is_array(columns): df = df[columns]
@@ -272,12 +259,9 @@ def get_value(data: ResponseData, field: Union[_KT,Index], default=None, **kwarg
     else: return default
 
 
-@multitype_allowed
-@multitype_rename
 def filter_data(data: ResponseData, fields: Optional[Union[_KT,Index]]=list(), default=None,
                 if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
-                key_alias: Sequence[_KT]=list(), return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False, **kwargs) -> Data:
+                key_alias: Sequence[_KT]=list(), **kwargs) -> Data:
     context = dict(default=default, if_null=if_null, values_only=values_only)
     map_context = dict(hier=hier, key_alias=key_alias)
     if not fields: return data if if_null == "pass" else default
@@ -287,19 +271,6 @@ def filter_data(data: ResponseData, fields: Optional[Union[_KT,Index]]=list(), d
     elif isinstance(data, Tag): return sloc(data, fields, **context, **map_context, **kwargs)
     elif is_array(data): return iloc(data, fields, default=default, if_null=if_null)
     else: return data
-
-
-def multitype_filter(func):
-    @functools.wraps(func)
-    def wrapper(data: ResponseData, *args, fields: Optional[Union[_KT,Index]]=list(), default=None,
-                if_null: Literal["drop","pass"]="pass", reorder=True, values_only=False, hier=False,
-                filter_first=False, **kwargs):
-        if not fields: return func(data, *args, **kwargs) if if_null != "drop" else list()
-        if filter_first: data = filter_data(data, fields, default, if_null, reorder)
-        data = func(data, *args, **kwargs)
-        if not filter_first: data = filter_data(data, fields, default, if_null, reorder, values_only, hier)
-        return data
-    return wrapper
 
 
 ###################################################################
@@ -329,10 +300,8 @@ def set_df(df: PandasData, __columns: Optional[IndexLabel]=list(), __values: Opt
     return df
 
 
-@multitype_allowed
 def set_data(data: MappingData, __keys: Optional[_KT]=list(), __values: Optional[_VT]=list(),
-            if_exists: Literal["replace","ignore"]="replace",
-            return_type: Optional[TypeHint]=None, convert_first=False, **context) -> Data:
+            if_exists: Literal["replace","ignore"]="replace", **context) -> Data:
     if is_records(data): return set_records(data, __keys, __values, if_exists=if_exists, **context)
     elif isinstance(data, PANDAS_DATA): return set_df(data, __keys, __values, if_exists=if_exists, **context)
     elif isinstance(data, Dict): return set_dict(data, __keys, __values, if_exists=if_exists, inplace=False, **context)
@@ -611,13 +580,7 @@ def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","la
     return pd.concat(__object, axis=axis) if __object else pd.DataFrame()
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
-def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first",
-                fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None,
-                rename: RenameMap=dict(), convert_first=False, rename_first=False, filter_first=False, **kwargs) -> Data:
+def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first") -> Data:
     if is_dfarray(data): return concat_df([df for df in data if df_exists(df)])
     elif is_2darray(data): return list(chain.from_iterable([__s for __s in data if is_array(__s)]))
     elif data_type and is_dict_type(data_type) and is_records(data, how="any"):
@@ -747,14 +710,8 @@ def safe_apply_df(__object: PandasData, __applyFunc: ApplyFunction, default: Uni
     return fillna_data(__object, default)
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
 def apply_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __applyFunc: Optional[ApplyFunction]=list(),
-                apply: Optional[ApplyFunction]=None, all_keys=False, fields: Optional[Union[_KT,Index]]=list(),
-                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
-                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+                apply: Optional[ApplyFunction]=None, all_keys=False, default=None, **context) -> Data:
     if isinstance(data, Dict): return apply_dict(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     if is_records(data): return apply_records(data, __keys, __applyFunc, apply=apply, all_keys=all_keys, **context)
     elif isinstance(data, PANDAS_DATA): return apply_df(data, __keys, __applyFunc, apply=apply, all_cols=all_keys, **context)
@@ -821,14 +778,9 @@ def match_df(df: PandasData, __columns: Optional[IndexLabel]=list(), __matchFunc
     else: return matches.all(axis=0) if how == "all" else matches
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
 def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFunc: Optional[MatchFunction]=list(),
                 match: Optional[MatchFunction]=None, all_keys=False, how: Literal["filter","all","indexer"]="filter",
-                fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False, filter_first=False, **context) -> Data:
+                fields: Optional[Union[_KT,Index]]=list(), default=None, **context) -> Data:
     if isinstance(data, Dict): return match_dict(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     if is_records(data): return match_records(data, __keys, __matchFunc, match=match, all_keys=all_keys, how=how, **context)
     elif isinstance(data, PANDAS_DATA): return match_df(data, __keys, __matchFunc, match=match, all_cols=all_keys, how=how, **context)
@@ -1040,13 +992,8 @@ def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __range
     return df
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
-def between_data(data: MappingData, inclusive: Literal["both","neither","left","right"]="both", null=False,
-                fields: Optional[Union[_KT,Index]]=list(), default=None, if_null: Literal["drop","pass"]="drop",
-                reorder=True, values_only=False, hier=False, return_type: Optional[TypeHint]=None, rename: RenameMap=dict(),
-                convert_first=False, rename_first=False, filter_first=False, **context) -> MappingData:
+def between_data(data: MappingData, inclusive: Literal["both","neither","left","right"]="both",
+                null=False, **context) -> MappingData:
     if is_records(data): return between_records(data, inclusive=inclusive, null=null, **context)
     elif isinstance(data, pd.DataFrame): return between_df(data, inclusive=inclusive, null=null, **context)
     elif isinstance(data, Dict): return data if between_dict(data, inclusive=inclusive, null=null, **context) else dict()
@@ -1082,9 +1029,7 @@ def drop_df(df: PandasData, columns: IndexLabel) -> PandasData:
     else: return df
 
 
-@multitype_allowed
-def drop_data(data: MappingData, __keys: Optional[_KT]=list(),
-            return_type: Optional[TypeHint]=None, convert_first=False, **kwargs) -> Data:
+def drop_data(data: MappingData, __keys: Optional[_KT]=list()) -> Data:
     if is_records(data): return drop_records(data, __keys)
     elif isinstance(data, PANDAS_DATA): return drop_df(data, __keys)
     elif isinstance(data, Dict): return drop_dict(data, __keys, inplace=False)
@@ -1139,15 +1084,13 @@ def fill_array(__s: Sequence, count: int, value=None) -> List:
 
 def fillna_array(__s: Sequence, value=None, strict=True, depth=1) -> List:
     if depth < 1: return __s
-    fillna = lambda __value: fillna_data(
-        __value, value, strict=strict, depth=depth-1) if depth > 1 else __value
+    fillna = lambda __value: fillna_data(__value, value, strict=strict, depth=depth-1) if depth > 1 else __value
     return [(fillna(__e) if notna(__e, strict=strict) else value) for __e in __s]
 
 
 def fillna_dict(__m: Dict, value=None, strict=True, depth=1) -> Dict:
     if depth < 1: return __m
-    fillna = lambda __value: fillna_data(
-        __value, value, strict=strict, depth=depth-1) if depth > 1 else __value
+    fillna = lambda __value: fillna_data(__value, value, strict=strict, depth=depth-1) if depth > 1 else __value
     return {__key: (fillna(__value) if notna(__value, strict=strict) else value) for __key, __value in __m.items()}
 
 
@@ -1180,10 +1123,8 @@ def fillna_series(__object: pd.Series, value: Union[pd.Series,Sequence,Any]=None
     else: return __object.fillna(value)
 
 
-@multitype_allowed
 def fillna_data(__object: Union[PandasData,Records], value: Union[PandasData,Sequence,Any]=None,
-                strict=True, depth=1, return_type: Optional[TypeHint]=None, convert_first=False,
-                **kwargs) -> Union[PandasData,Records]:
+                strict=True, depth=1) -> Union[PandasData,Records]:
     if isna_plus(value) and isinstance(__object, PANDAS_DATA): return __object
     elif isinstance(__object, pd.DataFrame): return fillna_df(__object, value)
     elif isinstance(__object, pd.Series): return fillna_series(__object, value)
@@ -1213,13 +1154,7 @@ def sort_records(__r: Records, by: _KT, ascending=True) -> Records:
     return sorted(__r, key=lambda x: kloc(x, cast_tuple(by), values_only=True), reverse=(not ascending))
 
 
-@multitype_allowed
-@multitype_rename
-@multitype_filter
-def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True, fields: Optional[Union[_KT,Index]]=list(),
-                default=None, if_null: Literal["drop","pass"]="drop", reorder=True, values_only=False, hier=False,
-                return_type: Optional[TypeHint]=None, rename: RenameMap=dict(), convert_first=False, rename_first=False,
-                filter_first=False, **kwargs) -> Data:
+def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True) -> Data:
     asc = ascending if isinstance(ascending, bool) else bool(get_scala(ascending))
     if is_records(data): return sort_records(data, by=by, ascending=asc)
     elif isinstance(data, pd.DataFrame): return data.sort_values(by, ascending=ascending)
@@ -1329,15 +1264,25 @@ def unit_array(__s: Sequence, unit=1) -> List[Sequence]:
 ############################ DataFrame ############################
 ###################################################################
 
-def init_df(df: PandasData, columns: Optional[IndexLabel]=None) -> PandasData:
+def init_df(df: Optional[PandasData]=None, columns: Optional[IndexLabel]=None) -> PandasData:
     if isinstance(df, pd.DataFrame):
-        return pd.DataFrame(columns=(columns if is_array(columns) else df.columns))
+        return pd.DataFrame(columns=(columns if is_columns(columns) else df.columns))
     elif isinstance(df, pd.Series):
         return pd.Series(index=(columns if columns else df.index), dtype=df.dtypes)
-    else: return
+    else: return pd.DataFrame(columns=cast_columns(columns))
 
 
-def get_columns(df: PandasData) -> IndexLabel:
+def is_columns(columns: IndexLabel) -> bool:
+    return is_array(columns) or isinstance(columns, PandasIndex)
+
+
+def cast_columns(__object, unique=False) -> IndexLabel:
+    if isinstance(__object, PandasIndex):
+        return (__object.unique() if unique else __object).tolist()
+    else: return cast_list(__object)
+
+
+def get_columns(df: PandasData) -> PandasIndex:
     if isinstance(df, pd.DataFrame): return df.columns
     elif isinstance(df, pd.Series): return df.index
     else: return list()

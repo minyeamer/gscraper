@@ -1,8 +1,8 @@
-from gscraper.base.types import TypeHint, DateFormat, Timedelta, Timezone, CastError
+from gscraper.base.types import TypeHint, Unit, DateFormat, Timedelta, Timezone, CastError
 from gscraper.base.types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from gscraper.utils.cast import cast_datetime, cast_date, get_timezone
-from gscraper.utils.map import isin, drop_dict
+from gscraper.utils.map import isin, drop_dict, get_scala
 
 from typing import List, Literal, Optional, Sequence, Tuple, Union
 from pandas.tseries.frequencies import to_offset
@@ -111,23 +111,24 @@ def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Union[i
 
 
 def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
-            days=0, weeks=0, tzinfo=None) -> dt.date:
+            days=0, weeks=0, tzinfo=None, busdate=False) -> dt.date:
     __date = cast_date(__object)
     if not isinstance(__date, dt.date):
         if isinstance(__object, int): __date = today(days=__object, tzinfo=tzinfo)
         elif isinstance(if_null, int): __date = today(days=if_null, tzinfo=tzinfo)
         elif isinstance(if_null, str): __date = cast_date(if_null)
     if isinstance(__date, dt.date):
-        return __date - dt.timedelta(days=days, weeks=weeks)
+        __date = __date - dt.timedelta(days=days, weeks=weeks)
+        return (__date-BDay(1)).date() if busdate and (not np.is_busday(__date)) else __date
 
 
-def get_busdate(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
-                days=0, weeks=0, tzinfo=None) -> dt.date:
-    __date = get_date(__object, if_null=if_null, tzinfo=tzinfo)
-    if isinstance(__date, dt.date):
-        if not np.is_busday(__date): __date = (__date-BDay(1)).date()
-        if days or weeks: return get_busdate(__date - dt.timedelta(days=days, weeks=weeks))
-        return __date
+def get_date_pair(startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
+                    if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
+    startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=busdate)
+    endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=busdate)
+    if startDate: startDate = min(startDate, endDate) if endDate else startDate
+    if endDate: endDate = max(startDate, endDate) if startDate else endDate
+    return startDate, endDate
 
 
 def set_datetime(__datetime: dt.datetime, __format="%Y-%m-%d %H:%M:%S",

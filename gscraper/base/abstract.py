@@ -34,12 +34,16 @@ SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedRet
 ASYNCIO_CONTEXT = lambda redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
 
 
-UNIQUE_CONTEXT = lambda decryptedKey=None, auth=None, sessionCookies=None, derivFields=None, dags=None, **context: \
-    ASYNCIO_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
+ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, sessionCookies=None, **context: context
 
 
-PARAMS_CONTEXT = lambda init=None, data=None, task=None, locals=None, which=None, where=None, by=None, how=None, \
-                        default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
+UNIQUE_CONTEXT = lambda derivFields=None, dags=None, **context: \
+    ENCRYPTED_CONTEXT(**ASYNCIO_CONTEXT(**SPIDER_CONTEXT(
+        **MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context)))))))
+
+
+PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, \
+                        how=None, default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
                         depth=None, hier=None, to=None, countPath=None, hasSize=None, **context: context
 
 

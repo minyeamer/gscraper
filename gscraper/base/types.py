@@ -213,25 +213,44 @@ TYPE_LIST = {
     Tag: TAG_TYPES,
 }
 
-abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
+_abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
+_arg_get = lambda arr, idx: arr[idx if _abs_idx(idx) < len(arr) else -1]
 
 
 def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Type:
     if isinstance(__object, Type): return __object
-    elif isinstance(__object, str):
-        types = [__t for __t, __hint in TYPE_LIST.items() if __object.lower() in __hint]
-        if types: return types[0]
-        else: raise ValueError(INVALID_TYPE_HINT_MSG(__object))
+    elif isinstance(__object, str): return _get_type_from_str(__object, argidx)
+    else: return _get_type_from_origin(__object, argidx)
+
+
+def _get_type_from_str(__object: str, argidx=0) -> Type:
+    if __object.startswith("Tuple[") and __object.endswith("]"):
+        return [get_type(__t) for __t in re.search(r"^Tuple\[([^]]+)\]$", __object).groups()[0].split(',')]
+    types = [__t for __t, __hint in TYPE_LIST.items() if __object.lower() in __hint]
+    if types: return _arg_get(types, argidx)
+    else: raise ValueError(INVALID_TYPE_HINT_MSG(__object))
+
+
+def _get_type_from_origin(__object: Union[Type,TypeHint,Any], argidx=0) -> Type:
     __type, args = get_origin(__object), get_args(__object)
-    if args:
-        return get_type(args[argidx if abs_idx(argidx) < len(args) else -1])
+    if __type in (Tuple, tuple):
+        return tuple(get_type(arg) for arg in args)
+    elif args:
+        if __type == Union: return get_type(_arg_get(args, argidx))
+        else: return get_type(__type)
     elif isinstance(__object, Callable):
         return get_type(__type if __type else get_type_hints(__object).get("return"))
     else: return type(__object)
 
 
-def init_origin(__object: Union[Type,TypeHint,Any], argidx=0, default=None) -> Any:
+def init_origin(__object: Union[Type,TypeHint,Any], default=None, argidx=0) -> Any:
     __type = get_type(__object, argidx)
+    if isinstance(__type, Tuple):
+        return tuple(init_type(__t, default) for __t in __type)
+    else: return init_type(__type, default)
+
+
+def init_type(__type: Type, default=None) -> Any:
     try: return __type()
     except TypeError:
         if __type == datetime: return default if default else datetime.now()

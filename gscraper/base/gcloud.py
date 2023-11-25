@@ -7,8 +7,8 @@ from gscraper.base.types import TabularData, Account, PostData, is_records, from
 from gscraper.utils.cast import cast_str, cast_list, cast_float, cast_int, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_exists, df_empty, to_array, get_scala
-from gscraper.utils.map import kloc, to_dict, to_records, cloc, to_dataframe, apply_df, apply_data
+from gscraper.utils.map import isna, df_exists, df_empty, to_array, get_scala, kloc, to_dict, to_records
+from gscraper.utils.map import cloc, to_dataframe, apply_df, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account
 from google.oauth2.service_account import IDTokenCredentials
@@ -218,7 +218,7 @@ class GoogleQueryReader(BaseSession):
                     size: Optional[int]=None, name=str(), account: Account=dict()) -> TabularData:
         context = dict(default=default, if_null=if_null, head=head, headers=headers, numericise_ignore=str_cols,
                         return_type=return_type, rename=(rename if rename else self.get_rename_map(to=to)))
-        data = read_gspread(key, sheet, account=account, fields=fields, **context)
+        data = read_gspread(key, sheet, fields=fields, account=account, **context)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
@@ -327,14 +327,14 @@ class GoogleUploader(BaseSession):
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
         cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
-        update_gspread(key, sheet, data, account=account, cell=cell, clear=clear)
+        update_gspread(key, sheet, data, cell=cell, clear=clear, account=account)
         return True
 
     def read_gs_base(self, key: str, sheet: str, name=str(), account: Account=dict(), default=None,
                     head=1, headers=None, str_cols: NumericiseIgnore=list(),
                     to: Optional[Literal["desc","name"]]="name", rename: Optional[RenameMap]=None) -> pd.DataFrame:
-        data = read_gspread(key, sheet, account=account, default=default, head=head, headers=headers,
-                            numericise_ignore=str_cols, rename=(rename if rename else self.get_rename_map(to=to)))
+        data = read_gspread(key, sheet, default=default, head=head, headers=headers, numericise_ignore=str_cols,
+                            rename=(rename if rename else self.get_rename_map(to=to)), account=account)
         self.checkpoint(READ(name), where="read_gs_base", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
         return data
@@ -453,29 +453,28 @@ def _to_excel_date(__object) -> Union[int,Any]:
 
 
 @gs_loaded
-def read_gspread(key: str, sheet: str, account: Account=dict(), gs: Optional[Worksheet]=None,
-                fields: Optional[IndexLabel]=list(), default=None, if_null: Literal["drop","pass"]="pass",
-                head=1, headers=None, numericise_ignore: NumericiseIgnore=list(), reorder=True,
-                return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict(),
-                convert_first=True, rename_first=True, filter_first=True) -> TabularData:
+def read_gspread(key: str, sheet: str, fields: Optional[IndexLabel]=list(), default=None,
+                if_null: Literal["drop","pass"]="pass", head=1, headers=None, numericise_ignore: NumericiseIgnore=list(),
+                reorder=True, return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict(),
+                account: Account=dict(), gs: Optional[Worksheet]=None) -> TabularData:
     if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()
     data = gs.get_all_records(head=head, default_blank=default, numericise_ignore=numericise_ignore, expected_headers=headers)
-    apply = lambda x: cast_datetime_format(x, default=_cast_boolean(x))
-    return apply_data(data,
-        apply=apply, all_keys=True, fields=fields, default=default, if_null=if_null, reorder=reorder,
-        return_type=return_type, rename=rename, convert_first=convert_first, rename_first=rename_first, filter_first=filter_first)
+    data = convert_data(data, return_type)
+    data = rename_data(data, rename)
+    data = filter_data(data, fields, default=default, if_null=if_null, reorder=reorder)
+    return apply_data(data, apply=(lambda x: cast_datetime_format(x, default=_cast_boolean(x))), all_keys=True)
 
 
 @gs_loaded
-def clear_gspead(key: str, sheet: str, account: Account=dict(), gs: Optional[Worksheet]=None, include_header=False):
+def clear_gspead(key: str, sheet: str, include_header=False, account: Account=dict(), gs: Optional[Worksheet]=None):
     if include_header: return gs.clear()
     last_row = len(gs.get_all_records())+1
     if last_row > 2: gs.delete_rows(3, last_row)
 
 
 @gs_loaded
-def update_gspread(key: str, sheet: str, data: TabularData, account: Account=dict(),
-                    gs: Optional[Worksheet]=None, col='A', row=0, cell=str(), clear=False, clear_header=False):
+def update_gspread(key: str, sheet: str, data: TabularData, col='A', row=0, cell=str(), clear=False,
+                    clear_header=False, account: Account=dict(), gs: Optional[Worksheet]=None):
     records = to_records(data)
     if not records: return
     values = [[_to_excel_date(__value) for __value in __m.values()] for __m in records]
