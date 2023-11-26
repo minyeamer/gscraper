@@ -3,7 +3,7 @@ from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords
 
 from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, TypeList
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
-from gscraper.base.types import RenameMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
+from gscraper.base.types import RenameMap, TypeMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
 from gscraper.base.types import is_numeric_or_date_type, is_dict_type, is_records_type, is_dataframe_type, is_tag_type
@@ -148,6 +148,366 @@ UPDATE_DATE, UPDATE_TIME = "updateDate", "updateTime"
 
 
 ###################################################################
+########################### Schema Apply ##########################
+###################################################################
+
+class Apply(TypedDict):
+    def __init__(self, func: Union[ApplyFunction, str], default: Optional[Any]=None, **context):
+        self.validate(func)
+        super().__init__(func=func)
+        self.update_notna(default=default)
+        self.update(context)
+
+    def validate(self, func: Union[ApplyFunction, str]):
+        if not isinstance(func, (Callable,str)):
+            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, APPLY_FUNCTION))
+
+
+class Match(TypedDict):
+    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
+                query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
+                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+                hier=True, default=False, **context):
+        self.validate(func, path, query, value)
+        super().__init__()
+        self.update_default(dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False),
+            func=func, path=path, query=query, value=value, exact=exact, include=include, exclude=exclude,
+            flip=flip, strict=strict, how=how, if_null=if_null, hier=hier, default=default)
+        self.update(context)
+
+    def validate(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
+                query: Optional[_KT]=None, value: Optional[Any]=None):
+        if isna(func) and isna(path) and isna(query):
+            raise ValueError(INVALID_MATCH_KEY_MSG)
+        elif notna(func) and not isinstance(func, Callable):
+            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, MATCH_FUNCTION))
+        else: pass
+
+
+class Cast(Apply):
+    def __init__(self, type: TypeHint, default: Optional[Any]=None, strict=True, **context):
+        super().__init__(func=__CAST__, type=type)
+        self.update_default(dict(strict=True), default=default, strict=strict, **context)
+
+
+class Exists(Apply):
+    def __init__(self, keys: _KT=list(), default: Optional[Any]=None, hier=False):
+        super().__init__(func=__EXISTS__, keys=keys)
+        self.update_default(dict(hier=False), default=default, hier=hier)
+
+
+class Join(Apply):
+    def __init__(self, keys: _KT=list(), sep=',', default: Optional[Any]=None,
+                hier=False, strip=True, split: Optional[str]=None):
+        super().__init__(func=__JOIN__, keys=keys, sep=sep)
+        self.update_default(dict(hier=False, strip=True),
+            default=default, hier=hier, strip=strip, split=split)
+
+
+class Regex(Apply):
+    def __init__(self, pattern: RegexFormat, default=None, index: Optional[int]=0,
+                repl: Optional[str]=None, strip=False):
+        super().__init__(func=__REGEX__, pattern=pattern)
+        self.update_default(dict(index=0, strip=False),
+            default=default, index=index, repl=repl, strip=strip)
+
+
+class Rename(Apply):
+    def __init__(self, rename: RenameMap, path: Optional[_KT]=None,
+                if_null: Union[Literal["null","pass","error"],Any]="null"):
+        super().__init__(func=__RENAME__, rename=rename)
+        self.update_default(dict(if_null="null"), path=path, if_null=if_null)
+
+
+class Split(Apply):
+    def __init__(self, sep=',', maxsplit=-1, default: Optional[Any]=None,
+                strict=True, index: Optional[int]=None, type: Optional[TypeHint]=None):
+        super().__init__(func=__SPLIT__, sep=sep)
+        self.update_default(dict(maxsplit=-1, strict=True),
+            maxsplit=maxsplit, default=default, strict=strict, index=index, type=type)
+
+
+class Stat(Apply):
+    def __init__(self, stat: Callable, keys: _KT=list(), default: Optional[Any]=None,
+                hier=False, type: Optional[TypeHint]=None, strict=True):
+        super().__init__(func=__STAT__, stat=stat, keys=keys)
+        self.update_default(dict(hier=False, strict=True),
+            default=default, hier=hier, type=type, strict=strict)
+
+
+class Sum(Stat):
+    def __init__(self, keys: _KT=list(), default: Optional[Any]=None,
+                hier=False, type: Optional[TypeHint]=None, strict=True):
+        super().__init__(stat=sum, keys=keys, default=default, hier=hier, type=type, strict=strict)
+
+
+class Map(Apply):
+    def __init__(self, schema: Schema, type: Optional[TypeHint]=None, root: Optional[_KT]=None,
+                match: Optional[Match]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
+                countby: Literal["page","start"]="start", page=1, start=1,
+                submatch: Optional[Union[MatchFunction,bool]]=True, discard=True) -> Data:
+        super().__init__(func=__MAP__, schema=schema)
+        self.update_default(dict(countby="start", page=1, start=1, submatch=True, discard=True),
+            type=type, root=root, match=match, groupby=groupby, groupSize=groupSize,
+            countby=countby, page=page, start=start, submatch=submatch, discard=discard)
+
+
+###################################################################
+########################### Schema Field ##########################
+###################################################################
+
+SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
+SchemaMode = Literal["QUERY", "INDEX", "LABEL", "NULLABLE", "NOTNULL", "NOTZERO", "REQUIRED", "OPTIONAL"]
+PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
+
+class Field(TypedDict):
+    def __init__(self, name: _KT, path: SchemaPath, type: TypeHint, mode: SchemaMode, desc: Optional[str]=None,
+                default: Optional[Any]=None, apply: Optional[Apply]=None, match: Optional[Match]=None,
+                cast=False, strict=True, sep=str(), strip=True, how: Optional[PathType]=None, description: Optional[str]=None):
+        super().__init__(name=name, path=path, type=type, mode=mode)
+        self.update_default(dict(cast=False, strict=True, sep=str(), strip=True),
+            description=(desc if desc else description), default=default,
+            apply=_to_apply_func(apply), match=_to_match_func(match),
+            cast=cast, strict=strict, sep=sep, strip=strip, how=(how if how else _get_path_type(path)))
+        self.init_field()
+
+    def init_field(self):
+        self.update(type=get_type(self[TYPE], argidx=-1))
+        if self[MODE] in (QUERY,LABEL): return
+        elif self[MODE] == INDEX:
+            self.update(path=[COUNT_INDEX])
+        elif self[MODE] == NOTNULL:
+            self.update(default=init_origin(self[TYPE]), cast=True)
+        elif self[MODE] == NOTZERO:
+            self.update(cast=True, strict=False)
+        elif is_numeric_or_date_type(self[TYPE]) and (CAST not in self):
+            self.update(cast=True)
+            if is_bool_type(self[TYPE]):
+                self.update(strict=False)
+        else: return
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Field,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Field:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
+
+def validate_field(field: Any) -> Field:
+    if isinstance(field, Field): return field
+    elif isinstance(field, Dict): return Field(**field)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(field, FIELD_OBJECT))
+
+
+def _get_path_type(path: SchemaPath) -> PathType:
+    if isinstance(path, str): return VALUE
+    elif isinstance(path, Sequence):
+        if isinstance(path, Tuple) and len(path) == 2: return TUPLE
+        elif len(path) > 0 and is_array(path[-1]): return ITERATE
+        else: return PATH
+    elif isinstance(path, Callable): return CALLABLE
+    else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
+
+
+def _to_apply_func(apply: Any) -> Apply:
+    if isinstance(apply, Apply) or (not apply): return apply
+    elif isinstance(apply, (Callable,str)): return Apply(func=apply)
+    elif isinstance(apply, Dict): return Apply(**apply)
+    elif isinstance(apply, Sequence):
+        return [_to_apply_func(func) for func in apply]
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(apply, APPLY_FUNCTION))
+
+
+def _to_match_func(match: Any) -> Match:
+    if isinstance(match, Match) or (not match): return match
+    elif isinstance(match, Callable): return Match(func=match)
+    elif is_array(match): return Match(path=match)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(match, MATCH_FUNCTION))
+
+
+COMMON_FIELDS = [
+    Field(name="updateDate", path=[], type="DATE", mode="NULLABLE", desc=UPDATE_DATE),
+    Field(name="updateTime", path=[], type="DATETIME", mode="NULLABLE", desc=UPDATE_TIME),
+]
+
+
+###################################################################
+############################## Schema #############################
+###################################################################
+
+class Schema(TypedRecords):
+    def __init__(self, *args: Field):
+        super().__init__(*[validate_field(field) for field in args])
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedRecords,Any]:
+        return super().copy(__instance)
+
+    def _with_common_fields(self) -> Schema:
+        return Schema(*self, *COMMON_FIELDS)
+
+    def get(self, __key: _KT, values_only=False, keep: Literal["fist","last",True,False]=True,
+            match: Optional[MatchFunction]=None, common_fields=False, **match_by_key) -> Union[Schema,List,Dict,str]:
+        if common_fields: self = self._with_common_fields()
+        schema = self.unique(keep=keep).filter(match, **match_by_key)
+        if not (values_only or __key): return schema
+        else: return vloc(list(schema), __key, if_null="drop", values_only=values_only)
+
+    def get_schema_map(self, key: str, value: str, common_fields=False) -> Dict:
+        if common_fields: self = self._with_common_fields()
+        return {field[key]: field[value] for field in self if (key in field) and (value in field)}
+
+    def get_rename_map(self, to: Literal["name","desc"]="desc", common_fields=True) -> RenameMap:
+        key, value = (DESC, NAME) if to == NAME else (NAME, DESC)
+        return self.get_schema_map(key, value, common_fields=common_fields)
+
+    def get_type_map(self, key: Literal["name","desc"]="name", common_fields=True) -> TypeMap:
+        return self.get_schema_map(key, TYPE, common_fields=common_fields)
+
+    @TypedRecords.copyable
+    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,Schema]:
+        return drop_duplicates(self, "name", keep=keep) if keep != True else self
+
+
+def validate_schema(schema: Any) -> Schema:
+    if isinstance(schema, Schema): return schema
+    elif isinstance(schema, List): return Schema(*schema)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, SCHEMA_OBJECT))
+
+
+###################################################################
+########################## Schema Context #########################
+###################################################################
+
+class SchemaContext(TypedDict):
+    def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None):
+        super().__init__(schema=validate_schema(schema))
+        self.update_notna(root=root, match=_to_match_func(match))
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaContext,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaContext:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
+
+def validate_context(context: Any) -> SchemaContext:
+    if isinstance(context, SchemaContext): return context
+    elif isinstance(context, Dict): return SchemaContext(**context)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(context, CONTEXT_OBJECT))
+
+
+###################################################################
+########################### Schema Info ###########################
+###################################################################
+
+class SchemaInfo(TypedDict):
+    def __init__(self, **kwargs: SchemaContext):
+        super().__init__({
+            name: validate_context(context) for name, context in kwargs.items()})
+
+    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaInfo,Any]:
+        return super().copy(__instance)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaInfo:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+
+    def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
+                    keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
+                    common_fields=False, **match_by_key) -> Union[Schema,_VT]:
+        context = kloc(self, cast_tuple(schema_names), default=dict(), if_null="pass", values_only=True)
+        common_fields = COMMON_FIELDS if common_fields else list()
+        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)), *common_fields)
+        return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
+
+    def get_schema_by_name(self, name: _KT, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
+                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> Union[Schema,_VT]:
+        match = lambda __name: __name in cast_tuple(name)
+        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema(keys, name=match, **context)
+
+    def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(), values_only=False,
+                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True,
+                            common_fields=False) -> Union[Schema,_VT]:
+        __types = tuple(map(get_type, cast_tuple(__type)))
+        match = lambda __type: is_type(__type, __types)
+        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema(keys, type=match, **context)
+
+    def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
+                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> List[str]:
+        context = dict(schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.get_schema_by_type(__type, keys="name", values_only=True, **context)
+
+    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
+        schema = self.get_schema(schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return {field[key]: field[value] for field in schema if (key in field) and (value in field)}
+
+    def get_rename_map(self, to: Literal["name","desc"]="desc", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
+        key, value = (DESC, NAME) if to == NAME else (NAME, DESC)
+        return self.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
+
+    def get_type_map(self, key: Literal["name","desc"]="name", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> TypeMap:
+        return self.get_schema_map(key, TYPE, schema_names=schema_names, keep=keep, common_fields=common_fields)
+
+
+def validate_info(info: Any) -> SchemaInfo:
+    if isinstance(info, SchemaInfo): return info
+    elif isinstance(info, Dict): return SchemaInfo(**info)
+    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(info, INFO_OBJECT))
+
+
+###################################################################
+############################# Prettier ############################
+###################################################################
+
+def to_default(__object) -> Any:
+    if isinstance(__object, Dict):
+        return {__key: to_default(__value) for __key, __value in __object.items()}
+    elif isinstance(__object, List):
+        return [to_default(__e) for __e in __object]
+    else: return __object
+
+
+def pretty_str(__object, indent=2, step=2) -> str:
+    if isinstance(__object, (Field,Apply,Match)):
+        return str({__k: to_default(__v) for __k, __v in __object.items()})
+    elif isinstance(__object, TypedDict):
+        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {pretty_str(__v, indent=indent+step, step=step)}"
+                    for __k, __v in __object.items()])+'\n'+' '*(indent-step)+'}'
+    elif isinstance(__object, TypedRecords):
+        return '[\n'+',\n'.join([' '*indent+pretty_str(__e, indent=indent, step=step)
+                for __e in __object])+'\n'+' '*(indent-step)+']'
+    elif isinstance(__object, str): return f"'{__object}'"
+    else: return str(__object).replace('\n', '\\n')
+
+
+def pretty_object(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2) -> str:
+    if notna(path): __object = hier_get(__object, path)
+    if notna(drop): __object = drop_dict(__object, drop)
+    context = dict(indent=indent, step=step)
+    if isinstance(__object, (TypedDict,TypedRecords)):
+        return pretty_str(__object, **context)
+    elif isinstance(__object, Dict):
+        return pretty_str(TypedDict(**__object), **context)
+    elif is_records(__object, how="all"):
+        return pretty_str(TypedRecords(*__object), **context)
+    elif isinstance(__object, pd.DataFrame):
+        return "pd.DataFrame("+pretty_str(TypedRecords(*__object.to_dict("records")), **context)+")"
+    elif isinstance(__object, pd.Series):
+        return "pd.Series("+pretty_str(__object.tolist(), **context)+")"
+    else: return pretty_str(__object)
+
+
+def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
+    if not args: print()
+    else: print(sep.join([pretty_object(__object, path=path, drop=drop, indent=indent, step=step) for __object in args]))
+
+
+###################################################################
 ############################# Session #############################
 ###################################################################
 
@@ -157,10 +517,11 @@ class BaseSession(CustomDict):
     tzinfo = None
     datetimeUnit = "second"
     errors = list()
+    schemaInfo = SchemaInfo()
 
     def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None, **context):
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None, **context):
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
         super().__init__(context)
@@ -171,7 +532,7 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
 
     def set_logger(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None):
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None):
         logName = logName if logName else self.operation
         self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
         self.logFile = logFile
@@ -180,7 +541,7 @@ class BaseSession(CustomDict):
         self.localSave = localSave
         self.debug = cast_list(debug)
         self.extraSave = cast_list(extraSave)
-        self.interrupt = interrupt
+        self.interrupt = cast_list(interrupt)
 
     ###################################################################
     ############################# Datetime ############################
@@ -215,6 +576,26 @@ class BaseSession(CustomDict):
         updateDate = date if isinstance(date, dt.date) else self.today()
         updateTime = datetime if isinstance(date, dt.datetime) else self.now()
         return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=updateTime)
+
+    ###################################################################
+    ############################## Schema #############################
+    ###################################################################
+
+    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
+        self.schemaInfo.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
+
+    def get_rename_map(self, to: Optional[Literal["name","desc"]]="desc", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
+        return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
+
+    def get_type_map(self, key: Literal["name","desc"]="name", schema_names: _KT=list(),
+                        keep: Literal["fist","last",False]="first", common_fields=True) -> TypeMap:
+        return self.schemaInfo.get_schema_map(key, TYPE, schema_names=schema_names, keep=keep, common_fields=common_fields)
+
+    def rename_value(self, string: str, to: Optional[Literal["name","desc"]]="desc") -> str:
+        renameMap = self.get_rename_map(to=to)
+        return renameMap[string] if renameMap and (string in renameMap) else string
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -266,13 +647,6 @@ class BaseSession(CustomDict):
             data = BeautifulSoup(data, "html.parser")
         with open(file, "w", encoding="utf-8") as f:
             f.write(str(data.prettify()))
-
-    def get_rename_map(self, to: Optional[str]=None) -> RenameMap:
-        return dict()
-
-    def rename(self, string: str, to: Optional[str]=None) -> str:
-        renameMap = self.get_rename_map(to=to)
-        return renameMap[string] if renameMap and (string in renameMap) else string
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
@@ -349,6 +723,47 @@ class BaseSession(CustomDict):
         self.logger.error(log_exception(func_name, json=self.logJson, **msg))
         self.errors.append(msg)
 
+    ###################################################################
+    ############################# Inspect #############################
+    ###################################################################
+
+    def inspect(self, method: str, __type: Optional[TypeHint]=None, annotation: Optional[TypeHint]=None,
+                ignore: List[_KT]=list()) -> Dict[_KT,Dict]:
+        method = getattr(self, method)
+        info = inspect_function(method, ignore=["self","context","kwargs"]+ignore)
+        if __type or annotation:
+            info = drop_dict(info, "__return__", inplace=False)
+            if __type == "required":
+                return {name: param for name, param in info.items() if "default" not in param}
+            elif __type == "iterable":
+                return {name: param for name, param in info.items() if "iterable" in param}
+            return {name: param for name, param in info.items()
+                    if (annotation in cast_tuple(param["annotation"])) or (__type in cast_tuple(param["type"]))}
+        return info
+
+    def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        drop_keys = cast_list(drop)
+        if locals:
+            if "context" in drop_keys:
+                locals.pop("context", None)
+                drop_keys.pop(drop_keys.index("context"))
+            else: locals = dict(locals, **locals.pop("context", dict()))
+            context = dict(locals, **context)
+            context.pop("self", None)
+        return drop_dict(context, drop_keys, inplace=False) if drop_keys else context
+
+    ###################################################################
+    ############################## Print ##############################
+    ###################################################################
+
+    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
+        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
+
+    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
+                    indent=2, step=2, sep=' '):
+        log_object = self.eval_log(log_string, func=func)
+        self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
+
     def eval_log(self, log_string: str, func="checkpoint") -> Records:
         log_string = re_get(f"(?<={func} - )"+r"({[^|]*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
         log_string = self.eval_function(f"[{','.join(log_string)}]")
@@ -379,35 +794,6 @@ class BaseSession(CustomDict):
         if exception:
             return log_string.replace(f"'{exception}'", f"\"\"\"{exception}\"\"\"")
         else: return log_string
-
-    ###################################################################
-    ############################# Inspect #############################
-    ###################################################################
-
-    def inspect(self, method: str, __type: Optional[TypeHint]=None, annotation: Optional[TypeHint]=None,
-                ignore: List[_KT]=list()) -> Dict[_KT,Dict]:
-        method = getattr(self, method)
-        info = inspect_function(method, ignore=["self","context","kwargs"]+ignore)
-        if __type or annotation:
-            info = drop_dict(info, "__return__", inplace=False)
-            if __type == "required":
-                return {name: param for name, param in info.items() if "default" not in param}
-            elif __type == "iterable":
-                return {name: param for name, param in info.items() if "iterable" in param}
-            return {name: param for name, param in info.items()
-                    if (annotation in cast_tuple(param["annotation"])) or (__type in cast_tuple(param["type"]))}
-        return info
-
-    def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
-        drop_keys = cast_list(drop)
-        if locals:
-            if "context" in drop_keys:
-                locals.pop("context", None)
-                drop_keys.pop(drop_keys.index("context"))
-            else: locals = dict(locals, **locals.pop("context", dict()))
-            context = dict(locals, **context)
-            context.pop("self", None)
-        return drop_dict(context, drop_keys, inplace=False) if drop_keys else context
 
 
 ###################################################################
@@ -642,312 +1028,6 @@ class Iterator(CustomDict):
         ranges_array = map((lambda x: x if x else [{}]), ranges)
         __indexing = lambda __i: {ITER_INDEX: __i} if indexing else dict()
         return [dict(**__indexing(__i), **chain_dict(query)) for __i, query in enumerate(product(*ranges_array))]
-
-
-###################################################################
-########################### Schema Apply ##########################
-###################################################################
-
-class Apply(TypedDict):
-    def __init__(self, func: Union[ApplyFunction, str], default: Optional[Any]=None, **context):
-        self.validate(func)
-        super().__init__(func=func)
-        self.update_notna(default=default)
-        self.update(context)
-
-    def validate(self, func: Union[ApplyFunction, str]):
-        if not isinstance(func, (Callable,str)):
-            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, APPLY_FUNCTION))
-
-
-class Match(TypedDict):
-    def __init__(self, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
-                query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
-                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
-                hier=True, default=False, **context):
-        self.validate(func, path, query, value)
-        super().__init__()
-        self.update_default(dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False),
-            func=func, path=path, query=query, value=value, exact=exact, include=include, exclude=exclude,
-            flip=flip, strict=strict, how=how, if_null=if_null, hier=hier, default=default)
-        self.update(context)
-
-    def validate(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                query: Optional[_KT]=None, value: Optional[Any]=None):
-        if isna(func) and isna(path) and isna(query):
-            raise ValueError(INVALID_MATCH_KEY_MSG)
-        elif notna(func) and not isinstance(func, Callable):
-            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, MATCH_FUNCTION))
-        else: pass
-
-
-class Cast(Apply):
-    def __init__(self, type: TypeHint, default: Optional[Any]=None, strict=True, **context):
-        super().__init__(func=__CAST__, type=type)
-        self.update_default(dict(strict=True), default=default, strict=strict, **context)
-
-
-class Exists(Apply):
-    def __init__(self, keys: _KT=list(), default: Optional[Any]=None, hier=False):
-        super().__init__(func=__EXISTS__, keys=keys)
-        self.update_default(dict(hier=False), default=default, hier=hier)
-
-
-class Join(Apply):
-    def __init__(self, keys: _KT=list(), sep=',', default: Optional[Any]=None,
-                hier=False, strip=True, split: Optional[str]=None):
-        super().__init__(func=__JOIN__, keys=keys, sep=sep)
-        self.update_default(dict(hier=False, strip=True),
-            default=default, hier=hier, strip=strip, split=split)
-
-
-class Regex(Apply):
-    def __init__(self, pattern: RegexFormat, default=None, index: Optional[int]=0,
-                repl: Optional[str]=None, strip=False):
-        super().__init__(func=__REGEX__, pattern=pattern)
-        self.update_default(dict(index=0, strip=False),
-            default=default, index=index, repl=repl, strip=strip)
-
-
-class Rename(Apply):
-    def __init__(self, rename: RenameMap, path: Optional[_KT]=None,
-                if_null: Union[Literal["null","pass","error"],Any]="null"):
-        super().__init__(func=__RENAME__, rename=rename)
-        self.update_default(dict(if_null="null"), path=path, if_null=if_null)
-
-
-class Split(Apply):
-    def __init__(self, sep=',', maxsplit=-1, default: Optional[Any]=None,
-                strict=True, index: Optional[int]=None, type: Optional[TypeHint]=None):
-        super().__init__(func=__SPLIT__, sep=sep)
-        self.update_default(dict(maxsplit=-1, strict=True),
-            maxsplit=maxsplit, default=default, strict=strict, index=index, type=type)
-
-
-class Stat(Apply):
-    def __init__(self, stat: Callable, keys: _KT=list(), default: Optional[Any]=None,
-                hier=False, type: Optional[TypeHint]=None, strict=True):
-        super().__init__(func=__STAT__, stat=stat, keys=keys)
-        self.update_default(dict(hier=False, strict=True),
-            default=default, hier=hier, type=type, strict=strict)
-
-
-class Sum(Stat):
-    def __init__(self, keys: _KT=list(), default: Optional[Any]=None,
-                hier=False, type: Optional[TypeHint]=None, strict=True):
-        super().__init__(stat=sum, keys=keys, default=default, hier=hier, type=type, strict=strict)
-
-
-class Map(Apply):
-    def __init__(self, schema: Schema, type: Optional[TypeHint]=None, root: Optional[_KT]=None,
-                match: Optional[Match]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
-                countby: Literal["page","start"]="start", page=1, start=1,
-                submatch: Optional[Union[MatchFunction,bool]]=True, discard=True) -> Data:
-        super().__init__(func=__MAP__, schema=schema)
-        self.update_default(dict(countby="start", page=1, start=1, submatch=True, discard=True),
-            type=type, root=root, match=match, groupby=groupby, groupSize=groupSize,
-            countby=countby, page=page, start=start, submatch=submatch, discard=discard)
-
-
-###################################################################
-########################### Schema Field ##########################
-###################################################################
-
-SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
-SchemaMode = Literal["QUERY", "INDEX", "LABEL", "NULLABLE", "NOTNULL", "NOTZERO", "REQUIRED", "OPTIONAL"]
-PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
-
-class Field(TypedDict):
-    def __init__(self, name: _KT, path: SchemaPath, type: TypeHint, mode: SchemaMode, desc: Optional[str]=None,
-                default: Optional[Any]=None, apply: Optional[Apply]=None, match: Optional[Match]=None,
-                cast=False, strict=True, sep=str(), strip=True, how: Optional[PathType]=None, description: Optional[str]=None):
-        super().__init__(name=name, path=path, type=type, mode=mode)
-        self.update_default(dict(cast=False, strict=True, sep=str(), strip=True),
-            description=(desc if desc else description), default=default,
-            apply=_to_apply_func(apply), match=_to_match_func(match),
-            cast=cast, strict=strict, sep=sep, strip=strip, how=(how if how else _get_path_type(path)))
-        self.init_field()
-
-    def init_field(self):
-        self.update(type=get_type(self[TYPE], argidx=-1))
-        if self[MODE] in (QUERY,LABEL): return
-        elif self[MODE] == INDEX:
-            self.update(path=[COUNT_INDEX])
-        elif self[MODE] == NOTNULL:
-            self.update(default=init_origin(self[TYPE]), cast=True)
-        elif self[MODE] == NOTZERO:
-            self.update(cast=True, strict=False)
-        elif is_numeric_or_date_type(self[TYPE]) and (CAST not in self):
-            self.update(cast=True)
-            if is_bool_type(self[TYPE]):
-                self.update(strict=False)
-        else: return
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Field,Any]:
-        return super().copy(__instance)
-
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Field:
-        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
-
-
-def validate_field(field: Any) -> Field:
-    if isinstance(field, Field): return field
-    elif isinstance(field, Dict): return Field(**field)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(field, FIELD_OBJECT))
-
-
-def _get_path_type(path: SchemaPath) -> PathType:
-    if isinstance(path, str): return VALUE
-    elif isinstance(path, Sequence):
-        if isinstance(path, Tuple) and len(path) == 2: return TUPLE
-        elif len(path) > 0 and is_array(path[-1]): return ITERATE
-        else: return PATH
-    elif isinstance(path, Callable): return CALLABLE
-    else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
-
-
-def _to_apply_func(apply: Any) -> Apply:
-    if isinstance(apply, Apply) or (not apply): return apply
-    elif isinstance(apply, (Callable,str)): return Apply(func=apply)
-    elif isinstance(apply, Dict): return Apply(**apply)
-    elif isinstance(apply, Sequence):
-        return [_to_apply_func(func) for func in apply]
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(apply, APPLY_FUNCTION))
-
-
-def _to_match_func(match: Any) -> Match:
-    if isinstance(match, Match) or (not match): return match
-    elif isinstance(match, Callable): return Match(func=match)
-    elif is_array(match): return Match(path=match)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(match, MATCH_FUNCTION))
-
-
-COMMON_FIELDS = [
-    Field(name="updateDate", path=[], type="DATE", mode="NULLABLE", desc=UPDATE_DATE),
-    Field(name="updateTime", path=[], type="DATETIME", mode="NULLABLE", desc=UPDATE_TIME),
-]
-
-
-###################################################################
-############################## Schema #############################
-###################################################################
-
-class Schema(TypedRecords):
-    def __init__(self, *args: Field):
-        super().__init__(*[validate_field(field) for field in args])
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedRecords,Any]:
-        return super().copy(__instance)
-
-    def _with_common_fields(self) -> Schema:
-        return Schema(*self, *COMMON_FIELDS)
-
-    def get(self, __key: _KT, values_only=False, keep: Literal["fist","last",True,False]=True,
-            match: Optional[MatchFunction]=None, common_fields=False, **match_by_key) -> Union[Schema,List,Dict,str]:
-        if common_fields: self = self._with_common_fields()
-        schema = self.unique(keep=keep).filter(match, **match_by_key)
-        if not (values_only or __key): return schema
-        else: return vloc(list(schema), __key, if_null="drop", values_only=values_only)
-
-    def get_schema_map(self, key: str, value: str, common_fields=False) -> Dict:
-        if common_fields: self = self._with_common_fields()
-        return {field[key]: field[value] for field in self if (key in field) and (value in field)}
-
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", common_fields=True) -> RenameMap:
-        key, value = (DESC, NAME) if to == "name" else (NAME, DESC)
-        return self.get_schema_map(key, value, common_fields=common_fields)
-
-    @TypedRecords.copyable
-    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,Schema]:
-        return drop_duplicates(self, "name", keep=keep) if keep != True else self
-
-
-def validate_schema(schema: Any) -> Schema:
-    if isinstance(schema, Schema): return schema
-    elif isinstance(schema, List): return Schema(*schema)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, SCHEMA_OBJECT))
-
-
-###################################################################
-########################## Schema Context #########################
-###################################################################
-
-class SchemaContext(TypedDict):
-    def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None):
-        super().__init__(schema=validate_schema(schema))
-        self.update_notna(root=root, match=_to_match_func(match))
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaContext,Any]:
-        return super().copy(__instance)
-
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaContext:
-        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
-
-
-def validate_context(context: Any) -> SchemaContext:
-    if isinstance(context, SchemaContext): return context
-    elif isinstance(context, Dict): return SchemaContext(**context)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(context, CONTEXT_OBJECT))
-
-
-###################################################################
-########################### Schema Info ###########################
-###################################################################
-
-class SchemaInfo(TypedDict):
-    def __init__(self, **kwargs: SchemaContext):
-        super().__init__({
-            name: validate_context(context) for name, context in kwargs.items()})
-
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaInfo,Any]:
-        return super().copy(__instance)
-
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaInfo:
-        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
-
-    def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                    keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
-                    common_fields=False, **match_by_key) -> Union[Schema,_VT]:
-        context = kloc(self, cast_tuple(schema_names), default=dict(), if_null="pass", values_only=True)
-        common_fields = COMMON_FIELDS if common_fields else list()
-        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)), *common_fields)
-        return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
-
-    def get_schema_by_name(self, name: _KT, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> Union[Schema,_VT]:
-        match = lambda __name: __name in cast_tuple(name)
-        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema(keys, name=match, **context)
-
-    def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(), values_only=False,
-                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True,
-                            common_fields=False) -> Union[Schema,_VT]:
-        __types = tuple(map(get_type, cast_tuple(__type)))
-        match = lambda __type: is_type(__type, __types)
-        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema(keys, type=match, **context)
-
-    def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> List[str]:
-        context = dict(schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema_by_type(__type, keys="name", values_only=True, **context)
-
-    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
-        schema = self.get_schema(schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return {field[key]: field[value] for field in schema if (key in field) and (value in field)}
-
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
-        key, value = (DESC, NAME) if to == "name" else (NAME, DESC)
-        return self.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
-
-
-def validate_info(info: Any) -> SchemaInfo:
-    if isinstance(info, SchemaInfo): return info
-    elif isinstance(info, Dict): return SchemaInfo(**info)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(info, INFO_OBJECT))
 
 
 ###################################################################
@@ -1482,20 +1562,6 @@ class Parser(SequenceMapper):
     countby = str()
     schemaInfo = SchemaInfo()
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
-        if to in ("desc", "name"):
-            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        else: return dict()
-
-    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
-
-    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
-                    indent=2, step=2, sep=' '):
-        log_object = self.eval_log(log_string, func=func)
-        self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
-
     ###################################################################
     ######################### Parse Response #########################
     ###################################################################
@@ -1523,50 +1589,3 @@ class Parser(SequenceMapper):
     @validate_response
     def parse(self, response: Any, countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context) -> Data:
         return self.map(response, **context)
-
-
-###################################################################
-############################# Prettier ############################
-###################################################################
-
-def to_default(__object) -> Any:
-    if isinstance(__object, Dict):
-        return {__key: to_default(__value) for __key, __value in __object.items()}
-    elif isinstance(__object, List):
-        return [to_default(__e) for __e in __object]
-    else: return __object
-
-
-def pretty_str(__object, indent=2, step=2) -> str:
-    if isinstance(__object, (Field,Apply,Match)):
-        return str({__k: to_default(__v) for __k, __v in __object.items()})
-    elif isinstance(__object, TypedDict):
-        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {pretty_str(__v, indent=indent+step, step=step)}"
-                    for __k, __v in __object.items()])+'\n'+' '*(indent-step)+'}'
-    elif isinstance(__object, TypedRecords):
-        return '[\n'+',\n'.join([' '*indent+pretty_str(__e, indent=indent, step=step)
-                for __e in __object])+'\n'+' '*(indent-step)+']'
-    elif isinstance(__object, str): return f"'{__object}'"
-    else: return str(__object).replace('\n', '\\n')
-
-
-def pretty_object(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2) -> str:
-    if notna(path): __object = hier_get(__object, path)
-    if notna(drop): __object = drop_dict(__object, drop)
-    context = dict(indent=indent, step=step)
-    if isinstance(__object, (TypedDict,TypedRecords)):
-        return pretty_str(__object, **context)
-    elif isinstance(__object, Dict):
-        return pretty_str(TypedDict(**__object), **context)
-    elif is_records(__object, how="all"):
-        return pretty_str(TypedRecords(*__object), **context)
-    elif isinstance(__object, pd.DataFrame):
-        return "pd.DataFrame("+pretty_str(TypedRecords(*__object.to_dict("records")), **context)+")"
-    elif isinstance(__object, pd.Series):
-        return "pd.Series("+pretty_str(__object.tolist(), **context)+")"
-    else: return pretty_str(__object)
-
-
-def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-    if not args: print()
-    else: print(sep.join([pretty_object(__object, path=path, drop=drop, indent=indent, step=step) for __object in args]))

@@ -119,6 +119,7 @@ SEQUENCE_TYPES = {
 
 NestedDict = Dict[_KT,Dict]
 RenameMap = Dict[str,str]
+TypeMap = Dict[str,Type]
 
 NestedData = Union[NestedSequence, NestedDict]
 TabularData = Union[Records, DataFrame]
@@ -145,7 +146,7 @@ PostData = Union[Dict[str,Any],str]
 ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict, str, Tag, List[str], List[Tag]]
 
 DATA_TYPES = {
-    "NestedDict":NestedDict, "RenameMap":RenameMap, "NestedDict":NestedDict,
+    "NestedDict":NestedDict, "RenameMap":RenameMap, "TypeMap":TypeMap, "NestedData":NestedData,
     "TabularData":TabularData, "MappingData":MappingData, "Data":Data, "JsonData":JsonData,
     "RedirectData":RedirectData, "HtmlData":HtmlData, "Account":Account, "PostData":PostData,
     "PandasData":PandasData, "ResponseData":ResponseData}

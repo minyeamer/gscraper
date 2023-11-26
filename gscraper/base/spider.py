@@ -263,20 +263,6 @@ class UploadSession(GoogleQueryReader, GoogleUploader):
                         account: Account=dict(), credentials=None):
         self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
 
-    def get_rename_map(self, to: Optional[Literal["desc","name"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first") -> RenameMap:
-        if to in ("desc", "name"):
-            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep)
-        else: return dict()
-
-    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
-
-    def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
-                    indent=2, step=2, sep=' '):
-        log_object = self.eval_log(log_string, func=func)
-        self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
-
 
 class RequestSession(UploadSession):
     __metaclass__ = ABCMeta
@@ -292,7 +278,7 @@ class RequestSession(UploadSession):
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
@@ -511,7 +497,7 @@ class Spider(RequestSession, Iterator, Parser):
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
@@ -851,7 +837,7 @@ class AsyncSession(RequestSession):
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
@@ -997,7 +983,7 @@ class AsyncSpider(Spider, AsyncSession):
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
@@ -1289,7 +1275,7 @@ class LoginSpider(requests.Session, Spider):
 
     @abstractmethod
     def __init__(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 cookies: Optional[str]=None, **context):
         requests.Session.__init__(self)
         if cookies: self.cookies.update(decode_cookies(cookies))
@@ -1432,7 +1418,7 @@ class EncryptedSession(RequestSession):
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
@@ -1584,7 +1570,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
@@ -1617,7 +1603,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
@@ -1734,7 +1720,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[str]=None,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
