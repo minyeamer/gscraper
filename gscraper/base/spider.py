@@ -4,13 +4,13 @@ from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, LOGIN_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
 from gscraper.base.session import CustomDict, Iterator, Parser, SchemaInfo
-from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR, pretty_print
+from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, RenameMap, Data, MappedData, JsonData, RedirectData, Account
+from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Account
 from gscraper.base.types import is_array, is_int_array, init_origin
 
 from gscraper.utils import notna
@@ -221,17 +221,22 @@ def parse_origin(url: str) -> str:
 
 
 def parse_cookies(cookies: Union[RequestsCookieJar,SimpleCookie]) -> str:
-    return '; '.join([str(key)+"="+str(value) for key, value in cookies.items()])
+    if isinstance(cookies, str): return cookies
+    else: return '; '.join([str(key)+"="+str(value) for key, value in cookies.items()])
 
 
-def encode_cookies(cookies: Union[Dict,str], **kwargs) -> str:
-    return '; '.join(
-    [(parse_cookies(data) if isinstance(data, Dict) else str(data)) for data in [cookies,kwargs] if data])
+def encode_cookies(cookies: Union[str,Dict], *args, **kwargs) -> str:
+    cookies = parse_cookies(cookies)
+    if args: cookies = '; '.join([cookies]+[parse_cookies(arg) for arg in args])
+    if kwargs: cookies = '; '.join([cookies, parse_cookies(kwargs)])
+    return cookies
 
 
-def decode_cookies(cookies: str, **kwargs) -> Dict:
+def decode_cookies(cookies: Union[str,Dict], **kwargs) -> Dict:
     if not cookies: return kwargs
-    return dict({__key: __value for cookie in cookies.split('; ') for __key, __value in (cookie.split('=')[:2],)}, **kwargs)
+    elif isinstance(cookies, str):
+        cookies = {__key: __value for cookie in cookies.split('; ') for __key, __value in (cookie.split('=')[:2],)}
+    return dict(cookies, **kwargs)
 
 
 def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
@@ -1272,13 +1277,14 @@ class LoginSpider(requests.Session, Spider):
     host = str()
     where = WHERE
     ssl = None
+    cookie = str()
 
     @abstractmethod
     def __init__(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                cookies: Optional[str]=None, **context):
+                cookies: Optional[Union[str,Dict]]=None, **context):
         requests.Session.__init__(self)
-        if cookies: self.cookies.update(decode_cookies(cookies))
+        self.set_cookies(cookies)
         self.set_logger(logName, logLevel, logFile, debug=debug, extraSave=extraSave, interrupt=interrupt)
         self._disable_warnings()
 
@@ -1286,12 +1292,18 @@ class LoginSpider(requests.Session, Spider):
     def login(self):
         ...
 
+    def set_cookies(self, cookies: Optional[Union[str,Dict]]=None):
+        if not cookies: return
+        elif isinstance(cookies, str): self.cookie = cookies
+        elif isinstance(cookies, Dict): self.cookies.update(cookies)
+        else: return
+
     def get_cookies(self, encode=True, raw=False, url=None) -> Union[str,Dict,RequestsCookieJar,SimpleCookie]:
         return get_cookies(self, encode=encode, raw=raw, url=url)
 
-    def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore", **context):
-        cookies = decode_cookies(cookies, **context) if isinstance(cookies, str) else dict(cookies, **context)
-        for __key, __value in cookies.items():
+    def update_cookies(self, cookies: Union[str,Dict]=str(), if_exists: Literal["ignore","replace"]="ignore"):
+        if not cookies: return
+        for __key, __value in decode_cookies(cookies).items():
             if (if_exists == "replace") or (__key not in self.cookies):
                 self.cookies.set(__key, __value)
 
@@ -1385,14 +1397,22 @@ class LoginSpider(requests.Session, Spider):
         self.checkpoint(origin+"_text", where=origin, msg={"response":response.text}, save=response)
 
 
-class BaseLogin(LoginSpider):
+class LoginCookie(LoginSpider):
     operation = "login"
 
-    def __init__(self, cookies=str()):
-        super().__init__(cookies=cookies)
+    def __init__(self, cookies=str(), **context):
+        requests.Session.__init__(self)
+        self.cookies = parse_cookies(cookies)
 
     def login(self):
         return
+
+    def get_cookies(self, encode=True, **context) -> Union[str,Dict]:
+        return self.cookies if encode else decode_cookies(self.cookies)
+
+    def update_cookies(self, cookies: Union[str,Dict]=str(), **context):
+        if not cookies: return
+        else: self.cookies = encode_cookies(self.cookies, cookies)
 
 
 ###################################################################
@@ -1446,8 +1466,8 @@ class EncryptedSession(RequestSession):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as session:
-                login_context = TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context))
+            with self.init_auth(**context) as session:
+                login_context = TASK_CONTEXT(**self.validate_account(session, **context))
                 data = func(self, *args, **login_context)
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
@@ -1458,7 +1478,7 @@ class EncryptedSession(RequestSession):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as session:
+            with self.init_auth(**context) as session:
                 login_context = LOGIN_CONTEXT(**self.validate_account(session, **context))
                 data = func(self, *args, session=session, **login_context)
             time.sleep(.25)
@@ -1466,18 +1486,21 @@ class EncryptedSession(RequestSession):
             return data
         return wrapper
 
+    def init_auth(self, cookies=str(), **context) -> LoginSpider:
+        cookies = cookies if cookies else self.cookies
+        if cookies: return LoginCookie(cookies=cookies)
+        else: return self.auth(**self.get_auth_params(**context))
+
     def get_auth_params(self, **context) -> Context:
-        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="drop")
+        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="pass")
         if self.authKey and not (auth_info and all(auth_info.values())):
             raise ValueError(INVALID_USER_INFO_MSG(self.where))
         else: return dict(auth_info, **notna_dict(kloc(context, PROXY_LOG, if_null="drop")))
 
-    def validate_account(self, auth: LoginSpider, sessionCookies=True, **context) -> Context:
-        if self.cookies:
-            self.sessionCookies = False
-            return dict(context, cookies=encode_cookies(self.cookies, **self.set_cookies(**context)))
-        self.login(auth, **context)
-        if not (sessionCookies and self.sessionCookies):
+    def validate_account(self, auth: LoginSpider, sessionCookies=False, **context) -> Context:
+        try: self.login(auth, **context)
+        except: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        if isinstance(auth, LoginCookie) or not (sessionCookies and self.sessionCookies):
             context["cookies"] = self.cookies
         return context
 
@@ -1621,7 +1644,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as auth:
+            with self.init_auth(**context) as auth:
                 login_context = TASK_CONTEXT(**self.validate_account(auth, sessionCookies=False, **context))
                 data = await func(self, *args, semaphore=semaphore, **login_context)
             await asyncio.sleep(.25)
@@ -1634,10 +1657,10 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            with (BaseLogin(cookies=self.cookies) if self.cookies else self.auth(**self.get_auth_params(**context))) as auth:
+            with self.init_auth(**context) as auth:
+                login_context = LOGIN_CONTEXT(**self.validate_account(auth, **context))
                 cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**cookies) as session:
-                    login_context = LOGIN_CONTEXT(**self.validate_account(auth, **context))
                     data = await func(self, *args, session=session, semaphore=semaphore, **login_context)
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
