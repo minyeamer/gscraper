@@ -3,7 +3,7 @@ from gscraper.base.abstract import TypedDict, TypedList
 from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, LOGIN_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
-from gscraper.base.session import CustomDict, Iterator, Parser, SchemaInfo
+from gscraper.base.session import CustomDict, BaseSession, Iterator, Parser, SchemaInfo
 from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
@@ -18,7 +18,7 @@ from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_f
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, inter, diff
 from gscraper.utils.map import kloc, notna_dict, exists_dict, drop_dict, split_dict
-from gscraper.utils.map import vloc, apply_records, convert_data, rename_data, filter_data
+from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
@@ -105,6 +105,8 @@ DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define op
 
 WHERE, WHICH = "urls", "data"
 FIRST_PAGE, NEXT_PAGE = "of first page", "of next pages"
+
+SAVE_SHEET = "Data"
 
 
 ###################################################################
@@ -442,25 +444,41 @@ class RequestSession(UploadSession):
     ############################ With Data ############################
     ###################################################################
 
-    def with_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(),
+    def with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(),
                     func=str(), **context):
         self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
+        self.save_result(data)
+        self.upload_result(data, uploadInfo, **context)
+
+    @BaseSession.catch_exception
+    def save_result(self, data: Data):
+        if not self.localSave: return
+        file_name = self.get_save_name()+'_'+self.now("%Y%m%d%H%M%S")+".xlsx"
         if self.mappedReturn and isinstance(data, Dict):
-            self.with_mapped_data(data, uploadInfo=uploadInfo, **context)
-        else: self.with_single_data(data, prefix=prefix, uploadInfo=uploadInfo, **context)
+            self.save_mapped_result(file_name, **data)
+        else: self.save_dataframe(data, file_name, self.get_save_sheet())
 
-    def with_mapped_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
-        for __key, __data in data.items():
-            self.with_single_data(__data, prefix=__key, uploadInfo=kloc(uploadInfo, [__key], if_null="drop"), **context)
+    def save_mapped_result(self, file_name: str, **data):
+        rename_map = self.get_rename_map(to="desc")
+        with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+            for __key, __data in data.items():
+                sheet_name = self.get_save_sheet(__key)
+                to_dataframe(__data).rename(columns=rename_map).to_excel(writer, sheet_name=sheet_name, index=False)
 
-    def with_single_data(self, data: Data, prefix=str(), uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
-        if self.localSave:
-            self.save_data(data, prefix=self.get_save_name(prefix), ext="dataframe")
-        if uploadInfo:
-            self.upload_data(data, uploadInfo, **context)
+    @BaseSession.catch_exception
+    def upload_result(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
+        if not uploadInfo: return
+        elif self.mappedReturn and isinstance(data, Dict):
+            for __key, __data in data.items():
+                if __key in uploadInfo:
+                    self.upload_data(__data, uploadInfo[__key], **context)
+        else: self.upload_data(data, uploadInfo, **context)
 
     def get_save_name(self, prefix=str()) -> str:
         return prefix if prefix else self.operation
+
+    def get_save_sheet(self, sheet_name=str()) -> str:
+        return sheet_name if sheet_name else SAVE_SHEET
 
 
 ###################################################################

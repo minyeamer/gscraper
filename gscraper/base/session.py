@@ -587,7 +587,9 @@ class BaseSession(CustomDict):
 
     def get_rename_map(self, to: Optional[Literal["name","desc"]]="desc", schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
-        return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        if to in ("name","desc"):
+            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        else: return dict()
 
     def get_type_map(self, key: Literal["name","desc"]="name", schema_names: _KT=list(),
                         keep: Literal["fist","last",False]="first", common_fields=True) -> TypeMap:
@@ -614,38 +616,38 @@ class BaseSession(CustomDict):
 
     def save_data(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
         prefix = prefix if prefix else self.operation
-        file = prefix+'_'+self.now("%Y%m%d%H%M%S")
+        file_name = prefix+'_'+self.now("%Y%m%d%H%M%S")
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
-            self.save_dataframe(data, file+".xlsx")
+            self.save_dataframe(data, file_name+".xlsx")
         elif is_tag_type(ext):
-            self.save_source(data, file+".html")
-        else: self.save_json(data, file+".json")
+            self.save_source(data, file_name+".html")
+        else: self.save_json(data, file_name+".json")
 
-    def save_json(self, data: Data, file: str):
-        file = self._validate_file(file)
+    def save_json(self, data: Data, file_name: str):
+        file_name = self._validate_file(file_name)
         if isinstance(data, pd.DataFrame): data = data.to_dict("records")
-        with open(file, "w", encoding="utf-8") as f:
+        with open(file_name, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
-    def save_dataframe(self, data: Data, file: str):
-        file = self._validate_file(file)
-        if is_dfarray(data, empty=False): data = data[0]
-        else: data = to_dataframe(data)
-        data = data.rename(columns=self.get_rename_map())
-        try: data.to_excel(file, index=False)
-        except: self._write_dataframe(data, file)
+    def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1",
+                        rename: Optional[Union[Literal["name","desc"],Dict]]="desc"):
+        file_name = self._validate_file(file_name)
+        rename_map = rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)
+        data = to_dataframe(data).rename(columns=rename_map)
+        try: data.to_excel(file_name, sheet_name=sheet_name, index=False)
+        except: self._write_dataframe(data, file_name)
 
-    def _write_dataframe(self, data: pd.DataFrame, file: str):
-        writer = pd.ExcelWriter(file, engine="xlsxwriter", engine_context={"options":{"strings_to_urls":False}})
-        data.to_excel(writer, index=False)
+    def _write_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
+        writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_context={"options":{"strings_to_urls":False}})
+        data.to_excel(writer, sheet_name=sheet_name, index=False)
         writer.close()
 
-    def save_source(self, data: Union[str,Tag], file: str):
-        file = self._validate_file(file)
+    def save_source(self, data: Union[str,Tag], file_name: str):
+        file_name = self._validate_file(file_name)
         if not isinstance(data, Tag):
             data = BeautifulSoup(data, "html.parser")
-        with open(file, "w", encoding="utf-8") as f:
+        with open(file_name, "w", encoding="utf-8") as f:
             f.write(str(data.prettify()))
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
