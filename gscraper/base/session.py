@@ -40,7 +40,7 @@ import re
 CHECKPOINT = [
     "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count",
     "redirect", "request", "response", "parse", "map", "schema", "field", "group",
-    "apply", "[origin]_apply" "match", "[origin]_match", "login", "api", "exception"]
+    "apply", "[origin]_apply" "match", "[origin]_match", "login", "exception"]
 CHECKPOINT_PATH = "saved/"
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]

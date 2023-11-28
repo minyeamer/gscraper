@@ -13,7 +13,7 @@ import functools
 ###################################################################
 
 BASE_CONTEXT = lambda self=None, operation=None, initTime=None, prefix=None, rename=None, \
-                        inplace=None, self_var=None, **context: context
+                        inplace=None, self_var=None, update=None, **context: context
 
 
 LOG_CONTEXT = lambda logger=None, logJson=None, errors=None, func=None, **context: context

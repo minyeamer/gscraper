@@ -4,7 +4,7 @@ from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, LOGIN_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
 from gscraper.base.session import CustomDict, BaseSession, Iterator, Parser, SchemaInfo
-from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
+from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
@@ -17,7 +17,7 @@ from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, inter, diff
-from gscraper.utils.map import kloc, notna_dict, exists_dict, drop_dict, split_dict
+from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
@@ -106,6 +106,7 @@ DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define op
 WHERE, WHICH = "urls", "data"
 FIRST_PAGE, NEXT_PAGE = "of first page", "of next pages"
 
+AUTH_KEY = "Auth Key"
 SAVE_SHEET = "Data"
 
 
@@ -1474,7 +1475,6 @@ class EncryptedSession(RequestSession):
         decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
         if decryptedKey:
             self.update(encryptedKey=encrypt(decryptedKey,1), decryptedKey=decryptedKey)
-            self.logger.info(log_encrypt(**self.decryptedKey, show=3))
 
     ###################################################################
     ########################## Login Managers #########################
@@ -1507,13 +1507,21 @@ class EncryptedSession(RequestSession):
     def init_auth(self, cookies=str(), **context) -> LoginSpider:
         cookies = cookies if cookies else self.cookies
         if cookies: return LoginCookie(cookies=cookies)
-        else: return self.auth(**self.get_auth_params(**context))
+        else: return self.auth(**self.get_auth_info(update=True, **context))
 
-    def get_auth_params(self, **context) -> Context:
-        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="pass")
-        if self.authKey and not (auth_info and all(auth_info.values())):
+    def get_auth_info(self, update=False, **context) -> Context:
+        if not self.authKey: return dict()
+        auth_info = self._from_auth_key(**context)
+        if not (auth_info and isinstance(auth_info, Dict) and all(auth_info.values())):
             raise ValueError(INVALID_USER_INFO_MSG(self.where))
-        else: return dict(auth_info, **notna_dict(kloc(context, PROXY_LOG, if_null="drop")))
+        self.logger.info(log_encrypt(**auth_info, show=3))
+        return dict(context, **auth_info) if update else auth_info
+
+    def _from_auth_key(self, **context) -> Context:
+        auth_info = self.decryptedKey if self.decryptedKey else context
+        if isinstance(self.authKey, Sequence): return kloc(auth_info, self.authKey, if_null="pass")
+        elif isinstance(self.authKey, Callable): return self.authKey(**auth_info)
+        else: raise ValueError(INVALID_OBJECT_TYPE_MSG(self.authKey, AUTH_KEY))
 
     def validate_account(self, auth: LoginSpider, sessionCookies=False, **context) -> Context:
         try: self.login(auth, **context)
@@ -1539,7 +1547,7 @@ class EncryptedSession(RequestSession):
         @functools.wraps(func)
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
-            api_context = TASK_CONTEXT(**self.validate_secret(**context))
+            api_context = TASK_CONTEXT(**self.get_auth_info(update=True, **context))
             data = func(self, *args, **api_context)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1550,23 +1558,12 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with requests.Session() as session:
-                api_context = SESSION_CONTEXT(**self.validate_secret(**context))
+                api_context = SESSION_CONTEXT(**self.get_auth_info(update=True, **context))
                 data = func(self, *args, session=session, **api_context)
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
-
-    def validate_secret(self, **context) -> Context:
-        api_info = self.get_api_info(**context)
-        self.checkpoint("api", where="set_headers", msg={"api_info":api_info})
-        return dict(context, **api_info)
-
-    def get_api_info(self, **context) -> Context:
-        auth_info = kloc((self.decryptedKey if self.decryptedKey else context), self.authKey, if_null="drop")
-        if self.authKey and not (auth_info and all(auth_info.values())):
-            raise ValueError(INVALID_API_INFO_MSG(self.where))
-        else: return auth_info
 
 
 ###################################################################
@@ -1694,7 +1691,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            api_context = TASK_CONTEXT(**self.validate_secret(**context))
+            api_context = TASK_CONTEXT(**self.get_auth_info(update=True, **context))
             data = await func(self, *args, semaphore=semaphore, **api_context)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1706,7 +1703,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
-                api_context = SESSION_CONTEXT(**self.validate_secret(**context))
+                api_context = SESSION_CONTEXT(**self.get_auth_info(update=True, **context))
                 data = await func(self, *args, session=session, semaphore=semaphore, **api_context)
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
