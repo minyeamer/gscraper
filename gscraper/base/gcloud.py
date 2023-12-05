@@ -1,13 +1,14 @@
-from gscraper.base.abstract import TypedDict, TypedRecords, GCLOUD_CONTEXT
-from gscraper.base.session import BaseSession, Schema, Field, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
+from __future__ import annotations
+from gscraper.base.abstract import OptionalDict, TypedDict, Value, ValueSet, GCLOUD_CONTEXT, INVALID_OBJECT_MSG, INVALID_OBJECT_TYPE_MSG
+from gscraper.base.session import BaseSession
 
-from gscraper.base.types import _KT, TypeHint, IndexLabel, RenameMap
+from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap
 from gscraper.base.types import TabularData, Account, PostData, is_records, from_literal
 
 from gscraper.utils.cast import cast_str, cast_list, cast_float, cast_int, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_timestamp, get_time, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_exists, df_empty, to_array, get_scala, kloc, to_dict, to_records
+from gscraper.utils.map import isna, df_exists, df_empty, to_array, get_scala, kloc, to_dict, set_dict, to_records
 from gscraper.utils.map import cloc, to_dataframe, apply_df, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account
@@ -22,14 +23,16 @@ import pandas_gbq
 
 from abc import ABCMeta
 from tqdm.auto import tqdm
+import copy
 import functools
 import os
 import requests
 
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Union
 from collections import defaultdict
 import datetime as dt
 import json
+import re
 import pandas as pd
 
 
@@ -63,7 +66,6 @@ INVALID_PRIMARY_KEY_MSG = "Please verify that a primary key exists and is in bot
 
 BIGQUERY_PARTITION_MSG = "Uploading partitioned data to Google BigQuery"
 
-BIGQUERY_FIELD = "BigQueryField"
 BIGQUERY_TYPE = "BigQueryType"
 BIGQUERY_MODE = "BigQueryMode"
 BIGQUERY_SCHEMA = "BigQuerySchema"
@@ -101,18 +103,10 @@ def fetch_gcloud_authorization(audience=str(), account: Account=dict()) -> str:
     return "Bearer "+credentials.token
 
 
-def gcloud_authorized(func):
-    @functools.wraps(func)
-    def wrapper(*args, audience=str(), authorization=str(), account: Account=dict(), **kwargs):
-        if not authorization:
-            authorization = fetch_gcloud_authorization(audience, account)
-        return func(*args, audience=audience, authorization=authorization, account=account, **kwargs)
-    return wrapper
-
-
-@gcloud_authorized
 def request_gcloud(audience: str, data: Optional[PostData]=dict(), authorization=str(),
-                    file=str(), operation=str()) -> requests.Response:
+                    account: Account=dict(), file=str(), operation=str()) -> requests.Response:
+    if not authorization:
+        authorization = fetch_gcloud_authorization(audience, account)
     data = data if data and isinstance(data, dict) else read_data(file).get(operation, dict())
     return requests.post(audience, json=data, headers={"Authorization":authorization})
 
@@ -128,29 +122,47 @@ BigQueryType = Union[Literal["STRING", "BYTES"], BigQueryNumericType, BigQUeryDa
 
 BigQueryMode = Literal["NULLABLE", "REQUIRED", "REPEATED"]
 
-class BigQueryField(Field):
-    def __init__(self, name: str, type: BigQueryType, mode: Optional[BigQueryMode]=None,
-                desc: Optional[str]=None, maxLength: Optional[int]=None, description: Optional[str]=None):
-        self.validate(type, mode)
-        TypedDict.__init__(self, name=name, type=type)
-        self.update_notna(mode=mode, description=(desc if desc else description), maxLength=maxLength)
+class BigQueryField(Value):
+    typeCast = False
 
-    def validate(self, type: BigQueryType, mode: BigQueryMode):
+    def __init__(self, name: str, type: BigQueryType, mode: Optional[BigQueryMode]=None,
+                description: Optional[str]=None, maxLength: Optional[int]=None):
+        super().__init__(name=name, **self.validate_type(type),
+            optional=dict(**self.validate_mode(mode), description=description, maxLength=maxLength))
+
+    def validate_type(self, type: BigQueryType) -> Context:
         if type not in from_literal(BigQueryType):
             raise ValueError(INVALID_OBJECT_MSG(type, BIGQUERY_TYPE))
+        else: return dict(type=type)
+
+    def validate_mode(self, mode: BigQueryMode) -> Context:
         if mode and (mode not in from_literal(BigQueryMode)):
-            raise ValueError(INVALID_OBJECT_MSG(type, BIGQUERY_TYPE))
+            raise ValueError(INVALID_OBJECT_MSG(mode, BIGQUERY_MODE))
+        else: return dict(mode=mode)
+
+    def copy(self) -> BigQueryField:
+        return copy.deepcopy(self)
+
+    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> BigQueryField:
+        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
 
 
-def validate_gbq_field(field: Any) -> BigQueryField:
-    if isinstance(field, BigQueryField): return field
-    elif isinstance(field, Dict): return BigQueryField(**field)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(field, BIGQUERY_FIELD))
+class BigQuerySchema(ValueSet):
+    dtype = BigQueryField
+    typeCheck = True
 
+    def __init__(self, *fields: BigQueryField):
+        super().__init__(*fields)
 
-class BigQuerySchema(Schema):
-    def __init__(self, *args: BigQueryField):
-        TypedRecords.__init__(self, *[validate_gbq_field(field) for field in args])
+    def copy(self) -> BigQuerySchema:
+        return copy.deepcopy(self)
+
+    def update(self, __iterable: Iterable[BigQueryField], inplace=True) -> BigQuerySchema:
+        return super().update(__iterable, inplace=inplace)
+
+    def map(self, key: str, value: str) -> Dict:
+        key, value = re.sub(r"^desc$", "description", key), re.sub(r"^desc$", "description", value)
+        return super().map(key, value)
 
     def get_primary_key(self, index=0) -> str:
         keys = [field.get("name") for field in self if isinstance(field, Dict) and field.get("mode") == "REQUIRED"]
@@ -158,7 +170,7 @@ class BigQuerySchema(Schema):
 
 
 def validate_gbq_schema(schema: Any, optional=False) -> BigQuerySchema:
-    if (not schema) and optional: return
+    if optional and (not schema): return
     elif isinstance(schema, BigQuerySchema): return schema
     elif isinstance(schema, List): return BigQuerySchema(*schema)
     else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, BIGQUERY_SCHEMA))
@@ -170,16 +182,17 @@ def validate_gbq_schema(schema: Any, optional=False) -> BigQuerySchema:
 
 NumericiseIgnore = Union[Sequence[int], bool]
 
-class GspreadReadContext(TypedDict):
+class GspreadReadContext(OptionalDict):
     def __init__(self, key: str, sheet: str, fields: Optional[IndexLabel]=None, default: Optional[Any]=None,
                 if_null: Literal["drop","pass"]="pass", head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
                 return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
                 size: Optional[int]=None):
-        super().__init__(key=key, sheet=sheet, fields=fields)
-        self.update_default(dict(if_null="pass", head=1, to="name", return_type="dataframe"),
-            default=default, if_null=if_null, head=head, headers=headers,
-            str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size)
+        super().__init__(key=key, sheet=sheet, fields=fields,
+            optional=dict(
+                default=default, if_null=if_null, head=head, headers=headers,
+                str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size),
+            null_if=dict(if_null="pass", head=1, to="name", return_type="dataframe"))
 
 
 class GoogleQueryContext(GspreadReadContext):
@@ -187,16 +200,18 @@ class GoogleQueryContext(GspreadReadContext):
                 if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, strict=True, unique=False,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, to: Optional[Literal["desc","name"]]="name",
-                return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
-                size: Optional[int]=None):
-        super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, return_type, rename, size)
-        self.update_default(dict(axis=0, dropna=True, strict=True, unique=False),
-            axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols)
+                rename: Optional[RenameMap]=None, size: Optional[int]=None):
+        super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, rename=rename, size=size)
+        self.update_notna(axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+            null_if=dict(axis=0, dropna=True, strict=True, unique=False))
 
 
 class GoogleQueryInfo(TypedDict):
+    dtype = GoogleQueryContext
+    typeCheck = False
+
     def __init__(self, **context: GoogleQueryContext):
-        super().__init__(context)
+        dict.__init__(self, context)
 
 
 class GoogleQueryReader(BaseSession):
@@ -207,7 +222,7 @@ class GoogleQueryReader(BaseSession):
         for name, queryContext in queryInfo.items():
             if not isinstance(queryInfo, Dict): continue
             elif len(kloc(queryContext, [KEY, SHEET, FIELDS], if_null="drop")) != 3: continue
-            elif "if_null" not in queryContext: queryContext["if_null"] = "drop"
+            set_dict(queryContext, if_null="drop", if_exists="ignore")
             data = self.read_gspread(**queryContext, name=name, account=account)
             self.update(self.get_values_by_axis(to_dataframe(data), **queryContext))
 
@@ -217,7 +232,7 @@ class GoogleQueryReader(BaseSession):
                     return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
                     size: Optional[int]=None, name=str(), account: Account=dict()) -> TabularData:
         context = dict(default=default, if_null=if_null, head=head, headers=headers, numericise_ignore=str_cols,
-                        return_type=return_type, rename=(rename if rename else self.get_rename_map(to=to)))
+                        return_type=return_type, rename=(rename if rename else self.get_rename_map(to=to, query=True)))
         data = read_gspread(key, sheet, fields=fields, account=account, **context)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
@@ -242,29 +257,31 @@ class GoogleQueryReader(BaseSession):
 ###################### Google Cloud Uploader ######################
 ###################################################################
 
-class GspreadUpdateContext(TypedDict):
+class GspreadUpdateContext(OptionalDict):
     def __init__(self, key: str, sheet: str, mode: Literal["replace","append","upsert"]="append",
                 cell: Optional[str]=None, base_sheet: Optional[str]=None, default: Optional[Any]=None,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None):
-        super().__init__(key=key, sheet=sheet)
-        self.update_default(dict(mode="append", head=1, to="desc"),
-            mode=mode, cell=cell, base_sheet=base_sheet, default=default,
-            head=head, headers=headers, str_cols=str_cols, to=to, rename=rename)
+        super().__init__(key=key, sheet=sheet,
+            optional=dict(
+                mode=mode, cell=cell, base_sheet=base_sheet, default=default,
+                head=head, headers=headers, str_cols=str_cols, to=to, rename=rename),
+            null_if=dict(mode="append", head=1, to="desc"))
 
 
-class BigQueryContext(TypedDict):
+class BigQueryContext(OptionalDict):
     def __init__(self, table: str, project_id: str, mode: Literal["fail","replace","append","upsert"]="append",
                 base_query: Optional[str]=None, schema: Optional[BigQuerySchema]=None,
                 progress=True, partition: Optional[str]=None,
                 partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
-        super().__init__(table=table, project_id=project_id)
-        self.update_default(dict(mode="append", progress=True, partition_by="auto"),
-            mode=mode, base_query=base_query, schema=validate_gbq_schema(schema, optional=True), progress=progress,
-            partition=partition, partition_by=partition_by)
+        super().__init__(table=table, project_id=project_id,
+            optional=dict(
+                mode=mode, base_query=base_query, schema=validate_gbq_schema(schema, optional=True),
+                progress=progress, partition=partition, partition_by=partition_by),
+            null_if=dict(mode="append", progress=True, partition_by="auto"))
 
 
-class GoogleUpdateContext(TypedDict):
+class GoogleUpdateContext(OptionalDict):
     def __init__(self, from_key=str(), from_sheet=str(), from_query=str(), from_pid=str(),
                 to_key=str(), to_sheet=str(), to_table=str(), to_pid=str(),
                 mode: Literal["fail","replace","append","upsert"]="append", default: Optional[Any]=None,
@@ -272,21 +289,29 @@ class GoogleUpdateContext(TypedDict):
                 to: Optional[Literal["desc","name"]]="desc", rename: Optional[RenameMap]=None, cell: Optional[str]=None,
                 schema: Optional[BigQuerySchema]=None, progress=True, partition: Optional[str]=None,
                 partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
-        query = kloc(locals(), FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")
-        if len(query) != 4: raise ValueError(INVALID_QUERY_MSG)
-        super().__init__(**query)
-        self.update_default(dict(mode="append", progress=True, head=1, to="desc"),
-            mode=mode, default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
-            cell=cell, schema=validate_gbq_schema(schema, optional=True), progress=progress,
-            partition=partition, partition_by=partition_by)
+        super().__init__(**self.validate_key(from_key, from_sheet, from_query, from_pid, to_key, to_sheet, to_table, to_pid),
+            optional=dict(
+                mode=mode, default=default, head=head, headers=headers, str_cols=str_cols, to=to, rename=rename,
+                cell=cell, schema=validate_gbq_schema(schema, optional=True), progress=progress,
+                partition=partition, partition_by=partition_by),
+            null_if=dict(mode="append", progress=True, head=1, to="desc"))
+
+    def validate_key(self, from_key=str(), from_sheet=str(), from_query=str(), from_pid=str(),
+                    to_key=str(), to_sheet=str(), to_table=str(), to_pid=str()) -> Context:
+        if not (((from_key and from_sheet) or (from_query or from_pid)) and ((to_key and to_sheet) or (to_table and to_pid))):
+            raise ValueError(INVALID_QUERY_MSG)
+        else: return kloc(locals(), FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")
 
 
 GoogleUploadMode = Literal["fail","replace","append","upsert"]
 GoogleUploadContext = Union[GspreadUpdateContext, BigQueryContext, GoogleUpdateContext]
 
 class GoogleUploadInfo(TypedDict):
+    dtype = (GspreadUpdateContext, BigQueryContext, GoogleUpdateContext)
+    typeCheck = False
+
     def __init__(self, **context: GoogleUploadContext):
-        super().__init__(context)
+        dict.__init__(self, **context)
 
 
 class GoogleUploader(BaseSession):
@@ -305,7 +330,8 @@ class GoogleUploader(BaseSession):
                 status = self.upload_gspread(data=data.copy(), **uploadContext, name=name, **context)
             elif (not data.empty) and (len(kloc(uploadContext, [TABLE, PID], if_null="drop")) == 2):
                 status = self.upload_gbq(data=data.copy(), **uploadContext, name=name, **gbq_auth, **context)
-            elif len(kloc(uploadContext, FROM_GS + FROM_GBQ + TO_GS + TO_GBQ, if_null="drop")) == 4:
+            elif (((len(kloc(uploadContext, FROM_GS)) == 2) or (len(kloc(uploadContext, FROM_GBQ)) == 2)) and
+                    ((len(kloc(uploadContext, TO_GS)) == 2) or (len(kloc(uploadContext, TO_GBQ)) == 2))):
                 status = self.update_data(**uploadContext, name=name, **gbq_auth, **context)
             else: status = False
             self.uploadStatus[name] = status
@@ -380,7 +406,7 @@ class GoogleUploader(BaseSession):
         return data
 
     def map_gbq_base(self, data: pd.DataFrame, base: pd.DataFrame, schema: BigQuerySchema, **context) -> pd.DataFrame:
-        key = validate_primary_key(data, base, schema=schema)
+        key = _validate_primary_key(data, base, schema=schema)
         data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
         return data[data[key].notna()].drop_duplicates(key)
 
@@ -512,7 +538,7 @@ def gbq_authorized(func):
     return wrapper
 
 
-def _validate_schema(data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, fillna=False) -> pd.DataFrame:
+def _validate_gbq_data(data: pd.DataFrame, schema: Optional[BigQuerySchema]=None, fillna=False) -> pd.DataFrame:
     if not (schema and is_records(schema)): return data
     context = {field["name"]:BIGQUERY_TYPE_CAST(field["type"], fillna) for field in schema}
     data = apply_df(cloc(data, list(context.keys()), if_null="pass"), **context)
@@ -532,7 +558,7 @@ def to_gbq(table: str, project_id: str, data: pd.DataFrame, reauth=False,
             progress=True, validate=True, fillna=False, partition=str(),
             partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
             audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None):
-    if validate: data = _validate_schema(data, schema, fillna=fillna)
+    if validate: data = _validate_gbq_data(data, schema, fillna=fillna)
     context = dict(reauth=reauth, if_exists=if_exists, credentials=credentials)
     if partition:
         return to_gbq_partition(table, project_id, data, schema=schema, progress=progress, validate=False,
@@ -546,7 +572,7 @@ def to_gbq_partition(table: str, project_id: str, data: pd.DataFrame, reauth=Fal
                     progress=True, validate=True, fillna=False, partition=str(),
                     partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
                     audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None):
-    if validate: data = _validate_schema(data, schema, fillna=fillna)
+    if validate: data = _validate_gbq_data(data, schema, fillna=fillna)
     context = dict(destination_table=table, project_id=project_id, reauth=reauth, if_exists=if_exists,
                     table_schema=schema, progress_bar=progress, credentials=credentials)
     if partition not in data: data.to_gbq(**context)
@@ -560,7 +586,7 @@ def to_gbq_partition(table: str, project_id: str, data: pd.DataFrame, reauth=Fal
             data[data[partition]==part].to_gbq(**context)
 
 
-def validate_primary_key(data: pd.DataFrame, base: pd.DataFrame, key=str(),
+def _validate_primary_key(data: pd.DataFrame, base: pd.DataFrame, key=str(),
                         schema: Optional[BigQuerySchema]=None, index=0) -> str:
     if not key:
         key = validate_gbq_schema(schema).get_primary_key(index=index)
@@ -573,9 +599,9 @@ def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, base: Optional[p
                 reauth=False, if_exists: Literal["fail","replace","append"]="replace",
                 schema: Optional[BigQuerySchema]=None, progress=True, validate=True, fillna=False,
                 audience=str(), account: Account=dict(), credentials: Optional[IDTokenCredentials]=None):
-    if validate: data = _validate_schema(data, schema, fillna=fillna)
+    if validate: data = _validate_gbq_data(data, schema, fillna=fillna)
     context = dict(reauth=reauth, credentials=credentials)
     if df_empty(base): base = read_gbq(table, project_id, **context)
-    key = validate_primary_key(data, base, key, schema)
+    key = _validate_primary_key(data, base, key, schema)
     data = data.set_index(key).combine_first(base.set_index(key)).reset_index()
     data.to_gbq(table, project_id, if_exists=if_exists, table_schema=schema, progress_bar=progress, **context)

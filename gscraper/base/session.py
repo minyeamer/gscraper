@@ -1,13 +1,14 @@
 from __future__ import annotations
-from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords
+from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, OptionalDict, Value, ValueSet, Query
+from gscraper.base.abstract import INVALID_INSTANCE_MSG
 
-from gscraper.base.types import _KT, _VT, _PASS, ClassInstance, Context, LogLevel, TypeHint, TypeList
+from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, TypeMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
 from gscraper.base.types import is_numeric_or_date_type, is_dict_type, is_records_type, is_dataframe_type, is_tag_type
-from gscraper.base.types import is_array, allin_instance, is_str_array, is_records, is_dfarray, inspect_function
+from gscraper.base.types import is_array, allin_instance, is_str_array
 
 from gscraper.utils import isna, notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
@@ -16,19 +17,20 @@ from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_dat
 from gscraper.utils.map import isna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, is_single_path, hier_get, chain_dict, drop_dict, apply_dict
-from gscraper.utils.map import vloc, drop_duplicates, concat_df, safe_apply_df, match_df, to_dataframe, to_series
+from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict, apply_dict
+from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
 from gscraper.utils.map import get_value, filter_data, set_data, isin_data, chain_exists, groupby_data, is_single_selector
 
 from abc import ABCMeta
 from ast import literal_eval
 from math import ceil
 from itertools import product
+import copy
 import functools
 import logging
 import os
 
-from typing import Any, Dict, Callable, List, Literal, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Dict, Callable, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 import datetime as dt
@@ -99,9 +101,6 @@ START, END = 0, 1
 
 USER_INTERRUPT_MSG = lambda where: f"Interrupt occurred on {where} by user."
 
-INVALID_OBJECT_MSG = lambda __object, __name: f"'{__object}' is not a valid {__name} object."
-INVALID_OBJECT_TYPE_MSG = lambda __object, __type: f"'{type(__object)}' is not a valid type for {__type} object."
-
 PAGINATION_ERROR_MSG = "Pagination params, size or pageStart are not valid."
 EMPTY_CONTEXT_QUERY_MSG = "One or more queries for crawling do not exist."
 
@@ -137,103 +136,97 @@ EXCEPTION_MSG = lambda context=dict(), field=dict(), name=str(): \
 REQUIRED_MSG = lambda context=dict(), field=dict(), name=str(): \
     f"Value{OF_FIELD(field, name)} is required{FROM_SCHEMA(context)}."
 
-INFO_OBJECT = "SchemaInfo"
-CONTEXT_OBJECT = "SchemaContext"
-SCHEMA_OBJECT = "Schema"
-FIELD_OBJECT = "SchemaField"
-APPLY_FUNCTION = "ApplyFunction"
-MATCH_FUNCTION = "MatchFunction"
-
 UPDATE_DATE, UPDATE_TIME = "updateDate", "updateTime"
 
 
 ###################################################################
-########################### Schema Apply ##########################
+############################# Function ############################
 ###################################################################
 
-class Apply(TypedDict):
+class Function(OptionalDict):
+    __metaclass__ = ABCMeta
+
+    def raise_ctype_error(self, __object, __type=str()):
+        __type = __type if __type else self.__class__.__name__
+        raise TypeError(INVALID_INSTANCE_MSG(__object, __type))
+
+
+class Apply(Function):
     def __init__(self, func: Union[ApplyFunction, str], default: Optional[Any]=None, **context):
-        self.validate(func)
-        super().__init__(func=func)
-        self.update_notna(default=default)
-        self.update(context)
+        super().__init__(**self.validate_function(func), optional=dict(default=default), **context)
 
-    def validate(self, func: Union[ApplyFunction, str]):
+    def validate_function(self, func: Union[ApplyFunction, str]) -> Context:
         if not isinstance(func, (Callable,str)):
-            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, APPLY_FUNCTION))
+            self.raise_ctype_error(func)
+        else: return dict(func=func)
 
 
-class Match(TypedDict):
+class Match(Function):
     def __init__(self, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
                 query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
                 exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
                 flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
                 hier=True, default=False, **context):
-        self.validate(func, path, query, value)
-        super().__init__()
-        self.update_default(dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False),
-            func=func, path=path, query=query, value=value, exact=exact, include=include, exclude=exclude,
-            flip=flip, strict=strict, how=how, if_null=if_null, hier=hier, default=default)
-        self.update(context)
+        super().__init__(**self.validate_function(func, path, query), **context,
+            optional=dict(
+                value=value, exact=exact, include=include, exclude=exclude, flip=flip, strict=strict,
+                how=how, if_null=if_null, hier=hier, default=default),
+            null_if=dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False))
 
-    def validate(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None,
-                query: Optional[_KT]=None, value: Optional[Any]=None):
+    def validate_function(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None, query: Optional[_KT]=None) -> Context:
         if isna(func) and isna(path) and isna(query):
             raise ValueError(INVALID_MATCH_KEY_MSG)
         elif notna(func) and not isinstance(func, Callable):
-            raise TypeError(INVALID_OBJECT_TYPE_MSG(func, MATCH_FUNCTION))
-        else: pass
+            self.raise_ctype_error(func)
+        else: return notna_dict(func=func, path=path, query=query)
 
 
 class Cast(Apply):
     def __init__(self, type: TypeHint, default: Optional[Any]=None, strict=True, **context):
-        super().__init__(func=__CAST__, type=type)
-        self.update_default(dict(strict=True), default=default, strict=strict, **context)
+        Function.__init__(self, func=__CAST__, type=type, default=default, **context,
+            optional=dict(strict=strict), null_if=dict(strict=True))
 
 
 class Exists(Apply):
     def __init__(self, keys: _KT=list(), default: Optional[Any]=None, hier=False):
-        super().__init__(func=__EXISTS__, keys=keys)
-        self.update_default(dict(hier=False), default=default, hier=hier)
+        Function.__init__(self, func=__EXISTS__, keys=keys, default=default,
+            optional=dict(hier=hier), null_if=dict(hier=False))
 
 
 class Join(Apply):
     def __init__(self, keys: _KT=list(), sep=',', default: Optional[Any]=None,
                 hier=False, strip=True, split: Optional[str]=None):
-        super().__init__(func=__JOIN__, keys=keys, sep=sep)
-        self.update_default(dict(hier=False, strip=True),
-            default=default, hier=hier, strip=strip, split=split)
+        Function.__init__(self, func=__JOIN__, keys=keys, sep=sep, default=default,
+            optional=dict(hier=hier, strip=strip, split=split), null_if=dict(hier=False, strip=True))
 
 
 class Regex(Apply):
     def __init__(self, pattern: RegexFormat, default=None, index: Optional[int]=0,
                 repl: Optional[str]=None, strip=False):
-        super().__init__(func=__REGEX__, pattern=pattern)
-        self.update_default(dict(index=0, strip=False),
-            default=default, index=index, repl=repl, strip=strip)
+        Function.__init__(self, func=__REGEX__, pattern=pattern, default=default,
+            optional=dict(index=index, repl=repl, strip=strip), null_if=dict(index=0, strip=False))
 
 
 class Rename(Apply):
     def __init__(self, rename: RenameMap, path: Optional[_KT]=None,
                 if_null: Union[Literal["null","pass","error"],Any]="null"):
-        super().__init__(func=__RENAME__, rename=rename)
-        self.update_default(dict(if_null="null"), path=path, if_null=if_null)
+        Function.__init__(self, func=__RENAME__, rename=rename,
+            optional=dict(path=path, if_null=if_null), null_if=dict(if_null="null"))
 
 
 class Split(Apply):
     def __init__(self, sep=',', maxsplit=-1, default: Optional[Any]=None,
                 strict=True, index: Optional[int]=None, type: Optional[TypeHint]=None):
-        super().__init__(func=__SPLIT__, sep=sep)
-        self.update_default(dict(maxsplit=-1, strict=True),
-            maxsplit=maxsplit, default=default, strict=strict, index=index, type=type)
+        Function.__init__(self, func=__SPLIT__, sep=sep, default=default,
+            optional=dict(maxsplit=maxsplit, strict=strict, index=index, type=type),
+            null_if=dict(maxsplit=-1, strict=True))
 
 
 class Stat(Apply):
     def __init__(self, stat: Callable, keys: _KT=list(), default: Optional[Any]=None,
                 hier=False, type: Optional[TypeHint]=None, strict=True):
-        super().__init__(func=__STAT__, stat=stat, keys=keys)
-        self.update_default(dict(hier=False, strict=True),
-            default=default, hier=hier, type=type, strict=strict)
+        Function.__init__(self, func=__STAT__, stat=stat, keys=keys, default=default,
+            optional=dict(hier=hier, type=type, strict=strict), null_if=dict(hier=False, strict=True))
 
 
 class Sum(Stat):
@@ -247,67 +240,61 @@ class Map(Apply):
                 match: Optional[Match]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
                 countby: Literal["page","start"]="start", page=1, start=1,
                 submatch: Optional[Union[MatchFunction,bool]]=True, discard=True) -> Data:
-        super().__init__(func=__MAP__, schema=schema)
-        self.update_default(dict(countby="start", page=1, start=1, submatch=True, discard=True),
-            type=type, root=root, match=match, groupby=groupby, groupSize=groupSize,
-            countby=countby, page=page, start=start, submatch=submatch, discard=discard)
+        Function.__init__(self, func=__MAP__, schema=schema,
+            optional=dict(
+                type=type, root=root, match=match, groupby=groupby, groupSize=groupSize,
+                countby=countby, page=page, start=start, submatch=submatch, discard=discard),
+            null_if=dict(countby="start", page=1, start=1, submatch=True, discard=True))
 
 
 ###################################################################
-########################### Schema Field ##########################
+############################## Field ##############################
 ###################################################################
 
 SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
 SchemaMode = Literal["QUERY", "INDEX", "LABEL", "NULLABLE", "NOTNULL", "NOTZERO", "REQUIRED", "OPTIONAL"]
 PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
 
-class Field(TypedDict):
-    def __init__(self, name: _KT, path: SchemaPath, type: TypeHint, mode: SchemaMode, desc: Optional[str]=None,
-                default: Optional[Any]=None, apply: Optional[Apply]=None, match: Optional[Match]=None,
-                cast=False, strict=True, sep=str(), strip=True, how: Optional[PathType]=None, description: Optional[str]=None):
-        super().__init__(name=name, path=path, type=type, mode=mode)
-        self.update_default(dict(cast=False, strict=True, sep=str(), strip=True),
-            description=(desc if desc else description), default=default,
-            apply=_to_apply_func(apply), match=_to_match_func(match),
-            cast=cast, strict=strict, sep=sep, strip=strip, how=(how if how else _get_path_type(path)))
-        self.init_field()
+class Field(Value):
+    typeCast = True
 
-    def init_field(self):
-        self.update(type=get_type(self[TYPE], argidx=-1))
-        if self[MODE] in (QUERY,LABEL): return
-        elif self[MODE] == INDEX:
-            self.update(path=[COUNT_INDEX])
-        elif self[MODE] == NOTNULL:
-            self.update(default=init_origin(self[TYPE]), cast=True)
-        elif self[MODE] == NOTZERO:
-            self.update(cast=True, strict=False)
-        elif is_numeric_or_date_type(self[TYPE]) and (CAST not in self):
-            self.update(cast=True)
-            if is_bool_type(self[TYPE]):
-                self.update(strict=False)
-        else: return
+    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, mode: Optional[SchemaMode]=None,
+                path: Optional[SchemaPath]=None, default: Optional[Any]=None, cast: Optional[bool]=None, strict=True,
+                apply: Optional[Apply]=None, match: Optional[Match]=None, **kwargs):
+        super().__init__(name=name, type=type)
+        self.update_optional(
+            desc=desc, mode=mode, path=path, default=default, cast=cast, strict=strict, apply=apply, match=match, **kwargs)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[Field,Any]:
-        return super().copy(__instance)
+    def update_optional(self, desc: Optional[str]=None, mode: Optional[SchemaMode]=None, path: Optional[SchemaPath]=None,
+                        default: Optional[Any]=None, cast: Optional[bool]=None, strict=True,
+                        apply: Optional[Apply]=None, match: Optional[Match]=None, inplace=True, **kwargs):
+        if (mode is None) or (path is None):
+            return self.update_notna(desc=desc, **kwargs)
+        elif mode in (QUERY,LABEL): pass
+        elif mode == INDEX: path = [COUNT_INDEX]
+        elif mode == NOTNULL: default, cast = init_origin(self[TYPE]), True
+        elif mode == NOTZERO: cast, strict = True, False
+        elif is_numeric_or_date_type(self[TYPE]):
+            if cast is None: cast = True
+            if is_bool_type(self[TYPE]): strict = False
+        self.update_notna(
+            desc=desc, mode=mode, path=path, default=default, cast=cast, strict=(None if strict is True else strict),
+            apply=_to_apply_func(apply), match=_to_match_func(match), how=_get_path_type(path), **kwargs)
+
+    def copy(self) -> Field:
+        return copy.deepcopy(self)
 
     def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> Field:
         return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
 
 
-def validate_field(field: Any) -> Field:
-    if isinstance(field, Field): return field
-    elif isinstance(field, Dict): return Field(**field)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(field, FIELD_OBJECT))
-
-
 def _get_path_type(path: SchemaPath) -> PathType:
-    if isinstance(path, str): return VALUE
-    elif isinstance(path, Sequence):
+    if isinstance(path, Sequence):
         if isinstance(path, Tuple) and len(path) == 2: return TUPLE
         elif len(path) > 0 and is_array(path[-1]): return ITERATE
         else: return PATH
     elif isinstance(path, Callable): return CALLABLE
-    else: raise TypeError(INVALID_PATH_TYPE_MSG(path))
+    else: return VALUE
 
 
 def _to_apply_func(apply: Any) -> Apply:
@@ -316,19 +303,19 @@ def _to_apply_func(apply: Any) -> Apply:
     elif isinstance(apply, Dict): return Apply(**apply)
     elif isinstance(apply, Sequence):
         return [_to_apply_func(func) for func in apply]
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(apply, APPLY_FUNCTION))
+    else: raise TypeError(INVALID_INSTANCE_MSG(apply, apply.__class__.__name__))
 
 
 def _to_match_func(match: Any) -> Match:
     if isinstance(match, Match) or (not match): return match
     elif isinstance(match, Callable): return Match(func=match)
     elif is_array(match): return Match(path=match)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(match, MATCH_FUNCTION))
+    else: raise TypeError(INVALID_INSTANCE_MSG(match, match.__class__.__name__))
 
 
 COMMON_FIELDS = [
-    Field(name="updateDate", path=[], type="DATE", mode="NULLABLE", desc=UPDATE_DATE),
-    Field(name="updateTime", path=[], type="DATETIME", mode="NULLABLE", desc=UPDATE_TIME),
+    Field(name="updateDate", type="DATE", desc=UPDATE_DATE),
+    Field(name="updateTime", type="DATETIME", desc=UPDATE_TIME),
 ]
 
 
@@ -336,175 +323,130 @@ COMMON_FIELDS = [
 ############################## Schema #############################
 ###################################################################
 
-class Schema(TypedRecords):
-    def __init__(self, *args: Field):
-        super().__init__(*[validate_field(field) for field in args])
+class Schema(ValueSet):
+    dtype = Field
+    typeCheck = True
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[TypedRecords,Any]:
-        return super().copy(__instance)
+    def __init__(self, *fields: Field):
+        super().__init__(*fields)
 
-    def _with_common_fields(self) -> Schema:
-        return Schema(*self, *COMMON_FIELDS)
+    def copy(self) -> Schema:
+        return copy.deepcopy(self)
 
-    def get(self, __key: _KT, values_only=False, keep: Literal["fist","last",True,False]=True,
-            match: Optional[MatchFunction]=None, common_fields=False, **match_by_key) -> Union[Schema,List,Dict,str]:
-        if common_fields: self = self._with_common_fields()
-        schema = self.unique(keep=keep).filter(match, **match_by_key)
-        if not (values_only or __key): return schema
-        else: return vloc(list(schema), __key, if_null="drop", values_only=values_only)
+    def update(self, __iterable: Iterable[Field], inplace=True) -> Schema:
+        return super().update(__iterable, inplace=inplace)
 
-    def get_schema_map(self, key: str, value: str, common_fields=False) -> Dict:
-        if common_fields: self = self._with_common_fields()
-        return {field[key]: field[value] for field in self if (key in field) and (value in field)}
+    def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
+            values_only=True, common_fields=False) -> Union[Records,List]:
+        schema = (self + COMMON_FIELDS) if common_fields else self
+        return vloc(schema, __key, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
+
+    def map(self, key: str, value: _KT, default=None, if_null: Literal["drop","pass"]="drop", reorder=True,
+            values_only=False, common_fields=True) -> Dict[_VT,_VT]:
+        schema = (self + COMMON_FIELDS) if common_fields else self
+        return ValueSet.map(schema, key, value, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
+
+    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc",
+                if_null: Union[Literal["pass"],Any]="pass", common_fields=True) -> str:
+        renameMap = self.get_rename_map(to=to, common_fields=common_fields)
+        if renameMap and (__s in renameMap): return renameMap[__s]
+        else: return __s if if_null == "pass" else if_null
 
     def get_rename_map(self, to: Literal["name","desc"]="desc", common_fields=True) -> RenameMap:
         key, value = (DESC, NAME) if to == NAME else (NAME, DESC)
-        return self.get_schema_map(key, value, common_fields=common_fields)
+        return self.map(key, value, common_fields=common_fields)
 
     def get_type_map(self, key: Literal["name","desc"]="name", common_fields=True) -> TypeMap:
-        return self.get_schema_map(key, TYPE, common_fields=common_fields)
-
-    @TypedRecords.copyable
-    def unique(self, keep: Literal["fist","last",True,False]="first", inplace=False) -> Union[bool,Schema]:
-        return drop_duplicates(self, "name", keep=keep) if keep != True else self
-
-
-def validate_schema(schema: Any) -> Schema:
-    if isinstance(schema, Schema): return schema
-    elif isinstance(schema, List): return Schema(*schema)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(schema, SCHEMA_OBJECT))
+        return self.map(key, TYPE, common_fields=common_fields)
 
 
 ###################################################################
-########################## Schema Context #########################
+############################### Info ##############################
 ###################################################################
 
-class SchemaContext(TypedDict):
-    def __init__(self, schema: Schema, root: Optional[_KT]=None, match: Optional[Match]=None):
-        super().__init__(schema=validate_schema(schema))
-        self.update_notna(root=root, match=_to_match_func(match))
+class Info(TypedDict):
+    dtype = (Query, Schema)
+    typeCheck = True
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaContext,Any]:
-        return super().copy(__instance)
+    def __init__(self, **kwargs: Union[Query,Schema]):
+        super().__init__(**kwargs)
 
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaContext:
-        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+    def validate_dtype(self, __object: Iterable) -> Union[Query,Schema]:
+        if isinstance(__object, self.dtype): return __object
+        elif isinstance(__object, Iterable): return Schema(*__object)
+        else: self.raise_dtype_error(__object, Schema)
 
+    ###################################################################
+    ############################### Get ###############################
+    ###################################################################
 
-def validate_context(context: Any) -> SchemaContext:
-    if isinstance(context, SchemaContext): return context
-    elif isinstance(context, Dict): return SchemaContext(**context)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(context, CONTEXT_OBJECT))
+    def get_query(self, match: Optional[MatchFunction]=None, **match_by_key) -> Query:
+        if not isinstance(self.get(QUERY), Query):
+            query = get_scala(list(self.get_by_dtype(Query).values()))
+            if not isinstance(query, Query): return Query()
+        else: query = self[QUERY]
+        query.filter(match, **match_by_key, inplace=True)
+        return query
 
+    def get_schema(self, keys: _KT=list(), keep: Literal["fist","last",True,False]=True,
+                    match: Optional[MatchFunction]=None, **match_by_key) -> Schema:
+        if (not is_array(keys)) and isinstance(self.get(keys), Schema): schema = self[keys]
+        else: schema = Schema(*union(*self.get_by_dtype(dtype=Schema, keys=keys).values()))
+        schema.unique(keep=keep, inplace=True)
+        schema.filter(match, **match_by_key, inplace=True)
+        return schema
 
-###################################################################
-########################### Schema Info ###########################
-###################################################################
+    def get_by_dtype(self, dtype: Type, keys: _KT=list()) -> Dict:
+        keys = cast_list(keys)
+        if not keys: return {__k: __s for __k, __s in self.items() if isinstance(__s, dtype)}
+        else: return {__k: self[__k] for __k in keys if (__k in self) and isinstance(self[__k], dtype)}
 
-class SchemaInfo(TypedDict):
-    def __init__(self, **kwargs: SchemaContext):
-        super().__init__({
-            name: validate_context(context) for name, context in kwargs.items()})
+    def get_schema_by_name(self, name: _KT, keys: _KT=list(), keep: Literal["fist","last",True,False]=True) -> Schema:
+        match = lambda __value: __value in cast_list(name)
+        return self.get_schema(keys, keep=keep, name=match)
 
-    def copy(self, __instance: Optional[ClassInstance]=None) -> Union[SchemaInfo,Any]:
-        return super().copy(__instance)
+    def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(),
+                            keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
+        __type = tuple(map(get_type, __type)) if is_array(__type) else get_type(__type)
+        match = lambda __value: is_type(__value, __type)
+        return self.get_schema(keys, keep=keep, type=match)
 
-    def update(self, __m: Dict=dict(), inplace=True, self_var=False, **kwargs) -> SchemaInfo:
-        return super().update(__m, inplace=inplace, self_var=self_var, **kwargs)
+    ###################################################################
+    ############################### Map ###############################
+    ###################################################################
 
-    def get_schema(self, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                    keep: Literal["fist","last",True,False]=True, match: Optional[MatchFunction]=None,
-                    common_fields=False, **match_by_key) -> Union[Schema,_VT]:
-        context = kloc(self, cast_tuple(schema_names), default=dict(), if_null="pass", values_only=True)
-        common_fields = COMMON_FIELDS if common_fields else list()
-        schema = Schema(*union(*vloc(context, "schema", default=list(), if_null="drop", values_only=True)), *common_fields)
-        return schema.get(keys, values_only=values_only, keep=keep, match=match, **match_by_key)
+    def map(self, key: str, value: _KT, query=False, keys: _KT=list(), common_fields=True,
+            keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
+            values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        context = dict(if_null=if_null, reorder=reorder, values_only=values_only, match=match, **match_by_key)
+        if query: return self.map_query(key, value, **context)
+        else: return self.map_schema(key, value, keys=keys, common_fields=common_fields, keep=keep, **context)
 
-    def get_schema_by_name(self, name: _KT, keys: _KT=list(), values_only=False, schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> Union[Schema,_VT]:
-        match = lambda __name: __name in cast_tuple(name)
-        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema(keys, name=match, **context)
+    def map_query(self, key: str, value: _KT, if_null: Literal["drop","pass"]="drop", reorder=True,
+                    values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        query = self.get_query(match=match, **match_by_key)
+        return query.map(key, value, if_null=if_null, reorder=reorder, values_only=values_only)
 
-    def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(), values_only=False,
-                            schema_names: _KT=list(), keep: Literal["fist","last",True,False]=True,
-                            common_fields=False) -> Union[Schema,_VT]:
-        __types = tuple(map(get_type, cast_tuple(__type)))
-        match = lambda __type: is_type(__type, __types)
-        context = dict(values_only=values_only, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema(keys, type=match, **context)
+    def map_schema(self, key: str, value: _KT, keys: _KT=list(), common_fields=True,
+                    keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
+                    values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        schema = self.get_schema(keys, keep=keep, match=match, **match_by_key)
+        return schema.map(key, value, if_null=if_null, reorder=reorder, values_only=values_only, common_fields=common_fields)
 
-    def get_names_by_type(self, __type: Union[TypeHint,Sequence[TypeHint]], schema_names: _KT=list(),
-                            keep: Literal["fist","last",True,False]=True, common_fields=False) -> List[str]:
-        context = dict(schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return self.get_schema_by_type(__type, keys="name", values_only=True, **context)
+    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc", query=False, common_fields=True,
+                if_null: Union[Literal["pass"],Any]="pass", keep: Literal["fist","last",False]="first") -> str:
+        renameMap = self.get_rename_map(to=to, query=query, common_fields=common_fields, keep=keep)
+        if renameMap and (__s in renameMap): return renameMap[__s]
+        else: return __s if if_null == "pass" else if_null
 
-    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
-        schema = self.get_schema(schema_names=schema_names, keep=keep, common_fields=common_fields)
-        return {field[key]: field[value] for field in schema if (key in field) and (value in field)}
-
-    def get_rename_map(self, to: Literal["name","desc"]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
+    def get_rename_map(self, to: Literal["name","desc"]="desc", query=False, keys: _KT=list(), common_fields=True,
+                        keep: Literal["fist","last",False]="first") -> RenameMap:
         key, value = (DESC, NAME) if to == NAME else (NAME, DESC)
-        return self.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
+        return self.map(key, value, keys=keys, query=query, common_fields=common_fields, keep=keep)
 
-    def get_type_map(self, key: Literal["name","desc"]="name", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> TypeMap:
-        return self.get_schema_map(key, TYPE, schema_names=schema_names, keep=keep, common_fields=common_fields)
-
-
-def validate_info(info: Any) -> SchemaInfo:
-    if isinstance(info, SchemaInfo): return info
-    elif isinstance(info, Dict): return SchemaInfo(**info)
-    else: raise TypeError(INVALID_OBJECT_TYPE_MSG(info, INFO_OBJECT))
-
-
-###################################################################
-############################# Prettier ############################
-###################################################################
-
-def to_default(__object) -> Any:
-    if isinstance(__object, Dict):
-        return {__key: to_default(__value) for __key, __value in __object.items()}
-    elif isinstance(__object, List):
-        return [to_default(__e) for __e in __object]
-    else: return __object
-
-
-def pretty_str(__object, indent=2, step=2) -> str:
-    if isinstance(__object, (Field,Apply,Match)):
-        return str({__k: to_default(__v) for __k, __v in __object.items()})
-    elif isinstance(__object, TypedDict):
-        return '{\n'+',\n'.join([' '*indent+f"'{__k}': {pretty_str(__v, indent=indent+step, step=step)}"
-                    for __k, __v in __object.items()])+'\n'+' '*(indent-step)+'}'
-    elif isinstance(__object, TypedRecords):
-        return '[\n'+',\n'.join([' '*indent+pretty_str(__e, indent=indent, step=step)
-                for __e in __object])+'\n'+' '*(indent-step)+']'
-    elif isinstance(__object, str): return f"'{__object}'"
-    else: return str(__object).replace('\n', '\\n')
-
-
-def pretty_object(__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2) -> str:
-    if notna(path): __object = hier_get(__object, path)
-    if notna(drop): __object = drop_dict(__object, drop)
-    context = dict(indent=indent, step=step)
-    if isinstance(__object, (TypedDict,TypedRecords)):
-        return pretty_str(__object, **context)
-    elif isinstance(__object, Dict):
-        return pretty_str(TypedDict(**__object), **context)
-    elif is_records(__object, how="all"):
-        return pretty_str(TypedRecords(*__object), **context)
-    elif isinstance(__object, pd.DataFrame):
-        return "pd.DataFrame("+pretty_str(TypedRecords(*__object.to_dict("records")), **context)+")"
-    elif isinstance(__object, pd.Series):
-        return "pd.Series("+pretty_str(__object.tolist(), **context)+")"
-    else: return pretty_str(__object)
-
-
-def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-    if not args: print()
-    else: print(sep.join([pretty_object(__object, path=path, drop=drop, indent=indent, step=step) for __object in args]))
+    def get_type_map(self, key: Literal["name","desc"]="name", query=False, keys: _KT=list(), common_fields=True,
+                        keep: Literal["fist","last",False]="first") -> TypeMap:
+        return self.map(key, TYPE, keys=keys, query=query, common_fields=common_fields, keep=keep)
 
 
 ###################################################################
@@ -517,7 +459,7 @@ class BaseSession(CustomDict):
     tzinfo = None
     datetimeUnit = "second"
     errors = list()
-    schemaInfo = SchemaInfo()
+    info = Info()
 
     def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
@@ -542,6 +484,17 @@ class BaseSession(CustomDict):
         self.debug = cast_list(debug)
         self.extraSave = cast_list(extraSave)
         self.interrupt = cast_list(interrupt)
+
+    def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
+        drop_keys = cast_list(drop)
+        if locals:
+            if "context" in drop_keys:
+                locals.pop("context", None)
+                drop_keys.pop(drop_keys.index("context"))
+            else: locals = dict(locals, **locals.pop("context", dict()))
+            context = dict(locals, **context)
+            context.pop("self", None)
+        return drop_dict(context, drop_keys, inplace=False) if drop_keys else context
 
     ###################################################################
     ############################# Datetime ############################
@@ -572,32 +525,50 @@ class BaseSession(CustomDict):
         startDate, endDate = self.get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
         return set_date(startDate, __format), set_date(endDate, __format)
 
-    def set_update_time(self, data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None) -> Data:
+    def set_update_time(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None) -> Data:
         updateDate = date if isinstance(date, dt.date) else self.today()
-        updateTime = datetime if isinstance(date, dt.datetime) else self.now()
-        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=updateTime)
+        updateTime = datetime if isinstance(datetime, dt.datetime) else self.now()
+        return set_data(__data, if_exists="ignore", updateDate=updateDate, updateTime=updateTime)
 
     ###################################################################
     ############################## Schema #############################
     ###################################################################
 
-    def get_schema_map(self, key: str, value: str, schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=False) -> Dict:
-        self.schemaInfo.get_schema_map(key, value, schema_names=schema_names, keep=keep, common_fields=common_fields)
+    def get_query(self, match: Optional[MatchFunction]=None, **match_by_key) -> Query:
+        return self.info.get_query(match=match, **match_by_key)
 
-    def get_rename_map(self, to: Optional[Literal["name","desc"]]="desc", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> RenameMap:
-        if to in ("name","desc"):
-            return self.schemaInfo.get_rename_map(to=to, schema_names=schema_names, keep=keep, common_fields=common_fields)
-        else: return dict()
+    def get_schema(self, keys: _KT=list(), keep: Literal["fist","last",True,False]=True, common_fields=True,
+                    match: Optional[MatchFunction]=None, **match_by_key) -> Schema:
+        return self.info.get_schema(keys, common_fields=common_fields, keep=keep, match=match, **match_by_key)
 
-    def get_type_map(self, key: Literal["name","desc"]="name", schema_names: _KT=list(),
-                        keep: Literal["fist","last",False]="first", common_fields=True) -> TypeMap:
-        return self.schemaInfo.get_schema_map(key, TYPE, schema_names=schema_names, keep=keep, common_fields=common_fields)
+    def get_info_map(self, key: str, value: _KT, query=False, keys: _KT=list(), common_fields=True,
+                    keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
+                    values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        context = dict(if_null=if_null, reorder=reorder, values_only=values_only, match=match, **match_by_key)
+        return self.info.map(key, value, keys=keys, query=query, common_fields=common_fields, keep=keep, **context)
 
-    def rename_value(self, string: str, to: Optional[Literal["name","desc"]]="desc") -> str:
-        renameMap = self.get_rename_map(to=to)
-        return renameMap[string] if renameMap and (string in renameMap) else string
+    def get_query_map(self, key: str, value: _KT, if_null: Literal["drop","pass"]="drop", reorder=True,
+                    values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        context = dict(if_null=if_null, reorder=reorder, values_only=values_only, match=match, **match_by_key)
+        return self.info.map_query(key, value, **context)
+
+    def get_schema_map(self, key: str, value: _KT, keys: _KT=list(), common_fields=True,
+                    keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
+                    values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
+        context = dict(if_null=if_null, reorder=reorder, values_only=values_only, match=match, **match_by_key)
+        return self.info.map_schema(key, value, keys=keys, common_fields=common_fields, keep=keep, **context)
+
+    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc", query=False, common_fields=True,
+                if_null: Union[Literal["pass"],Any]="pass", keep: Literal["fist","last",False]="first") -> str:
+        return self.info.rename(__s, to=to, query=query, common_fields=common_fields, if_null=if_null, keep=keep)
+
+    def get_rename_map(self, to: Literal["name","desc"]="desc", query=False, keys: _KT=list(), common_fields=True,
+                        keep: Literal["fist","last",False]="first") -> RenameMap:
+        return self.info.get_rename_map(to=to, keys=keys, query=query, common_fields=common_fields, keep=keep)
+
+    def get_type_map(self, key: Literal["name","desc"]="name", query=False, keys: _KT=list(), common_fields=True,
+                        keep: Literal["fist","last",False]="first") -> TypeMap:
+        return self.info.get_type_map(key=key, keys=keys, query=query, common_fields=common_fields, keep=keep)
 
     ###################################################################
     ############################ Checkpoint ###########################
@@ -633,8 +604,8 @@ class BaseSession(CustomDict):
     def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1",
                         rename: Optional[Union[Literal["name","desc"],Dict]]="desc"):
         file_name = self._validate_file(file_name)
-        rename_map = rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)
-        data = to_dataframe(data).rename(columns=rename_map)
+        rename = rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)
+        data = to_dataframe(data).rename(columns=rename)
         try: data.to_excel(file_name, sheet_name=sheet_name, index=False)
         except: self._write_dataframe(data, file_name)
 
@@ -652,8 +623,7 @@ class BaseSession(CustomDict):
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
-        if point in log_list: return True
-        elif ("all" in log_list) and (not point.startswith('[')): return True
+        if (point in log_list) or ("all" in log_list): return True
         for log_name in log_list:
             if point.startswith('['):
                 if any([str(name).startswith('[') for name in cast_list(log_name)]): pass
@@ -726,62 +696,30 @@ class BaseSession(CustomDict):
         self.errors.append(msg)
 
     ###################################################################
-    ############################# Inspect #############################
+    ############################ Print Log ############################
     ###################################################################
-
-    def inspect(self, method: str, __type: Optional[TypeHint]=None, annotation: Optional[TypeHint]=None,
-                ignore: List[_KT]=list()) -> Dict[_KT,Dict]:
-        method = getattr(self, method)
-        info = inspect_function(method, ignore=["self","context","kwargs"]+ignore)
-        if __type or annotation:
-            info = drop_dict(info, "__return__", inplace=False)
-            if __type == "required":
-                return {name: param for name, param in info.items() if "default" not in param}
-            elif __type == "iterable":
-                return {name: param for name, param in info.items() if "iterable" in param}
-            return {name: param for name, param in info.items()
-                    if (annotation in cast_tuple(param["annotation"])) or (__type in cast_tuple(param["type"]))}
-        return info
-
-    def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
-        drop_keys = cast_list(drop)
-        if locals:
-            if "context" in drop_keys:
-                locals.pop("context", None)
-                drop_keys.pop(drop_keys.index("context"))
-            else: locals = dict(locals, **locals.pop("context", dict()))
-            context = dict(locals, **context)
-            context.pop("self", None)
-        return drop_dict(context, drop_keys, inplace=False) if drop_keys else context
-
-    ###################################################################
-    ############################## Print ##############################
-    ###################################################################
-
-    def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, sep=' '):
-        pretty_print(*__object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
     def print_log(self, log_string: str, func="checkpoint", path: Optional[_KT]=None, drop: Optional[_KT]=None,
                     indent=2, step=2, sep=' '):
-        log_object = self.eval_log(log_string, func=func)
+        log_object = self._eval_log(log_string, func=func)
         self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
-    def eval_log(self, log_string: str, func="checkpoint") -> Records:
+    def _eval_log(self, log_string: str, func="checkpoint") -> Records:
         log_string = re_get(f"(?<={func} - )"+r"({[^|]*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
-        log_string = self.eval_function(f"[{','.join(log_string)}]")
-        log_string = self.eval_datetime(log_string, "datetime")
-        log_string = self.eval_datetime(log_string, "date")
-        log_string = self.eval_exception(log_string)
+        log_string = self._eval_function(f"[{','.join(log_string)}]")
+        log_string = self._eval_datetime(log_string, "datetime")
+        log_string = self._eval_datetime(log_string, "date")
+        log_string = self._eval_exception(log_string)
         try: return literal_eval(log_string)
         except: return list()
 
-    def eval_function(self, log_string: str) -> str:
+    def _eval_function(self, log_string: str) -> str:
         func_objects = re_get(r"\<[^>]+\>", log_string, index=None)
         if func_objects:
             return replace_map(log_string, **{__o: f"\"{__o}\"" for __o in func_objects})
         else: return log_string
 
-    def eval_datetime(self, log_string: str, __type: Literal["datetime","date"]="datetime") -> str:
+    def _eval_datetime(self, log_string: str, __type: Literal["datetime","date"]="datetime") -> str:
         datetime_objects = re_get(r"datetime.{}\([^)]+\)".format(__type), log_string, index=None)
         if datetime_objects:
             __init = dt.datetime if __type == "datetime" else dt.date
@@ -791,7 +729,7 @@ class BaseSession(CustomDict):
             return replace_map(log_string, **{__o: f"\"{format_date(__o)}\"" for __o in datetime_objects})
         else: return log_string
 
-    def eval_exception(self, log_string: str) -> str:
+    def _eval_exception(self, log_string: str) -> str:
         exception = re_get(re.compile(r"'(Traceback.*)'}]$", re.DOTALL | re.MULTILINE), log_string)
         if exception:
             return log_string.replace(f"'{exception}'", f"\"\"\"{exception}\"\"\"")
@@ -913,8 +851,8 @@ class Iterator(CustomDict):
         return self._from_categorical_pages(*base, labels=labels, pagination=pagination, size=size, **context)
 
     def _from_numeric_pages(self, *args, size: Unit, pageSize=0, pageStart=1, offset=1, **context) -> Tuple[List[List],Context]:
-        pageSize = self.validate_page_size(pageSize, self.pageUnit, self.pageLimit)
-        pages = self.get_pages(size, pageSize, pageStart, offset, how="all")
+        pageSize = self._validate_page_size(pageSize, self.pageUnit, self.pageLimit)
+        pages = self._get_pages(size, pageSize, pageStart, offset, how="all")
         if isinstance(size, int):
             pages = [pages] * len(get_scala(args, default=[0]))
         pages = list(map(lambda __s: tuple(map(tuple, __s)), map(transpose_array, pages)))
@@ -928,46 +866,46 @@ class Iterator(CustomDict):
             pageSize = self.get_page_size_by_label(label, pageSize=pageSize, pagination=pagination, **context)
             pageStart = self.get_page_start_by_label(label, pageStart=pageStart, pagination=pagination, **context)
             offset = self.get_offset_by_label(label, offset=offset, pagination=pagination, **context)
-            iterator = self.get_pages(size, pageSize, pageStart, offset, how="all")
+            iterator = self._get_pages(size, pageSize, pageStart, offset, how="all")
             num_pages = len(iterator[0])
             params = ((size,)*num_pages, (pageSize,)*num_pages, (pageStart,)*num_pages, (offset,)*num_pages)
             pages.append(tuple(map(tuple, transpose_array(((label,)*num_pages,)+iterator+params))))
         return args+(pages,), context
 
-    def get_pages(self, size: Unit, pageSize: int, pageStart=1, offset=1, pageUnit=0, pageLimit=0,
+    def _get_pages(self, size: Unit, pageSize: int, pageStart=1, offset=1, pageUnit=0, pageLimit=0,
                     how: Literal["all","page","start"]="all") -> Union[Pages,List[Pages]]:
-        pageSize = self.validate_page_size(pageSize, pageUnit, pageLimit)
-        pageStart, offset = self.validate_page_start(size, pageSize, pageStart, offset)
+        pageSize = self._validate_page_size(pageSize, pageUnit, pageLimit)
+        pageStart, offset = self._validate_page_start(size, pageSize, pageStart, offset)
         if isinstance(size, int):
-            return self.calc_pages(cast_int1(size), pageSize, pageStart, offset, how)
+            return self._calc_pages(cast_int1(size), pageSize, pageStart, offset, how)
         elif is_array(size):
-            return [self.calc_pages(cast_int1(__sz), pageSize, pageStart, offset, how) for __sz in size]
+            return [self._calc_pages(cast_int1(__sz), pageSize, pageStart, offset, how) for __sz in size]
         else: return tuple()
 
-    def catch_pagination_error(func):
+    def _catch_pagination_error(func):
         @functools.wraps(func)
         def wrapper(self: Iterator, *args, **context):
             try: return func(self, *args, **context)
             except: raise ValueError(PAGINATION_ERROR_MSG)
         return wrapper
 
-    @catch_pagination_error
-    def validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
+    @_catch_pagination_error
+    def _validate_page_size(self, pageSize: int, pageUnit=0, pageLimit=0) -> int:
         if (pageUnit > 0) and (pageSize & pageUnit != 0):
             pageSize = ceil(pageSize / pageUnit) * pageUnit
         if pageLimit > 0:
             pageSize = min(pageSize, pageLimit)
         return pageSize
 
-    @catch_pagination_error
-    def validate_page_start(self, size: int, pageSize: int, pageStart=1, offset=1) -> Tuple[int,int]:
+    @_catch_pagination_error
+    def _validate_page_start(self, size: int, pageSize: int, pageStart=1, offset=1) -> Tuple[int,int]:
         if pageStart == self.pageFrom:
             pageStart = pageStart + (offset-self.offsetFrom)//pageSize
         if offset == self.offsetFrom:
             offset = offset + (pageStart-self.pageFrom)*size
         return pageStart, offset
 
-    def calc_pages(self, size: int, pageSize: int, pageStart=1, offset=1,
+    def _calc_pages(self, size: int, pageSize: int, pageStart=1, offset=1,
                     how: Literal["all","page","start"]="all") -> Pages:
         pages = tuple(range(pageStart, (((size-1)//pageSize)+1)+pageStart))
         if how == "page": return pages
@@ -1033,6 +971,29 @@ class Iterator(CustomDict):
 
 
 ###################################################################
+############################# Map Flow ############################
+###################################################################
+
+class Process(OptionalDict):
+    def __init__(self, name: str, schema: Optional[Schema]=None, root: Optional[_KT]=None, match: Optional[Match]=None):
+        super().__init__(name=name, optional=dict(schema=schema, root=root, match=_to_match_func(match)))
+
+
+class Flow(TypedRecords):
+    dtype = Process
+    typeCheck = True
+
+    def __init__(self, *args: Union[Process,str]):
+        super().__init__(*args)
+
+    def validate_dtype(self, __object: Union[Dict,str]) -> Process:
+        if isinstance(__object, self.dtype): return __object
+        elif isinstance(__object, str): return self.dtype(name=__object)
+        elif isinstance(__object, Dict): return self.dtype(*__object)
+        else: self.raise_dtype_error(__object)
+
+
+###################################################################
 ############################## Mapper #############################
 ###################################################################
 
@@ -1043,39 +1004,48 @@ class Mapper(BaseSession):
     offsetFrom = 1
     responseType = "dict"
     root = list()
-    schemaInfo = SchemaInfo()
+    info = Info()
+    flow = Flow()
 
-    def map(self, data: ResponseData, schemaInfo: Optional[SchemaInfo]=None, responseType: Optional[TypeHint]=None,
+    def map(self, data: ResponseData, flow: Optional[Flow]=None, responseType: Optional[TypeHint]=None,
             root: Optional[_KT]=None, discard=True, updateTime=True, fields: IndexLabel=list(), **context) -> Data:
         if notna(root) or self.root:
             root = root if notna(root) else self.root
             data = get_value(data, root)
-        schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo}, save=data)
-        data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
-        if updateTime: data = self.set_update_time(data, **context)
+        flow = self.set_flow(flow)
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
+        data = self._map_response(data, flow, responseType, discard=discard, **context)
+        if updateTime: data = self._set_update_time_by_interval(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
 
-    def set_update_time(self, data: Data, date: Optional[dt.date]=None, interval: Timedelta=str(), **context) -> Data:
+    def set_flow(self, flow: Optional[Flow]=None) -> Flow:
+        if not isinstance(flow, Flow): flow = self.flow.copy()
+        for process in flow:
+            if SCHEMA not in process:
+                process[SCHEMA] = self.info.get(process[NAME])
+        return flow
+
+    def _set_update_time_by_interval(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None,
+                                    interval: Timedelta=str(), **context) -> Data:
         updateDate = date if isinstance(date, dt.date) and is_daily_frequency(interval) else self.today()
-        return set_data(data, if_exists="ignore", updateDate=updateDate, updateTime=self.now())
+        return self.set_update_time(__data, date=updateDate, datetime=datetime)
 
     ###################################################################
-    ######################### Map Schema Info #########################
+    ########################### Map Response ##########################
     ###################################################################
 
-    def map_info(self, data: ResponseData, schemaInfo: SchemaInfo, responseType: Optional[TypeHint]=None,
-                match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Data:
+    def _map_response(self, data: ResponseData, flow: Flow, responseType: Optional[TypeHint]=None,
+                    match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Data:
         responseType = _get_response_type(responseType if responseType else self.responseType)
         __base = _get_response_origin(responseType)
-        if not self._match_schema(data, match, **context): return __base
-        for __key, schemaContext in schemaInfo.items():
-            if not (isinstance(schemaContext, Dict) and (SCHEMA in schemaContext)): continue
-            __base = self.map_context(data, __base, schemaContext, responseType, __key=__key, **context)
+        if not self._match_response(data, match, **context): return __base
+        for process in flow:
+            if not (isinstance(process, Process) and isinstance(process[SCHEMA], Schema)): continue
+            else: __base = self._process(data, __base, process, responseType, __key=process[NAME], **context)
         if discard or isinstance(data, Tag): return self.map_base_data(__base, **context)
         else: return self.map_merged_data(self._merge_base(data, __base), **context)
 
-    def _match_schema(self, data: ResponseData,
+    def _match_response(self, data: ResponseData,
                     match: Optional[Union[MatchFunction,bool]]=None, **context) -> bool:
         if match is not None:
             if isinstance(match, Callable): return match(data, **context)
@@ -1084,6 +1054,18 @@ class Mapper(BaseSession):
 
     def match(self, data: ResponseData, **context) -> bool:
         return True
+
+    def _process(self, data: ResponseData, __base: Data, process: Process, responseType: Optional[TypeHint]=None,
+                **context) -> Data:
+        data = get_value(data, process[ROOT]) if ROOT in process else data
+        self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":process[SCHEMA]}, save=data)
+        if not isinstance(data, _get_response_type(responseType if responseType else self.responseType)):
+            if not data: return __base
+            else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
+        data = self._merge_base(data, __base)
+        if self._match_data(data, process.get(MATCH), context=context, log=True):
+            return self._map_schema(data, __base, process[SCHEMA], **context)
+        else: return __base
 
     def _merge_base(self, data: ResponseData, __base: Data) -> Data:
         if isinstance(data, Dict):
@@ -1099,34 +1081,18 @@ class Mapper(BaseSession):
         return data
 
     ###################################################################
-    ######################## Map Schema Context #######################
-    ###################################################################
-
-    def map_context(self, data: ResponseData, __base: Data, schemaContext: SchemaContext,
-                    responseType: Optional[TypeHint]=None, **context) -> Data:
-        data = get_value(data, schemaContext[ROOT]) if ROOT in schemaContext else data
-        self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":schemaContext[SCHEMA]}, save=data)
-        if not isinstance(data, _get_response_type(responseType if responseType else self.responseType)):
-            if not data: return __base
-            else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
-        data = self._merge_base(data, __base)
-        if self.match_data(data, schemaContext.get(MATCH), context=context, log=True):
-            return self.map_schema(data, __base, schemaContext[SCHEMA], **context)
-        else: return __base
-
-    ###################################################################
     ############################ Map Schema ###########################
     ###################################################################
 
-    def map_schema(self, data: ResponseData, __base: Data, schema: Schema, **context) -> Data:
+    def _map_schema(self, data: ResponseData, __base: Data, schema: Schema, **context) -> Data:
         for field in schema:
-            if not isinstance(field, Dict): continue
+            if not (isinstance(field, Field) and (MODE in field) and (PATH in field)): continue
             elif field[MODE] in (QUERY, INDEX):
-                __value = self.get_value(context, **field, context=context, log=True)
+                __value = self._get_value(context, **field, context=context, log=True)
                 __base[field[NAME]] = __value if __value != __MISMATCH__ else None
                 continue
             data = self._merge_base(data, __base)
-            try: __base = self.map_field(data, __base, field, **context)
+            try: __base = self._map_field(data, __base, field, **context)
             except Exception as exception:
                 self.logger.error(EXCEPTION_MSG(context, field))
                 raise exception
@@ -1136,10 +1102,10 @@ class Mapper(BaseSession):
     ############################ Map Field ############################
     ###################################################################
 
-    def map_field(self, data: ResponseData, __base: Data, field: Field, **context) -> Data:
+    def _map_field(self, data: ResponseData, __base: Data, field: Field, **context) -> Data:
         path_type = field[HOW] if HOW in field else _get_path_type(field[PATH])
         if path_type in (PATH,CALLABLE):
-            __value = self.get_value(data, **field, context=context, log=True)
+            __value = self._get_value(data, **field, context=context, log=True)
         elif path_type == VALUE:
             __value = field[PATH]
         elif path_type == TUPLE:
@@ -1148,21 +1114,21 @@ class Mapper(BaseSession):
         elif (path_type == ITERATE) and (not isinstance(data, pd.DataFrame)):
             __value = self._get_value_iterate(data, **field, context=context)
         else: raise TypeError(INVALID_PATH_TYPE_MSG(field[PATH]))
-        self.checkpoint("field"+SUFFIX(context, field), where="map_field", msg={"value":__value, "field":field})
+        self.checkpoint("field"+SUFFIX(context, field), where="_map_field", msg={"value":__value, "field":field})
         if (__value == __MISMATCH__) or (field[MODE] in (OPTIONAL,REQUIRED) and isna_plus(__value)):
             if field[MODE] == REQUIRED: raise ValueError(REQUIRED_MSG(context, field))
             else: return __base
         __base[field[NAME]] = __value
         return __base
 
-    def get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
+    def _get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
                     apply: Apply=dict(), match: Match=dict(), cast=False, strict=True, sep=str(), strip=True,
                     context: Context=dict(), name=str(), log=False, **field) -> _VT:
         if isinstance(data, pd.DataFrame):
             if match:
-                data = data[self.match_data(data, match, context=context, field=field, name=name, log=log)]
+                data = data[self._match_data(data, match, context=context, field=field, name=name, log=log)]
                 if data.empty: return __MISMATCH__
-        elif not self.match_data(data, match, context=context, name=name, log=log): return __MISMATCH__
+        elif not self._match_data(data, match, context=context, name=name, log=log): return __MISMATCH__
         default = self._get_value_by_path(data, default, None, sep, strip, context) if notna(default) else None
         __value = self._get_value_by_path(data, path, default, sep, strip, context)
         return self._apply_value(__value, apply, type, default, cast, strict, context, name, log, **field)
@@ -1181,21 +1147,21 @@ class Mapper(BaseSession):
         __apply = cast_list(apply, strict=False)
         if cast: __apply += [Cast(type, default, strict)]
         field = dict(field, type=type, default=default, strict=strict)
-        return self.apply_data(__value, __apply, context=context, field=field, name=name, log=log)
+        return self._apply_data(__value, __apply, context=context, field=field, name=name, log=log)
 
     def _get_value_tuple(self, data: ResponseData, path: Tuple, apply: Apply=dict(), match: Match=dict(),
                         context: Context=dict(), name=str(), **field) -> _VT:
-        __match = int(self.match_data(data, match, context=context, name=name, log=True))-1
+        __match = int(self._match_data(data, match, context=context, name=name, log=True))-1
         __apply = get_scala(apply, index=__match, default=dict())
-        return self.get_value(data, path[__match], apply=__apply, context=context, name=name, log=True, **field)
+        return self._get_value(data, path[__match], apply=__apply, context=context, name=name, log=True, **field)
 
     def _get_value_tuple_df(self, data: pd.DataFrame, path: Tuple, apply: Apply=dict(), match: Match=dict(),
                             context: Context=dict(), name=str(), **field) -> pd.Series:
-        __match = self.match_data(data, match, context=context, name=name, log=True)
+        __match = self._match_data(data, match, context=context, name=name, log=True)
         df_true, df_false = data[__match], data[~__match]
         apply_true, apply_false = get_scala(apply, index=0, default=dict()), get_scala(apply, index=-1, default=dict())
-        df_true = self.get_value(df_true, path[0], apply=apply_true, context=context, name=name, log=True, **field)
-        df_false = self.get_value(df_false, path[1], apply=apply_false, context=context, name=name, log=False, **field)
+        df_true = self._get_value(df_true, path[0], apply=apply_true, context=context, name=name, log=True, **field)
+        df_false = self._get_value(df_false, path[1], apply=apply_false, context=context, name=name, log=False, **field)
         try: return concat_df([df_true, df_false]).sort_index()
         except: return __MISMATCH__
 
@@ -1206,14 +1172,14 @@ class Mapper(BaseSession):
             raise TypeError(INVALID_VALUE_TYPE_MSG(__value, context, name=name))
         sub_path = path[-1] if (len(path) > 0) and is_array(path[-1]) else __value
         log_context = dict(context=context, name=name, log=False)
-        return [self.get_value(__e, sub_path, apply=apply, **field, **log_context)
-                for __e in __value if self.match_data(__e, match, field=field, **log_context)]
+        return [self._get_value(__e, sub_path, apply=apply, **field, **log_context)
+                for __e in __value if self._match_data(__e, match, field=field, **log_context)]
 
     ###################################################################
     ############################ Apply Data ###########################
     ###################################################################
 
-    def validate_apply(func):
+    def _validate_apply(func):
         @functools.wraps(func)
         def wrapper(self: Mapper, data: ResponseData, apply: Union[Apply,Sequence[Apply]], context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False):
@@ -1227,8 +1193,8 @@ class Mapper(BaseSession):
             return __result
         return wrapper
 
-    @validate_apply
-    def apply_data(self, data: ResponseData, apply: Union[Apply,Sequence[Apply]], context: Context=dict(),
+    @_validate_apply
+    def _apply_data(self, data: ResponseData, apply: Union[Apply,Sequence[Apply]], context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False) -> _VT:
         if isinstance(apply[FUNC], Callable):
             __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
@@ -1308,15 +1274,15 @@ class Mapper(BaseSession):
 
     def __map__(self, __object, schema: Schema, type: TypeHint, root: Optional[_KT]=None,
                 match: Optional[Match]=None, context: Context=dict(), name=str(), **kwargs) -> Data:
-        schemaInfo = SchemaInfo(**{name: SchemaContext(schema=schema, root=root, match=match)})
+        flow = Flow(Process(name=name, schema=schema, root=root, match=match))
         context.pop(SCHEMA_KEY, None)
-        return self.map(__object, schemaInfo, responseType=type, **context)
+        return self.map(__object, flow, responseType=type, **dict(context, discard=True, updateTime=False))
 
     ###################################################################
     ############################ Match Data ###########################
     ###################################################################
 
-    def validate_match(func):
+    def _validate_match(func):
         @functools.wraps(func)
         def wrapper(self: Mapper, data: ResponseData, match: Match, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False):
@@ -1328,8 +1294,8 @@ class Mapper(BaseSession):
             return __match
         return wrapper
 
-    @validate_match
-    def match_data(self, data: ResponseData, match: Match, context: Context=dict(),
+    @_validate_match
+    def _match_data(self, data: ResponseData, match: Match, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False) -> Union[bool,pd.Series]:
         log_context = dict(context=context, field=field, name=name, log=log)
         if MATCH_QUERY in match: return self._match_query(**log_context, **match)
@@ -1346,7 +1312,7 @@ class Mapper(BaseSession):
         if log:
             __value = filter_data(context, query, hier=match.get("hier", True))
             self._log_origin(__value, match, point="match", where="match_query", context=context, field=field, name=name, log=log)
-        return self.match_data(context, match, context=context, field=field, name=name, log=False)
+        return self._match_data(context, match, context=context, field=field, name=name, log=False)
 
     def _match_function(self, data: ResponseData, func: Callable, path: Optional[_KT]=None, default=False,
                         flip=False, hier=True, context: Context=dict(), field: Optional[Field]=dict(),
@@ -1432,48 +1398,49 @@ class SequenceMapper(Mapper):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
+    info = Info()
+    flow = Flow()
 
-    def map(self, data: ResponseData, schemaInfo: Optional[SchemaInfo]=None, responseType: Optional[TypeHint]=None,
+    def map(self, data: ResponseData, flow: Optional[Flow]=None, responseType: Optional[TypeHint]=None,
             root: Optional[_KT]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
             countby: Optional[Literal["page","start"]]=None, discard=True, updateTime=True,
             fields: IndexLabel=list(), **context) -> Data:
         if notna(root) or self.root:
             root = root if notna(root) else self.root
             data = get_value(data, root)
-        schemaInfo = validate_info(schemaInfo) if notna(schemaInfo) else self.schemaInfo
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "schemaInfo":schemaInfo}, save=data)
+        flow = self.set_flow(flow)
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
         if isinstance(data, (Sequence,pd.DataFrame)):
             groupby = dict(groupby=(groupby if notna(groupby) else self.groupby))
             groupSize = dict(groupSize=(groupSize if notna(groupSize) else self.groupSize))
             countby = dict(countby=(countby if notna(countby) else self.countby))
             context = dict(context, **groupby, **groupSize, **countby)
-            data = self.map_sequence(data, schemaInfo, responseType, discard=discard, **context)
-        else: data = self.map_info(data, schemaInfo, responseType, discard=discard, **context)
-        if updateTime: data = self.set_update_time(data, **context)
+            data = self._map_sequence(data, flow, responseType, discard=discard, **context)
+        else: data = self._map_response(data, flow, responseType, discard=discard, **context)
+        if updateTime: data = self._set_update_time_by_interval(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
 
     ###################################################################
     ########################### Map Sequence ##########################
     ###################################################################
 
-    def map_sequence(self, data: ResponseData, schemaInfo: SchemaInfo, responseType: Optional[TypeHint]=None,
+    def _map_sequence(self, data: ResponseData, flow: Flow, responseType: Optional[TypeHint]=None,
                     groupby: _KT=list(), groupSize: NestedDict=dict(), countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Data:
-        context = dict(context, schemaInfo=schemaInfo, countby=countby, match=match, discard=discard)
+        context = dict(context, flow=flow, countby=countby, match=match, discard=discard)
         responseType = _get_response_type(responseType if responseType else self.responseType)
-        if groupby: return self.groupby_data(data, groupby, groupSize, responseType=responseType, **context)
-        elif is_records_type(responseType): return self.map_records(data, **context)
-        elif is_dataframe_type(responseType): return self.map_dataframe(data, **context)
-        elif is_tag_type(responseType): return self.map_tag_list(data, **context)
-        else: return self.map_records(data, **context)
+        if groupby: return self._groupby_data(data, groupby, groupSize, responseType=responseType, **context)
+        elif is_records_type(responseType): return self._map_records(data, **context)
+        elif is_dataframe_type(responseType): return self._map_dataframe(data, **context)
+        elif is_tag_type(responseType): return self._map_tag_list(data, **context)
+        else: return self._map_records(data, **context)
 
-    def groupby_data(self, data: ResponseData, groupby: _KT, groupSize: NestedDict=dict(),
+    def _groupby_data(self, data: ResponseData, groupby: _KT, groupSize: NestedDict=dict(),
                     if_null: Literal["drop","pass"]="drop", hier=False, **context) -> Data:
         groups = groupby_data(data, by=groupby, if_null=if_null, hier=hier)
         log_msg = {"groups":list(groups.keys()), "groupSize":[safe_len(group) for group in groups.values()]}
         self.checkpoint("group"+SUFFIX(context), where="groupby_data", msg=log_msg)
-        results = [self.map_sequence(__data, **dict(context, group=group, dataSize=groupSize.get(group)))
+        results = [self._map_sequence(__data, **dict(context, group=group, dataSize=groupSize.get(group)))
                     for group, __data in groups.items()]
         return chain_exists(results)
 
@@ -1481,37 +1448,37 @@ class SequenceMapper(Mapper):
     ######################## Map Sequence Data ########################
     ###################################################################
 
-    def map_records(self, __r: Records, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
+    def _map_records(self, __r: Records, flow: Flow, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
         __r = self._limit_data_size(__r, **context)
         start = self._get_start_by(countby, count=len(__r), **context)
         for __i, __m in enumerate(__r, start=(start if start else 0)):
-            if not self._match_schema(__m, match, **context): continue
+            if not self._match_response(__m, match, **context): continue
             __i = __m[RANK] if isinstance(__m.get(RANK), int) else __i
             kwargs = dict(context, discard=discard, count=len(__r), __i=__i)
-            data.append(self.map_info(__m, schemaInfo, responseType="dict", match=True, **kwargs))
+            data.append(self._map_response(__m, flow, responseType="dict", match=True, **kwargs))
         return data
 
-    def map_dataframe(self, df: pd.DataFrame, schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
+    def _map_dataframe(self, df: pd.DataFrame, flow: Flow, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> pd.DataFrame:
         df = self._limit_data_size(df, **context)
         start = self._get_start_by(countby, count=len(df), **context)
         if isinstance(start, int) and (RANK not in df):
             df[RANK] = range(start, len(df)+start)
-        df = df[self._match_schema(df, match, **context)]
+        df = df[self._match_response(df, match, **context)]
         context = dict(context, responseType="dataframe", match=True, discard=discard, count=len(df))
-        return self.map_info(df, schemaInfo, **context)
+        return self._map_response(df, flow, **context)
 
-    def map_tag_list(self, tag_list: Sequence[Tag], schemaInfo: SchemaInfo, countby: Optional[Literal["page","start"]]=None,
+    def _map_tag_list(self, tag_list: Sequence[Tag], flow: Flow, countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Records:
         data = list()
         tag_list = self._limit_data_size(tag_list, **context)
         start = self._get_start_by(countby, count=len(tag_list), **context)
         for __i, __s in enumerate(tag_list, start=(start if start else 0)):
-            if not (isinstance(__s, Tag) and self._match_schema(__s, match, **context)): continue
+            if not (isinstance(__s, Tag) and self._match_response(__s, match, **context)): continue
             kwargs = dict(context, count=len(tag_list), __i=__i)
-            data.append(self.map_info(__s, schemaInfo, responseType="tag", match=True, **kwargs))
+            data.append(self._map_response(__s, flow, responseType="tag", match=True, **kwargs))
         return data
 
     def _limit_data_size(self, data: Data, size: Optional[int]=None, dataSize: Optional[int]=None, **context) -> Data:
@@ -1537,13 +1504,13 @@ class SequenceMapper(Mapper):
                 countby: Optional[Literal["page","start"]]="start", page=1, start=1,
                 submatch: Optional[Union[MatchFunction,bool]]=True, discard=True,
                 context: Context=dict(), name=str(), **kwargs) -> Data:
-        schemaInfo = SchemaInfo(**{name: SchemaContext(schema=schema, root=root, match=match)})
+        flow = Flow(Process(name=name, schema=schema, root=root, match=match))
         context = dict(context, groupby=groupby, groupSize=groupSize, countby=countby,
                         page=page, start=start, match=submatch, discard=discard)
         context.pop(SCHEMA_KEY, None)
         context.pop(COUNT, None)
         context[ITER_INDEX] = f"{context.get(ITER_INDEX,0)}-{context.pop(COUNT_INDEX,0)}"
-        return self.map(__object, schemaInfo, responseType=type, **context)
+        return self.map(__object, flow, responseType=type, **dict(context, discard=True, updateTime=False))
 
 
 ###################################################################
@@ -1562,7 +1529,8 @@ class Parser(SequenceMapper):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
+    info = Info()
+    flow = Flow()
 
     ###################################################################
     ######################### Parse Response #########################

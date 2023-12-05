@@ -32,19 +32,24 @@ LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are misma
 
 
 def arg_or(*args: bool) -> bool:
-    return functools.reduce(lambda x,y: x|y, args)
+    if not args: return False
+    else: return functools.reduce(lambda x,y: x|y, args)
 
 def arg_and(*args: bool) -> bool:
-    return functools.reduce(lambda x,y: x&y, args)
+    if not args: return False
+    else: return functools.reduce(lambda x,y: x&y, args)
 
 def union(*arrays) -> Any:
-    return functools.reduce(lambda x,y: x+y, arrays)
+    if not arrays: return None
+    else: return functools.reduce(lambda x,y: x+y, arrays)
 
 def inter(*arrays: Sequence) -> List:
-    return functools.reduce(lambda x,y: [e for e in x if e in y], arrays)
+    if not arrays: return list()
+    else: return functools.reduce(lambda x,y: [e for e in x if e in y], arrays)
 
 def diff(*arrays: Sequence) -> List:
-    return functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
+    if not arrays: return list()
+    else: return functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
 
 
 def isna_plus(__object, strict=True) -> bool:
@@ -139,6 +144,12 @@ def convert_data(data: Data, return_type: Optional[TypeHint]=None, depth=1) -> D
 ############################## Rename #############################
 ###################################################################
 
+def rename_value(__s: str, rename: RenameMap, to: Optional[Literal["key","value"]]="value",
+                if_null: Union[Literal["pass"],Any]="pass") -> str:
+    renameMap = flip_dict(rename) if to == "key" else rename
+    if renameMap and (__s in renameMap): return renameMap[__s]
+    else: return __s if if_null == "pass" else if_null
+
 def rename_dict(__m: Dict, rename: RenameMap) -> Dict:
     return {rename.get(__key,__key): __value for __key, __value in __m.items()}
 
@@ -173,8 +184,8 @@ def iloc(__s: IndexedSequence, indices: Index, default=None, if_null: Literal["d
     else: return [(__s[__i] if abs_idx(__i) < __length else default) for __i in __indices]
 
 
-def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="drop",
-        reorder=True, values_only=False, hier=False, key_alias: Sequence[_KT]=list()) -> Union[_VT,Dict]:
+def kloc(__m: Dict, keys: _KT, default=None, if_null: Literal["drop","pass"]="drop", reorder=True,
+        values_only=False, hier=False, key_alias: Sequence[_KT]=list()) -> Union[_VT,Dict]:
     if hier:
         return hloc(__m, keys, default, if_null=if_null, values_only=values_only, key_alias=key_alias)
     elif not is_array(keys):
@@ -357,12 +368,16 @@ def exists_one(*args, strict=False) -> Any:
     if args: return args[-1]
 
 
-def notna_dict(__m: Optional[Dict]=dict(), strict=True, **context) -> Dict:
-    return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict)}
+def notna_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), strict=True, **context) -> Dict:
+    if not null_if:
+        return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict)}
+    else: return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict) and (__v != null_if.get(__k))}
 
 
-def exists_dict(__m: Optional[Dict]=dict(), strict=False, **context) -> Dict:
-    return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict)}
+def exists_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), strict=False, **context) -> Dict:
+    if not null_if:
+        return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict)}
+    else: return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict) and (__v != null_if.get(__k))}
 
 
 def df_empty(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") -> bool:
@@ -863,9 +878,9 @@ def _from_selector_path(__path: _KT, key=str(), text=False) -> Tuple[_KT,str,str
         elif __path.startswith('.'): return (str(), "class", "attr")
         elif __path.startswith('#'): return (str(), "id", "attr")
         else: return (__path, str(), ("text" if text else "source"))
-    elif is_array(__path):
+    elif is_array(__path) and __path:
         selector, key, by = _from_selector_path(__path[-1])
-        return ((__path+[selector] if selector else __path), key, by)
+        return ((__path[:-1]+[selector] if selector else __path[:-1]), key, by)
     else: return (str(), str(), "source")
 
 

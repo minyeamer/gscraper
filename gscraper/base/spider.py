@@ -1,22 +1,22 @@
 from __future__ import annotations
-from gscraper.base.abstract import TypedDict, TypedList
+from gscraper.base.abstract import CustomDict, OptionalDict, TypedRecords, Query, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
-from gscraper.base.abstract import SESSION_CONTEXT, LOGIN_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
+from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
-from gscraper.base.session import CustomDict, BaseSession, Iterator, Parser, SchemaInfo
-from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR, INVALID_OBJECT_TYPE_MSG
+from gscraper.base.session import BaseSession, Iterator, Parser, Info, Schema, Field, Flow, Process
+from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
 from gscraper.base.gcloud import fetch_gcloud_authorization
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
 from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Account
-from gscraper.base.types import is_array, is_int_array, init_origin
+from gscraper.base.types import is_date_type, is_array, is_int_array, init_origin
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
-from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, inter, diff
+from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
@@ -28,12 +28,13 @@ from requests.cookies import RequestsCookieJar
 from urllib.parse import quote, urlencode, urlparse
 import asyncio
 import aiohttp
+import copy
 import functools
 import inspect
 import requests
 import time
 
-from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
@@ -259,16 +260,15 @@ def encode_object(__object: str) -> str:
 class UploadSession(GoogleQueryReader, GoogleUploader):
     __metaclass__ = ABCMeta
     operation = "session"
-    schemaInfo = SchemaInfo()
 
-    def __init__(self, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
+    def __init__(self, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         CustomDict.__init__(self, UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, account)
         self.set_upload_info(uploadInfo, reauth, audience, account, credentials)
 
-    def set_upload_info(self, uploadInfo: GoogleUploadInfo=dict(), reauth=False, audience=str(),
-                        account: Account=dict(), credentials=None):
+    def set_upload_info(self, uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                        audience: Optional[str]=None, account: Optional[Account]=None, credentials=None):
         self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
 
 
@@ -281,7 +281,7 @@ class RequestSession(UploadSession):
     datetimeUnit = "second"
     returnType = None
     mappedReturn = False
-    schemaInfo = SchemaInfo()
+    info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -289,8 +289,8 @@ class RequestSession(UploadSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -367,7 +367,7 @@ class RequestSession(UploadSession):
 
     def validate_data(func):
         @functools.wraps(func)
-        def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
+        def wrapper(self: RequestSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
             data = func(self, *args, fields=fields, returnType=returnType, **params)
             if self.mappedReturn and isinstance(data, Dict):
                 return self.filter_mapped_data(data, fields=fields, returnType=returnType)
@@ -392,7 +392,7 @@ class RequestSession(UploadSession):
 
     def validate_date(func):
         @functools.wraps(func)
-        def wrapper(self: Pipeline, *args, byDate: IndexLabel=list(),
+        def wrapper(self: RequestSession, *args, byDate: IndexLabel=list(),
                     fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
             data = func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
             if self.mappedReturn: return data
@@ -412,7 +412,7 @@ class RequestSession(UploadSession):
 
     def arrange_data(func):
         @functools.wraps(func)
-        def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+        def wrapper(self: RequestSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                     convert_dtypes=False, sortby=str(), reset_index=False, **context):
             data = func(self, *args, fields=fields, returnType=returnType, **context)
             arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
@@ -445,8 +445,7 @@ class RequestSession(UploadSession):
     ############################ With Data ############################
     ###################################################################
 
-    def with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(),
-                    func=str(), **context):
+    def with_data(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), func=str(), **context):
         self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
         self.save_result(data)
         self.upload_result(data, uploadInfo, **context)
@@ -460,11 +459,11 @@ class RequestSession(UploadSession):
         else: self.save_dataframe(data, file_name, self.get_save_sheet())
 
     def save_mapped_result(self, file_name: str, **data):
-        rename_map = self.get_rename_map(to="desc")
+        renameMap = self.get_rename_map(to="desc")
         with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
             for __key, __data in data.items():
                 sheet_name = self.get_save_sheet(__key)
-                to_dataframe(__data).rename(columns=rename_map).to_excel(writer, sheet_name=sheet_name, index=False)
+                to_dataframe(__data).rename(columns=renameMap).to_excel(writer, sheet_name=sheet_name, index=False)
 
     @BaseSession.catch_exception
     def upload_result(self, data: Data, uploadInfo: Optional[GoogleUploadInfo]=dict(), **context):
@@ -516,7 +515,8 @@ class Spider(RequestSession, Iterator, Parser):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
+    info = Info()
+    flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -525,8 +525,8 @@ class Spider(RequestSession, Iterator, Parser):
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -622,12 +622,12 @@ class Spider(RequestSession, Iterator, Parser):
                         drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
         if locals:
             context = self.local_context(locals, **context, drop=drop)
-        dateformat_keys = self.inspect("crawl", annotation="DateFormat").keys()
-        sequence_keys = self.inspect("crawl", "iterable").keys()
+        queryMap = self.get_query_map(key="name", value=["type","iterable"])
         for __key in list(context.keys()):
-            if __key in dateformat_keys:
+            if __key not in queryMap: pass
+            elif is_date_type(queryMap[__key]["type"]):
                 context[__key] = self.get_date(context[__key], index=int(str(__key).lower().endswith("enddate")))
-            elif (__key in sequence_keys) and notna(context[__key]):
+            elif queryMap[__key].get("iterable") and notna(context[__key]):
                 context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
             if __key in rename:
                 context[__key] = rename_data(context[__key], rename=rename[__key])
@@ -856,7 +856,7 @@ class AsyncSession(RequestSession):
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
-    schemaInfo = SchemaInfo()
+    info = Info()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -864,8 +864,8 @@ class AsyncSession(RequestSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -946,7 +946,7 @@ class AsyncSession(RequestSession):
 
     def validate_data(func):
         @functools.wraps(func)
-        async def wrapper(self: Pipeline, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
+        async def wrapper(self: AsyncSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
             data = await func(self, *args, fields=fields, returnType=returnType, **params)
             if self.mappedReturn and isinstance(data, Dict):
                 return self.filter_mapped_data(data, fields=fields, returnType=returnType)
@@ -955,7 +955,7 @@ class AsyncSession(RequestSession):
 
     def validate_date(func):
         @functools.wraps(func)
-        async def wrapper(self: Pipeline, *args, byDate: IndexLabel=list(),
+        async def wrapper(self: AsyncSession, *args, byDate: IndexLabel=list(),
                     fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
             data = await func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
             if self.mappedReturn: return data
@@ -1002,7 +1002,8 @@ class AsyncSpider(Spider, AsyncSession):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
+    info = Info()
+    flow = Flow()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1012,8 +1013,8 @@ class AsyncSpider(Spider, AsyncSession):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -1448,11 +1449,11 @@ class EncryptedSession(RequestSession):
     datetimeUnit = "second"
     returnType = None
     mappedReturn = False
-    schemaInfo = SchemaInfo()
     auth = LoginSpider
     authKey = list()
     decryptedKey = dict()
     sessionCookies = True
+    info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1460,8 +1461,8 @@ class EncryptedSession(RequestSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         RequestSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1485,7 +1486,7 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
-                login_context = TASK_CONTEXT(**self.validate_account(session, **context))
+                login_context = TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context))
                 data = func(self, *args, **login_context)
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
@@ -1497,7 +1498,7 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
-                login_context = LOGIN_CONTEXT(**self.validate_account(session, **context))
+                login_context = SESSION_CONTEXT(**self.validate_account(session, **context))
                 data = func(self, *args, session=session, **login_context)
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
@@ -1600,10 +1601,11 @@ class EncryptedSpider(Spider, EncryptedSession):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
     sessionCookies = True
+    info = Info()
+    flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1612,8 +1614,8 @@ class EncryptedSpider(Spider, EncryptedSession):
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1633,10 +1635,10 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
-    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
     sessionCookies = True
+    info = Info()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1644,8 +1646,8 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1673,7 +1675,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             with self.init_auth(**context) as auth:
-                login_context = LOGIN_CONTEXT(**self.validate_account(auth, **context))
+                login_context = SESSION_CONTEXT(**self.validate_account(auth, **context))
                 cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**cookies) as session:
                     data = await func(self, *args, session=session, semaphore=semaphore, **login_context)
@@ -1750,10 +1752,11 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     groupby = list()
     groupSize = dict()
     countby = str()
-    schemaInfo = SchemaInfo()
     auth = LoginSpider
     decryptedKey = dict()
     sessionCookies = True
+    info = Info()
+    flow = Flow()
 
     def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
@@ -1763,30 +1766,87 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(),
-                reauth=False, audience=str(), account: Account=dict(), credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
+                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
 
 
 ###################################################################
-############################# Pipeline ############################
+########################## Pipeline Task ##########################
 ###################################################################
 
-class Task(TypedDict):
+class Task(OptionalDict):
     def __init__(self, operator: Spider, task: str, dataName: str, dataType: Optional[TypeHint]=None,
-                name=str(), fields: IndexLabel=list(), allowedFields: IndexLabel=list(), params: Optional[_KT]=None,
-                derivData: Optional[_KT]=None, **context):
+                name=str(), fields: IndexLabel=list(), allowedFields: Optional[IndexLabel]=None,
+                params: Optional[_KT]=None, derivData: Optional[_KT]=None, **context):
         name = name if name else operator.operation
-        super().__init__(name=name, operator=operator, task=task, fields=fields, dataName=dataName, dataType=dataType)
-        self.update_exists(allowedFields=allowedFields, params=params, derivData=derivData, context=context)
+        super().__init__(name=name, operator=operator, task=task, fields=fields, dataName=dataName, dataType=dataType,
+            optional=dict(allowedFields=allowedFields, params=params, derivData=derivData, context=context),
+            null_if=dict(context=dict()))
 
 
-class Dag(TypedList):
+class Dag(TypedRecords):
+    dtype = Task
+    typeCheck = True
+
     def __init__(self, *args: Union[Task,Sequence[Task]]):
         super().__init__(*args)
 
+    def validate_dtype(self, __object: Dict) -> Union[Task,Sequence[Task]]:
+        if isinstance(__object, self.dtype): return __object
+        elif isinstance(__object, Sequence): return tuple(map(self.validate_dtype, __object))
+        elif isinstance(__object, Dict): return self.dtype(**__object)
+        else: self.raise_dtype_error(__object)
+
+
+###################################################################
+########################## Pipeline Info ##########################
+###################################################################
+
+class PipelineQuery(Query):
+    ...
+
+
+class PipelineField(Field):
+    typeCast = True
+
+    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, **kwargs):
+        super().__init__(name=name, type=type, desc=desc)
+
+
+class PipelineSchema(Schema):
+    dtype = PipelineField
+    typeCheck = True
+
+    def copy(self) -> PipelineSchema:
+        return copy.deepcopy(self)
+
+    def update(self, __iterable: Iterable[Field], inplace=True) -> PipelineSchema:
+        return super().update(__iterable, inplace=inplace)
+
+
+class PipelineInfo(Info):
+    dtype = (PipelineQuery, PipelineSchema)
+    typeCheck = True
+
+    def __init__(self, **kwargs: Union[PipelineQuery,PipelineSchema]):
+        super().__init__(**kwargs)
+
+    def validate_dtype(self, __object: Union[Iterable,Dict]) -> Union[PipelineQuery,PipelineSchema]:
+        if isinstance(__object, self.dtype): return __object
+        elif isinstance(__object, Query): return PipelineQuery(*__object)
+        elif isinstance(__object, Iterable): return PipelineSchema(*__object)
+        else: self.raise_dtype_error(__object, self.dtype[1])
+
+    def union(self, *schema: Schema) -> PipelineSchema:
+        return PipelineSchema(*union(*[__schema for __schema in schema if isinstance(__schema, Schema)]))
+
+
+###################################################################
+############################# Pipeline ############################
+###################################################################
 
 class Pipeline(EncryptedSession):
     __metaclass__ = ABCMeta
@@ -1799,7 +1859,7 @@ class Pipeline(EncryptedSession):
     errors = dict()
     returnType = "dataframe"
     mappedReturn = False
-    schemaInfo = SchemaInfo()
+    info = PipelineInfo()
     dags = Dag()
 
     @abstractmethod
@@ -1916,7 +1976,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     errors = dict()
     returnType = "dataframe"
     mappedReturn = False
-    schemaInfo = SchemaInfo()
+    info = PipelineInfo()
     dags = Dag()
 
     @abstractmethod

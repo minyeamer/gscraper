@@ -215,24 +215,26 @@ TYPE_LIST = {
 }
 
 _abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
-_arg_get = lambda arr, idx: arr[idx if _abs_idx(idx) < len(arr) else -1]
+_arg_get = lambda arr, idx: arr[idx if _abs_idx(idx) < len(arr) else -1] if arr else None
 
 
-def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Type:
+def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type]]:
     if isinstance(__object, Type): return __object
     elif isinstance(__object, str): return _get_type_from_str(__object, argidx)
     else: return _get_type_from_origin(__object, argidx)
 
 
-def _get_type_from_str(__object: str, argidx=0) -> Type:
-    if __object.startswith("Tuple[") and __object.endswith("]"):
-        return [get_type(__t) for __t in re.search(r"^Tuple\[([^]]+)\]$", __object).groups()[0].split(',')]
-    types = [__t for __t, __hint in TYPE_LIST.items() if __object.lower() in __hint]
-    if types: return _arg_get(types, argidx)
-    else: raise ValueError(INVALID_TYPE_HINT_MSG(__object))
+def _get_type_from_str(__object: str, argidx=0) -> Union[Type,Tuple[Type]]:
+    if __object.startswith("Union[") and __object.endswith("]"):
+        types = [get_type(__t) for __t in re.search(r"^Union\[([^]]+)\]$", __object).groups()[0].split(',')]
+        return _arg_get(types, argidx)
+    elif __object.startswith("Tuple[") and __object.endswith("]"):
+        return tuple(get_type(__t) for __t in re.search(r"^Tuple\[([^]]+)\]$", __object).groups()[0].split(','))
+    for __t, __hint in TYPE_LIST.items():
+        if __object.lower() in __hint: return __t
 
 
-def _get_type_from_origin(__object: Union[Type,TypeHint,Any], argidx=0) -> Type:
+def _get_type_from_origin(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type]]:
     __type, args = get_origin(__object), get_args(__object)
     if __type in (Tuple, tuple):
         return tuple(get_type(arg) for arg in args)
@@ -469,32 +471,6 @@ def is_iterable_annotation(annotation, custom_type=True) -> bool:
     name = (', '.join(type_hint) if isinstance(type_hint, List) else type_hint).lower()
     iterable = ["iterable", "sequence", "list", "tuple", "set"]
     return any(map(lambda x: x in name, iterable))
-
-
-def inspect_source(func: Callable) -> Dict[_KT,TypeHint]:
-    info, source = dict(), inspect.getsource(func)
-    return_annotation = inspect.signature(func).return_annotation
-    returns = re.search(r"-> ([^:]+):", source).groups()[0] if return_annotation != inspect._empty else None
-    pattern = re.compile(f"def {func.__name__}\(((.|[^:]\n)*)\)"+(r" ->" if returns else r":\n"))
-    catch = pattern.search(source)
-    if catch:
-        raw = catch.groups(0)[0]
-        params = map(lambda x: x.split(": "), raw.replace('\n',' ').split(", "))
-        info = {param[0].strip(): _decap(param[1].split('=')[0]) for param in params if len(param) == 2}
-    return dict(info, **({"__return__":returns} if returns else dict()))
-
-
-def inspect_function(func: Callable, ignore: Sequence[_KT]=list()) -> Dict[_KT,Dict]:
-    params = dict()
-    signature = inspect.signature(func)
-    type_hint = inspect_source(func)
-    for name, parameter in signature.parameters.items():
-        if name in ignore: continue
-        else: params[name] = inspect_parameter(parameter, type_hint.get(name))
-    return_annotation = inspect.signature(func).return_annotation
-    if return_annotation != inspect._empty:
-        params["__return__"] = inspect_annotation(return_annotation, type_hint.get("__return__"))
-    return params
 
 
 def inspect_parameter(parameter: Parameter, __type: Optional[TypeHint]=None) -> Dict:
