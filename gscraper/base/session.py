@@ -1009,21 +1009,28 @@ class Mapper(BaseSession):
 
     def map(self, data: ResponseData, flow: Optional[Flow]=None, responseType: Optional[TypeHint]=None,
             root: Optional[_KT]=None, discard=True, updateTime=True, fields: IndexLabel=list(), **context) -> Data:
-        if notna(root) or self.root:
-            root = root if notna(root) else self.root
-            data = get_value(data, root)
-        flow = self.set_flow(flow)
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
-        data = self._map_response(data, flow, responseType, discard=discard, **context)
+        data, context = self._init_flow(data, flow, responseType, root, discard, **context)
+        data = self._map_response(data, **context)
         if updateTime: data = self._set_update_time_by_interval(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
 
-    def set_flow(self, flow: Optional[Flow]=None) -> Flow:
+    def get_root(self, root: Optional[_KT]=None, **context) -> _KT:
+        return root if notna(root) else self.root
+
+    def get_flow(self, flow: Optional[Flow]=None, **context) -> Flow:
         if not isinstance(flow, Flow): flow = self.flow.copy()
         for process in flow:
             if SCHEMA not in process:
                 process[SCHEMA] = self.info.get(process[NAME])
         return flow
+
+    def _init_flow(self, data: ResponseData, flow: Optional[Flow]=None, responseType: Optional[TypeHint]=None,
+                    root: Optional[_KT]=None, discard=True, **context) -> Union[Data,Context]:
+        root = self.get_root(root=root, **context)
+        if root: data = get_value(data, root)
+        flow = self.get_flow(flow=flow, **context)
+        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
+        return data, dict(context, flow=flow, responseType=responseType, discard=discard)
 
     def _set_update_time_by_interval(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None,
                                     interval: Timedelta=str(), **context) -> Data:
@@ -1402,30 +1409,40 @@ class SequenceMapper(Mapper):
     flow = Flow()
 
     def map(self, data: ResponseData, flow: Optional[Flow]=None, responseType: Optional[TypeHint]=None,
-            root: Optional[_KT]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
+            root: Optional[_KT]=None, groupby: Optional[Union[Dict[_KT,_KT],_KT]]=None, groupSize: Optional[NestedDict]=None,
             countby: Optional[Literal["page","start"]]=None, discard=True, updateTime=True,
             fields: IndexLabel=list(), **context) -> Data:
-        if notna(root) or self.root:
-            root = root if notna(root) else self.root
-            data = get_value(data, root)
-        flow = self.set_flow(flow)
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
+        data, context = self._init_flow(data, flow, responseType, root, discard, **context)
         if isinstance(data, (Sequence,pd.DataFrame)):
-            groupby = dict(groupby=(groupby if notna(groupby) else self.groupby))
-            groupSize = dict(groupSize=(groupSize if notna(groupSize) else self.groupSize))
-            countby = dict(countby=(countby if notna(countby) else self.countby))
-            context = dict(context, **groupby, **groupSize, **countby)
-            data = self._map_sequence(data, flow, responseType, discard=discard, **context)
-        else: data = self._map_response(data, flow, responseType, discard=discard, **context)
+            context = self._get_sequence_context(groupby, groupSize, countby, **context)
+            data = self._map_sequence(data, **context)
+        else: data = self._map_response(data, **context)
         if updateTime: data = self._set_update_time_by_interval(data, **context)
         return filter_data(data, fields=fields, if_null="pass")
+
+    def get_groupby(self, groupby: Optional[Union[Dict[_KT,_KT],_KT]]=None, **context) -> Union[Dict[_KT,_KT],_KT]:
+        return groupby if notna(groupby) else self.groupby
+
+    def get_group_size(self, groupSize: Optional[NestedDict]=None, **context) -> NestedDict:
+        return groupSize if notna(groupSize) else self.groupSize
+
+    def get_countby(self, countby: Optional[Literal["page","start"]]=None, **context) -> str:
+        return countby if notna(countby) else self.countby
+
+    def _get_sequence_context(self, groupby: Optional[Union[Dict[_KT,_KT],_KT]]=None, groupSize: Optional[NestedDict]=None,
+                            countby: Optional[Literal["page","start"]]=None, **context) -> Context:
+        groupby = dict(groupby=self.get_groupby(groupby=groupby, **context))
+        groupSize = dict(groupSize=self.get_group_size(groupSize=groupSize, **context))
+        countby = dict(countby=self.get_countby(countby=countby, **context))
+        return dict(context, **groupby, **groupSize, **countby)
 
     ###################################################################
     ########################### Map Sequence ##########################
     ###################################################################
 
     def _map_sequence(self, data: ResponseData, flow: Flow, responseType: Optional[TypeHint]=None,
-                    groupby: _KT=list(), groupSize: NestedDict=dict(), countby: Optional[Literal["page","start"]]=None,
+                    groupby: Union[Dict[_KT,_KT],_KT]=list(), groupSize: NestedDict=dict(),
+                    countby: Optional[Literal["page","start"]]=None,
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> Data:
         context = dict(context, flow=flow, countby=countby, match=match, discard=discard)
         responseType = _get_response_type(responseType if responseType else self.responseType)
@@ -1435,7 +1452,7 @@ class SequenceMapper(Mapper):
         elif is_tag_type(responseType): return self._map_tag_list(data, **context)
         else: return self._map_records(data, **context)
 
-    def _groupby_data(self, data: ResponseData, groupby: _KT, groupSize: NestedDict=dict(),
+    def _groupby_data(self, data: ResponseData, groupby: Union[Dict[_KT,_KT],_KT], groupSize: NestedDict=dict(),
                     if_null: Literal["drop","pass"]="drop", hier=False, **context) -> Data:
         groups = groupby_data(data, by=groupby, if_null=if_null, hier=hier)
         log_msg = {"groups":list(groups.keys()), "groupSize":[safe_len(group) for group in groups.values()]}
