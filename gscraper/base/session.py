@@ -55,7 +55,7 @@ SCHEMA, ROOT, MATCH, RANK = "schema", "root", "match", "rank"
 SCHEMA_KEY = "__key"
 SCHEMA_KEYS = [SCHEMA, ROOT, MATCH]
 
-NAME, PATH, TYPE, MODE, DESC = "name", "path", "type", "mode", "description"
+NAME, PATH, TYPE, MODE, DESC = "name", "path", "type", "mode", "desc"
 APPLY, MATCH, CAST = "apply", "match", "cast"
 HOW, VALUE, TUPLE, ITERATE, CALLABLE = "how", "value", "tuple", "iterate", "callable"
 
