@@ -43,18 +43,15 @@ MAP_CONTEXT = lambda flow=None, schema=None, responseType=None, match=None, root
                     countby=None, __index=None, **context: context
 
 
-SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedReturn=None, **context: context
-
-
-ASYNCIO_CONTEXT = lambda redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
+SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedReturn=None, \
+                        redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
 
 
 ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, sessionCookies=None, **context: context
 
 
 UNIQUE_CONTEXT = lambda derivFields=None, dags=None, **context: \
-    ENCRYPTED_CONTEXT(**ASYNCIO_CONTEXT(**SPIDER_CONTEXT(
-        **MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context)))))))
+    ENCRYPTED_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 
 PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, \
@@ -69,9 +66,8 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         engine=None, **context: context
 
 
-RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, \
-                        delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, \
-                        redirectUnit=None, **context: context
+RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, progress=None, \
+                        message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
 
 
 GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
@@ -87,16 +83,16 @@ TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
 
 
 SESSION_CONTEXT = lambda session=None, semaphore=None, cookies=str(), **context: \
-                        dict(UPLOAD_CONTEXT(**REQUEST_CONTEXT(**PARAMS_CONTEXT(**context))), cookies=cookies)
+                        dict(UPLOAD_CONTEXT(**REQUEST_CONTEXT(**PARAMS_CONTEXT(**context))), **exists_dict(cookies=cookies))
 
 
 PROXY_CONTEXT = lambda session=None, semaphore=None, **context: UNIQUE_CONTEXT(**UPLOAD_CONTEXT(**context))
 
 
-LOCAL_CONTEXT = lambda apiRedirect=None, returnType=None, localSave=None, **context: SESSION_CONTEXT(**context)
+LOCAL_CONTEXT = lambda __index=None, apiRedirect=None, returnType=None, localSave=None, **context: SESSION_CONTEXT(**context)
 
 
-REDIRECT_CONTEXT = lambda apiRedirect=None, returnType=None, logFile=None, **context: SESSION_CONTEXT(**context)
+REDIRECT_CONTEXT = lambda logFile=None, **context: LOCAL_CONTEXT(**SESSION_CONTEXT(**context))
 
 
 ###################################################################

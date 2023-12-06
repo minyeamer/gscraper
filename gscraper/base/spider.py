@@ -6,7 +6,7 @@ from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONT
 from gscraper.base.session import BaseSession, Iterator, Parser, Info, Schema, Field, Flow, Process
 from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryInfo, GoogleUploadInfo
-from gscraper.base.gcloud import fetch_gcloud_authorization
+from gscraper.base.gcloud import fetch_gcloud_authorization, read_gcloud
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, DateFormat, Timedelta, Timezone
@@ -48,6 +48,15 @@ import inspect
 import random
 import re
 
+
+GET = "GET"
+POST = "POST"
+OPTIONS = "OPTIONS"
+HEAD = "HEAD"
+PUT = "PUT"
+PATCH = "PATCH"
+DELETE = "DELETE"
+API = "API"
 
 MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
@@ -97,7 +106,7 @@ GATHER_MSG = lambda which, where=str(), by=str(): \
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
-INVALID_REDIRECT_LOG_MSG = "Please verify that the both results and errors are in redierct returns."
+INVALID_REDIRECT_RESPONSE_MSG = "Please verify the redirect response."
 
 INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
 INVALID_API_INFO_MSG = lambda where=str(): f"{re.sub(' API$','',where)} API information is not valid.".strip()
@@ -495,9 +504,12 @@ class Spider(RequestSession, Iterator, Parser):
     by = str()
     fields = list()
     iterateArgs = list()
+    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
+    redirectProduct = list()
     iterateUnit = 1
+    redirectUnit = 1
     pagination = False
     pageFrom = 1
     offsetFrom = 1
@@ -524,6 +536,7 @@ class Spider(RequestSession, Iterator, Parser):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
                 audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
@@ -534,6 +547,7 @@ class Spider(RequestSession, Iterator, Parser):
         self.set_request_variables(delay, cookies)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
+        self.set_redirect_variables(apiRedirect, redirectUnit)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
         self._disable_warnings()
@@ -548,6 +562,10 @@ class Spider(RequestSession, Iterator, Parser):
         if which: self.which = which
         if by: self.by = by
         if message: self.message = message
+
+    def set_redirect_variables(self, apiRedirect=False, redirectUnit: Optional[Unit]=None):
+        self.apiRedirect = apiRedirect
+        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
 
     def _disable_warnings(self):
         if self.ssl == False:
@@ -643,6 +661,14 @@ class Spider(RequestSession, Iterator, Parser):
         args, context = self.validate_params(locals())
         return self.gather(*args, **context)
 
+    def redirect_available(func):
+        @functools.wraps(func)
+        def wrapper(self: Spider, *args, apiRedirect=False, **context):
+            if apiRedirect: return self.redirect(*args, **context)
+            else: return func(self, *args, **context)
+        return wrapper
+
+    @redirect_available
     def gather(self, *args, message=str(), progress=True, fields: IndexLabel=list(),
                 byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                 returnType: Optional[TypeHint]=None, **context) -> Data:
@@ -681,6 +707,7 @@ class Spider(RequestSession, Iterator, Parser):
     ########################### Gather Count ##########################
     ###################################################################
 
+    @redirect_available
     def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True, fields: IndexLabel=list(),
                     byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                     returnType: Optional[TypeHint]=None, size: Optional[int]=None, pageSize=0, **context) -> Data:
@@ -840,6 +867,83 @@ class Spider(RequestSession, Iterator, Parser):
 
     def log_results(self, data: Data, **context):
         self.logger.info(log_data(data, **self.get_iterator(**context)))
+
+    ###################################################################
+    ############################# Redirect ############################
+    ###################################################################
+
+    def gcloud_authorized(func):
+        @functools.wraps(func)
+        def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
+            return func(self, *args, **self._validate_redirect_info(redirectUrl, authorization, account), **context)
+        return wrapper
+
+    @gcloud_authorized
+    def redirect(self, *args, progress=True, fields: IndexLabel=list(),
+                byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+                returnType: Optional[TypeHint]=None, **context) -> Data:
+        message = self.get_redirect_message(**context)
+        iterator, context = self._redirect_iterator(args, context, self.redirectArgs, self.redirectProduct, self.pagination)
+        data = self._redirect_data(iterator, message=message, progress=progress, fields=fields, **context)
+        self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
+        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
+
+    def get_redirect_message(self, **context) -> str:
+        return REDIRECT_MSG(self.operation)
+
+    @RequestSession.catch_exception
+    @RequestSession.limit_request
+    @gcloud_authorized
+    def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Records:
+        data = self._get_redirect_data(redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+        response = self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
+        return self._parse_redirect(response, **context)
+
+    def _redirect_iterator(self, args: Arguments, context: Context, redirectArgs: List[_KT]=list(), redirectProduct: List[_KT]=list(),
+                            pagination: Pagination=False, indexing=True) -> Tuple[List[Context],Context]:
+        iterateArgs = redirectArgs if redirectArgs is not None else self.iterateArgs
+        iterateProduct = redirectProduct if redirectProduct is not None else list()
+        context["iterateUnit"] = context.get("redirectUnit", self.iterateUnit)
+        return self._init_iterator(args, context, iterateArgs, iterateProduct, pagination, indexing=indexing)
+
+    def _redirect_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
+                            **context) -> List[Data]:
+        fields = fields if isinstance(fields, Sequence) else list()
+        return [self.fetch_redirect(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+
+    def _validate_redirect_info(self, redirectUrl=str(), authorization=str(), account: Account=dict()) -> Context:
+        if not redirectUrl:
+            account = account if account and isinstance(account, dict) else read_gcloud(account)
+            redirectUrl = account["audience"]
+        if not authorization:
+            authorization = fetch_gcloud_authorization(redirectUrl, account)
+        return dict(redirectUrl=redirectUrl, authorization=authorization, account=account)
+
+    def _get_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> str:
+        return json.dumps(dict(
+            operation = self.operation,
+            redirectUrl = redirectUrl,
+            authorization = authorization,
+            account = account,
+            **REDIRECT_CONTEXT(**context)), ensure_ascii=False, default=str)
+
+    def _parse_redirect(self, response: RedirectData, **context) -> Records:
+        self._log_redirect_errors(response)
+        data = self._map_redirect(response["data"])
+        self.log_results(data, **context)
+        return data
+
+    def _log_redirect_errors(self, response: RedirectData):
+        if not (isinstance(response, Dict) and ("data" in response)):
+            raise ValueError(INVALID_REDIRECT_RESPONSE_MSG)
+        errors = response.get("errors", list())
+        if isinstance(errors, List) and errors:
+            self.errors += errors
+
+    def _map_redirect(self, data: Records) -> Records:
+        if not isinstance(data, List): return list()
+        cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
+        return apply_records(data, apply=cast_datetime_or_keep, all_keys=True)
 
 
 ###################################################################
@@ -1011,8 +1115,8 @@ class AsyncSpider(Spider, AsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
                 audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
         self.set_filter_variables(fields, returnType)
@@ -1022,14 +1126,10 @@ class AsyncSpider(Spider, AsyncSession):
         self.set_async_variables(delay, numTasks, cookies)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
-        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         self.set_redirect_variables(apiRedirect, redirectUnit)
+        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
         self._disable_warnings()
-
-    def set_redirect_variables(self, apiRedirect=False, redirectUnit: Optional[Unit]=None):
-        self.apiRedirect = apiRedirect
-        self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
 
     ###################################################################
     ########################### Async Gather ##########################
@@ -1044,7 +1144,7 @@ class AsyncSpider(Spider, AsyncSession):
     def redirect_available(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, apiRedirect=False, **context):
-            if apiRedirect: return await self.redirect(self, *args, **context)
+            if apiRedirect: return await self.redirect(*args, **context)
             else: return await func(self, *args, **context)
         return wrapper
 
@@ -1219,71 +1319,31 @@ class AsyncSpider(Spider, AsyncSession):
     def gcloud_authorized(func):
         @functools.wraps(func)
         async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
-            if not authorization:
-                authorization = fetch_gcloud_authorization(redirectUrl, account)
-            return await func(
-                self, *args, redirectUrl=redirectUrl, authorization=authorization, account=account, **context)
+            return await func(self, *args, **self._validate_redirect_info(redirectUrl, authorization, account), **context)
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, redirectUnit: Unit=1, progress=True, fields: IndexLabel=list(),
+    async def redirect(self, *args, progress=True, fields: IndexLabel=list(),
                         byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                         returnType: Optional[TypeHint]=None, **context) -> Data:
-        redirectArgs = redirectArgs if is_array(self.redirectArgs) else self.iterateArgs
-        context["iterateUnit"] = redirectUnit
         message = self.get_redirect_message(**context)
-        iterator, context = self._init_iterator(args, context, redirectArgs, self.redirectProduct, self.pagination)
+        iterator, context = self._redirect_iterator(args, context, self.redirectArgs, self.redirectProduct, self.pagination)
         data = await self._redirect_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
-    def get_redirect_message(self, **context) -> str:
-        return REDIRECT_MSG(self.operation)
-
     async def _redirect_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
                             **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
-        return await tqdm.gather(*[
-                self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        return await tqdm.gather(*[self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
 
     @AsyncSession.catch_exception
     @AsyncSession.limit_request
     @gcloud_authorized
-    async def fetch_redirect(self, redirectUrl: str, authorization: str, session: Optional[aiohttp.ClientSession]=None,
-                            account: Account=dict(), **context) -> Records:
-        data = self._filter_redirect_data(redirectUrl, authorization, account, **context)
-        messages = dict(json=data, headers=dict(Authorization=authorization))
-        self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
-        async with session.post(redirectUrl, **messages) as response:
-            self.checkpoint("redirect"+ITER_SUFFIX(context), where="fetch_redirect", msg={"response":response}, save=response, ext="json")
-            self.logger.info(await log_client(response, url=redirectUrl, **self.get_iterator(**context, _index=True)))
-            return self._parse_redirect(response.json(), **context)
-
-    def _filter_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> Context:
-        return dict(
-            operation = self.operation,
-            redirectUrl=redirectUrl,
-            authorization=authorization,
-            account=account,
-            **REDIRECT_CONTEXT(**context))
-
-    def _parse_redirect(self, data: RedirectData, **context) -> Records:
-        data = self._log_redirect_errors(data)
-        results = self._map_redirect(data, **context)
-        self.logger.debug(log_data(results, **context))
-        return results
-
-    def _log_redirect_errors(self, data: RedirectData, **context) -> Records:
-        if not isinstance(data, Dict): raise ValueError(INVALID_REDIRECT_LOG_MSG)
-        errors = data.get("errors", default=dict())
-        for key, values in (errors if isinstance(errors, Dict) else dict()).items():
-            self.errors[key] += values
-        return data.get("data", default=list())
-
-    def _map_redirect(self, data: Records, **context) -> Records:
-        if not isinstance(data, List): return list()
-        cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
-        return apply_records(data, apply=cast_datetime_or_keep, all_keys=True)
+    async def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Records:
+        data = self._get_redirect_data(redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+        response = await self.request_json(POST, url=redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
+        return self._parse_redirect(response, **context)
 
 
 ###################################################################
@@ -1581,9 +1641,12 @@ class EncryptedSpider(Spider, EncryptedSession):
     by = str()
     fields = list()
     iterateArgs = list()
+    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
+    redirectProduct = list()
     iterateUnit = 1
+    redirectUnit = 1
     pagination = False
     pageFrom = 1
     offsetFrom = 1
@@ -1613,6 +1676,7 @@ class EncryptedSpider(Spider, EncryptedSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
+                apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
                 audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
@@ -1764,8 +1828,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
                 audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
