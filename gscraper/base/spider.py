@@ -1920,7 +1920,6 @@ class Pipeline(EncryptedSession):
     derivFields = list()
     tzinfo = None
     datetimeUnit = "second"
-    errors = dict()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
@@ -1953,7 +1952,7 @@ class Pipeline(EncryptedSession):
         fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = method(**params)
-        self.errors[task[NAME]] = worker.errors
+        self.errors.append({task[NAME]:worker.errors})
         self.checkpoint(task[NAME], where=method.__name__, msg={"data":response}, save=response)
         return response
 
@@ -2037,7 +2036,6 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     derivFields = list()
     tzinfo = None
     datetimeUnit = "second"
-    errors = dict()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
@@ -2062,7 +2060,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
-        self.errors[task[NAME]] = worker.errors
+        self.errors.append({task[NAME]:worker.errors})
         self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
         return response
 
