@@ -1531,7 +1531,7 @@ class EncryptedSession(RequestSession):
         if self.cookies or ((encryptedKey is None) and (decryptedKey is None)): return
         elif isinstance(decryptedKey, Dict): pass
         elif isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
-            try: decryptedKey = json.loads(decryptedKey if decryptedKey else decrypt(encryptedKey,1))
+            try: decryptedKey = json.loads((decryptedKey if decryptedKey else decrypt(encryptedKey)).replace('\'','\"'))
             except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
         decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
         if decryptedKey:
