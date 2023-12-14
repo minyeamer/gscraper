@@ -92,6 +92,7 @@ _NAME_SUFFIX = lambda name: f"_{name}" if name else str()
 SUFFIX = lambda context, field=dict(), name=str(): \
     _SCHEMA_SUFFIX(context) + _FIELD_SUFFIX(field) + _NAME_SUFFIX(name) + ITER_SUFFIX(context) + _COUNT_SUFFIX(context)
 
+TZINFO = None
 START, END = 0, 1
 
 
@@ -456,7 +457,7 @@ class Info(TypedDict):
 class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
-    tzinfo = None
+    tzinfo = TZINFO
     datetimeUnit = "second"
     errors = list()
     info = Info()
@@ -471,7 +472,7 @@ class BaseSession(CustomDict):
     def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None):
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
-        self.initTime = now(tzinfo=self.tzinfo, droptz=True, unit=self.datetimeUnit)
+        self.initTime = now(tzinfo=self.tzinfo, droptz=True)
 
     def set_logger(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None):

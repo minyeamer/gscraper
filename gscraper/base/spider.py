@@ -286,8 +286,6 @@ class RequestSession(UploadSession):
     asyncio = False
     operation = "session"
     fields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     returnType = None
     mappedReturn = False
     info = Info()
@@ -517,8 +515,6 @@ class Spider(RequestSession, Iterator, Parser):
     pageLimit = 0
     interval = str()
     fromNow = None
-    tzinfo = None
-    datetimeUnit = "second"
     ssl = None
     responseType = "records"
     returnType = "records"
@@ -955,8 +951,6 @@ class AsyncSession(RequestSession):
     asyncio = True
     operation = "session"
     fields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
@@ -1096,8 +1090,6 @@ class AsyncSpider(Spider, AsyncSession):
     pageLimit = 0
     interval = str()
     fromNow = None
-    tzinfo = None
-    datetimeUnit = "second"
     ssl = None
     responseType = "records"
     returnType = "records"
@@ -1505,8 +1497,6 @@ class EncryptedSession(RequestSession):
     operation = "session"
     where = WHERE
     fields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     returnType = None
     mappedReturn = False
     auth = LoginSpider
@@ -1654,8 +1644,6 @@ class EncryptedSpider(Spider, EncryptedSession):
     pageLimit = 0
     interval = str()
     fromNow = None
-    tzinfo = None
-    datetimeUnit = "second"
     ssl = None
     responseType = "records"
     returnType = "records"
@@ -1694,8 +1682,6 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     asyncio = True
     operation = "session"
     fields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
@@ -1806,8 +1792,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     pageLimit = 0
     interval = str()
     fromNow = None
-    tzinfo = None
-    datetimeUnit = "second"
     ssl = None
     responseType = "records"
     returnType = "records"
@@ -1918,8 +1902,6 @@ class Pipeline(EncryptedSession):
     operation = "pipeline"
     fields = list()
     derivFields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
@@ -2034,8 +2016,6 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     operation = "pipeline"
     fields = list()
     derivFields = list()
-    tzinfo = None
-    datetimeUnit = "second"
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
