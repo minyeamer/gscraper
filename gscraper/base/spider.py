@@ -890,7 +890,7 @@ class Spider(RequestSession, Iterator, Parser):
     @RequestSession.catch_exception
     @RequestSession.limit_request
     @gcloud_authorized
-    def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Records:
+    def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Data:
         data = self._get_redirect_data(redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
         response = self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
@@ -923,23 +923,17 @@ class Spider(RequestSession, Iterator, Parser):
             account = account,
             **REDIRECT_CONTEXT(**context)), ensure_ascii=False, default=str)
 
-    def _parse_redirect(self, response: RedirectData, **context) -> Records:
-        self._log_redirect_errors(response)
-        data = self._map_redirect(response["data"])
+    def _parse_redirect(self, response: RedirectData, **context) -> Data:
+        data = self._map_redirect(response)
         self.log_results(data, **context)
         return data
 
-    def _log_redirect_errors(self, response: RedirectData):
-        if not (isinstance(response, Dict) and ("data" in response)):
-            raise ValueError(INVALID_REDIRECT_RESPONSE_MSG)
-        errors = response.get("errors", list())
-        if isinstance(errors, List) and errors:
-            self.errors += errors
-
     def _map_redirect(self, data: Records) -> Records:
-        if not isinstance(data, List): return list()
+        if not isinstance(data, (Dict,List)): return list()
         cast_datetime_or_keep = lambda x: cast_datetime_format(x, default=x)
-        return apply_records(data, apply=cast_datetime_or_keep, all_keys=True)
+        if isinstance(data, Dict):
+            return {__key: self._map_redirect(__data) for __key, __data in data.items()}
+        else: return apply_records(data, apply=cast_datetime_or_keep, all_keys=True)
 
 
 ###################################################################
