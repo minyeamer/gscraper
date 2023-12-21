@@ -478,7 +478,7 @@ class RequestSession(UploadSession):
         elif self.mappedReturn and isinstance(data, Dict):
             for __key, __data in data.items():
                 if __key in uploadInfo:
-                    self.upload_data(__data, uploadInfo[__key], **context)
+                    self.upload_data(__data, {__key: uploadInfo[__key]}, **context)
         else: self.upload_data(data, uploadInfo, **context)
 
     def get_save_name(self, prefix=str()) -> str:
