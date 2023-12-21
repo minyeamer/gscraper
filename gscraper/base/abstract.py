@@ -66,8 +66,8 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         engine=None, **context: context
 
 
-RESPONSE_CONTEXT = lambda iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, progress=None, \
-                        message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
+RESPONSE_CONTEXT = lambda tzinfo=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, \
+                        progress=None, message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
 
 
 GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
