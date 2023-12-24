@@ -45,7 +45,6 @@ import pandas as pd
 from tqdm.auto import tqdm
 import base64
 import inspect
-import random
 import re
 
 
@@ -69,7 +68,7 @@ ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
 GCLOUD_UNIQUE = ["queryInfo", "uploadInfo", "account"]
 
 FILTER_UNIQUE = ["fields", "returnType"]
-REQUEST_UNIQUE = ["delay", "cookies"]
+REQUEST_UNIQUE = ["numRetries", "delay", "cookies"]
 
 SPIDER_UNIQUE = ["discard", "progress"]
 GATHER_UNIQUE = ["message", "where", "which", "by"]
@@ -288,13 +287,13 @@ class RequestSession(UploadSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_request_variables(delay, cookies)
+        self.set_request_variables(numRetries, delay, cookies)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
@@ -302,8 +301,8 @@ class RequestSession(UploadSession):
         self.fields = fields if fields else self.fields
         self.returnType = returnType if returnType else self.returnType
 
-    def set_request_variables(self, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None):
-        self.delay = delay
+    def set_request_variables(self, numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None):
+        self.set_retries(numRetries, delay)
         self.cookies = cookies
 
     def set_date_filter(self, byDate: IndexLabel, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None):
@@ -349,17 +348,6 @@ class RequestSession(UploadSession):
             self.sleep()
             return response
         return wrapper
-
-    def sleep(self, tsUnit: Literal["ms","s"]="ms"):
-        delay = self.get_delay(tsUnit)
-        if delay: time.sleep(delay)
-
-    def get_delay(self, tsUnit: Literal["ms","s"]="ms") -> Union[float,int]:
-        if isinstance(self.delay, (float,int)):
-            return self.delay
-        elif isinstance(self.delay, Tuple):
-            random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
-        else: return 0.
 
     ###################################################################
     ########################## Validate Data ##########################
@@ -523,18 +511,18 @@ class Spider(RequestSession, Iterator, Parser):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_iterator_unit(iterateUnit, interval)
-        self.set_request_variables(delay, cookies)
+        self.set_request_variables(numRetries, delay, cookies)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
+        self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
@@ -946,20 +934,20 @@ class AsyncSession(RequestSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_async_variables(delay, numTasks, cookies)
+        self.set_async_variables(numRetries, delay, cookies, numTasks)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
-    def set_async_variables(self, delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None):
-        self.delay = delay
+    def set_async_variables(self, numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                            numTasks=100):
+        self.set_request_variables(numRetries, delay, cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
-        self.cookies = cookies
 
     ###################################################################
     ########################## Async Managers #########################
@@ -1013,11 +1001,15 @@ class AsyncSession(RequestSession):
     def catch_exception(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, **context):
-            try: return await func(self, *args, **context)
-            except KeyboardInterrupt as interrupt:
-                raise interrupt
-            except Exception as exception:
-                return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+            for retry in range(0, self.numRetries+1):
+                try: return await func(self, *args, **context)
+                except KeyboardInterrupt as interrupt:
+                    raise interrupt
+                except Exception as exception:
+                    if retry+1 < self.numRetries:
+                        await self.async_sleep()
+                        continue
+                    return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
         return wrapper
 
     def ignore_exception(func):
@@ -1090,18 +1082,18 @@ class AsyncSpider(Spider, AsyncSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
-        self.set_iterator_unit(iterateUnit, interval)
-        self.set_async_variables(delay, numTasks, cookies)
+        self.set_async_variables(numRetries, delay, cookies, numTasks)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
+        self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
@@ -1486,7 +1478,7 @@ class EncryptedSession(RequestSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1638,9 +1630,9 @@ class EncryptedSpider(Spider, EncryptedSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1669,7 +1661,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1784,9 +1776,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                iterateUnit: Unit=0, interval: Timedelta=str(), delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):

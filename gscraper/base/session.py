@@ -29,6 +29,8 @@ import copy
 import functools
 import logging
 import os
+import random
+import time
 
 from typing import Any, Dict, Callable, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
 from bs4 import BeautifulSoup
@@ -459,14 +461,18 @@ class BaseSession(CustomDict):
     operation = "session"
     tzinfo = TZINFO
     datetimeUnit = "second"
+    numRetries = 0
+    delay = 1.
     errors = list()
     info = Info()
 
     def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None, **context):
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., **context):
         self.set_init_time(tzinfo, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, debug, extraSave, interrupt, localSave)
+        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_retries(numRetries, delay)
         super().__init__(context)
 
     def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None):
@@ -485,6 +491,11 @@ class BaseSession(CustomDict):
         self.debug = cast_list(debug)
         self.extraSave = cast_list(extraSave)
         self.interrupt = cast_list(interrupt)
+
+    def set_retries(self, numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1.):
+        if isinstance(numRetries, int) and numRetries > 0:
+            self.numRetries = numRetries
+        self.delay = delay
 
     def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         drop_keys = cast_list(drop)
@@ -670,11 +681,15 @@ class BaseSession(CustomDict):
     def catch_exception(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, *args, **context):
-            try: return func(self, *args, **context)
-            except KeyboardInterrupt as interrupt:
-                raise interrupt
-            except Exception as exception:
-                return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+            for retry in range(0, self.numRetries+1):
+                try: return func(self, *args, **context)
+                except KeyboardInterrupt as interrupt:
+                    raise interrupt
+                except Exception as exception:
+                    if retry+1 < self.numRetries:
+                        self.sleep()
+                        continue
+                    else: return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
         return wrapper
 
     def ignore_exception(func):
@@ -695,6 +710,17 @@ class BaseSession(CustomDict):
         func_name = f"{func.__name__}({self.__class__.__name__})"
         self.logger.error(log_exception(func_name, json=self.logJson, **msg))
         self.errors.append(msg)
+
+    def sleep(self, tsUnit: Literal["ms","s"]="ms"):
+        delay = self.get_delay(tsUnit)
+        if delay: time.sleep(delay)
+
+    def get_delay(self, tsUnit: Literal["ms","s"]="ms") -> Union[float,int]:
+        if isinstance(self.delay, (float,int)):
+            return self.delay
+        elif isinstance(self.delay, Tuple):
+            random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
+        else: return 0.
 
     ###################################################################
     ############################ Print Log ############################
