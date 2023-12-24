@@ -66,11 +66,7 @@ TIME_UNIQUE = ["tzinfo", "datetimeUnit"]
 LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debug", "extraSave", "interrupt"]
 
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
-
-GCLOUD_AUTH_UNIQUE = ["account"]
-GCLOUD_QUERY_UNIQUE = ["queryInfo"]
-GCLOUD_UPLOAD_UNIQUE = ["uploadInfo", "reauth", "audience", "credentials"]
-GCLOUD_UNIQUE = GCLOUD_AUTH_UNIQUE + GCLOUD_QUERY_UNIQUE + GCLOUD_UPLOAD_UNIQUE
+GCLOUD_UNIQUE = ["queryInfo", "uploadInfo", "account"]
 
 FILTER_UNIQUE = ["fields", "returnType"]
 REQUEST_UNIQUE = ["delay", "cookies"]
@@ -270,15 +266,13 @@ class UploadSession(GoogleQueryReader, GoogleUploader):
     __metaclass__ = ABCMeta
     operation = "session"
 
-    def __init__(self, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
+    def __init__(self, queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         CustomDict.__init__(self, UNIQUE_CONTEXT(**context))
         self.set_query(queryInfo, account)
-        self.set_upload_info(uploadInfo, reauth, audience, account, credentials)
+        self.set_upload_info(uploadInfo, account)
 
-    def set_upload_info(self, uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                        audience: Optional[str]=None, account: Optional[Account]=None, credentials=None):
-        self.update_exists(uploadInfo=uploadInfo, reauth=reauth, audience=audience, account=account, credentials=credentials)
+    def set_upload_info(self, uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None):
+        self.update_exists(uploadInfo=uploadInfo, account=account)
 
 
 class RequestSession(UploadSession):
@@ -296,14 +290,13 @@ class RequestSession(UploadSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(delay, cookies)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
-        UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
+        UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
     def set_filter_variables(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None):
         self.fields = fields if fields else self.fields
@@ -534,8 +527,7 @@ class Spider(RequestSession, Iterator, Parser):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -545,7 +537,7 @@ class Spider(RequestSession, Iterator, Parser):
         self.set_gather_message(where, which, by, message)
         self.set_redirect_variables(apiRedirect, redirectUnit)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
-        UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
+        UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
         self._disable_warnings()
 
     def set_spider_variables(self, fromNow: Optional[Unit]=None, discard=True, progress=True):
@@ -956,14 +948,13 @@ class AsyncSession(RequestSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(delay, numTasks, cookies)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
-        UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
+        UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
     def set_async_variables(self, delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None):
         self.delay = delay
@@ -1103,8 +1094,7 @@ class AsyncSpider(Spider, AsyncSession):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None, **context):
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -1114,7 +1104,7 @@ class AsyncSpider(Spider, AsyncSession):
         self.set_gather_message(where, which, by, message)
         self.set_redirect_variables(apiRedirect, redirectUnit)
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
-        UploadSession.__init__(self, queryInfo, uploadInfo, reauth, audience, account, credentials, **context)
+        UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
         self._disable_warnings()
 
     ###################################################################
@@ -1468,17 +1458,10 @@ class LoginCookie(LoginSpider):
 
     def __init__(self, cookies=str(), **context):
         requests.Session.__init__(self)
-        self.cookies = parse_cookies(cookies)
+        self.update_cookies(cookies)
 
     def login(self):
         return
-
-    def get_cookies(self, encode=True, **context) -> Union[str,Dict]:
-        return self.cookies if encode else decode_cookies(self.cookies)
-
-    def update_cookies(self, cookies: Union[str,Dict]=str(), **context):
-        if not cookies: return
-        else: self.cookies = encode_cookies(self.cookies, cookies)
 
 
 ###################################################################
@@ -1505,8 +1488,7 @@ class EncryptedSession(RequestSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         RequestSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1660,8 +1642,7 @@ class EncryptedSpider(Spider, EncryptedSession):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1690,8 +1671,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 delay: Union[float,int,Tuple[int]]=1., numTasks=100, cookies: Optional[str]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1808,8 +1788,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 numTasks=100, apiRedirect=False, redirectUnit: Optional[Unit]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
-                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), reauth: Optional[bool]=None,
-                audience: Optional[str]=None, account: Optional[Account]=None, credentials=None,
+                queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)

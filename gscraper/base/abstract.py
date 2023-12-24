@@ -76,7 +76,7 @@ GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, b
                         progress=None, partition=None, prtition_by=None, base=None, **context: context
 
 
-UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, reauth=None, audience=None, credentials=None, **context: context
+UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, **context: context
 
 
 TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
@@ -411,12 +411,9 @@ DATE_FILTER_QUERY = lambda: Query(
 )
 
 GCLOUD_QUERY = lambda: Query(
-    Variable(name="readInfo", type="DICT", iterable=False, default=dict()),
+    Variable(name="queryInfo", type="DICT", iterable=False, default=dict()),
     Variable(name="uploadInfo", type="DICT", iterable=False, default=dict()),
-    Variable(name="reauth", type="BOOLEAN", iterable=False, default=None),
-    Variable(name="audience", type="STRING", iterable=False, default=None),
     Variable(name="account", type="STRING", iterable=False, default=None),
-    Variable(name="credentials", type="STRING", iterable=False, default=None),
 )
 
 SESSION_QUERY = lambda: Query(
