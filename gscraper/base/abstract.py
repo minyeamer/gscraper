@@ -31,7 +31,7 @@ BASE_CONTEXT = lambda self=None, operation=None, info=None, initTime=None, prefi
                         inplace=None, self_var=None, update=None, **context: context
 
 
-LOG_CONTEXT = lambda logger=None, logJson=None, numRetries=None, errors=None, func=None, **context: context
+LOG_CONTEXT = lambda logger=None, logJson=None, errors=None, func=None, **context: context
 
 
 ITERATOR_CONTEXT = lambda iterator=None, iterateArgs=None, iterateCount=None, iterateProduct=None, pagination=None, \
