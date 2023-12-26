@@ -533,7 +533,7 @@ def execute_query(query: str, project_id=str(), account: Account=dict()) -> RowI
 def read_gbq(query: str, project_id: str, return_type: Literal["records","dataframe"]="dataframe",
             account: Account=dict()) -> TabularData:
     client = create_connection(project_id, account)
-    query_job = client.query(query if query.upper().startswith("SELECT") else f"SELECT * FROM `{query}`")
+    query_job = client.query(query if query.upper().startswith("SELECT") else f"SELECT * FROM `{query}`;")
     if return_type == "dataframe": return query_job.to_dataframe()
     else: return [dict(row.items()) for row in query_job.result()]
 
@@ -542,7 +542,9 @@ def upload_gbq(table: str, project_id: str, data: pd.DataFrame, if_exists: Liter
             partition=str(), partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
             account: Account=dict()):
     client = create_connection(project_id, account)
-    job_config = LoadJobConfig(write_disposition=BIGQUERY_JOB[if_exists])
+    if if_exists == "replace":
+        client.query(f"DELETE FROM `{table}` WHERE TRUE;")
+    job_config = LoadJobConfig(write_disposition="WRITE_APPEND")
     for __data in _partition_by(data, partition, partition_by):
         client.load_table_from_dataframe(__data, f"{project_id}.{table}", job_config=job_config)
 
@@ -563,5 +565,6 @@ def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, primary_key: _KT
         base = read_gbq(table, project_id, return_type="dataframe", account=account)
     data = data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
     client = create_connection(project_id, account)
-    job_config = LoadJobConfig(write_disposition=BIGQUERY_JOB["replace"])
+    client.query(f"DELETE FROM `{table}` WHERE TRUE;")
+    job_config = LoadJobConfig(write_disposition="WRITE_APPEND")
     client.load_table_from_dataframe(data, f"{project_id}.{table}", job_config=job_config)
