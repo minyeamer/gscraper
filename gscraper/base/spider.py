@@ -558,12 +558,12 @@ class Spider(RequestSession, Iterator, Parser):
         super().log_errors(func=func, msg=(iterator if iterator else msg))
 
     def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
-        if_null = if_null if if_null else self.fromNow
+        if_null = if_null if if_null is not None else self.fromNow
         return super().get_date(date, if_null=get_scala(if_null, index), busdate=busdate)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                         if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
-        if_null = if_null if if_null else self.fromNow
+        if_null = if_null if if_null is not None else self.fromNow
         return super().get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
 
     ###################################################################
