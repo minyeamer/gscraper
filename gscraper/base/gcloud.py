@@ -165,10 +165,6 @@ class BigQuerySchema(ValueSet):
         key, value = re.sub(r"^desc$", "description", key), re.sub(r"^desc$", "description", value)
         return super().map(key, value)
 
-    def get_primary_key(self, index=0) -> str:
-        keys = [field.get("name") for field in self if isinstance(field, Dict) and field.get("mode") == "REQUIRED"]
-        return get_scala(keys, index=index)
-
 
 def validate_gbq_schema(schema: Any, optional=False) -> BigQuerySchema:
     if optional and (not schema): return
@@ -379,7 +375,8 @@ class GoogleUploader(BaseSession):
         base_sheet = base_sheet if base_sheet else sheet
         base = self._read_gs_base(key, base_sheet, **context)
         if (mode == "upsert") and primary_key:
-            data = data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
+            data = data.set_index(primary_key).combine_first(base.set_index(primary_key))
+            data = data.reset_index().drop_duplicates(primary_key)
         return self.map_upload_base(data, base, **context)
 
     def _read_gs_base(self, key: str, sheet: str, name=str(), default=None, head=1, headers=None,
@@ -414,7 +411,8 @@ class GoogleUploader(BaseSession):
         base_query = base_query if base_query else table
         base = self._read_gbq_base(base_query, project_id, name, account)
         if (mode == "upsert") and primary_key:
-            data = data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
+            data = data.set_index(primary_key).combine_first(base.set_index(primary_key))
+            data = data.reset_index().drop_duplicates(primary_key)
         return self.map_upload_base(data, base, **context)
 
     def _read_gbq_base(self, query: str, project_id: str, name=str(), account: Account=dict()) -> pd.DataFrame:
