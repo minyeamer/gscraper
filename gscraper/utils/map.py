@@ -809,7 +809,7 @@ def match_data(data: Data, __keys: Optional[Union[_KT,Index]]=list(), __matchFun
 ###################################################################
 
 def clean_html(__object: str) -> str:
-    return BeautifulSoup(cast_str(__object), "lxml").text
+    return BeautifulSoup(cast_str(__object), "lxml").get_text()
 
 
 def clean_tag(__object: str) -> str:
