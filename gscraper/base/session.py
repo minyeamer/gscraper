@@ -271,10 +271,10 @@ class Field(Value):
     def update_optional(self, desc: Optional[str]=None, mode: Optional[SchemaMode]=None, path: Optional[SchemaPath]=None,
                         default: Optional[Any]=None, cast: Optional[bool]=None, strict=True,
                         apply: Optional[Apply]=None, match: Optional[Match]=None, inplace=True, **kwargs):
-        if (mode is None) or (path is None):
+        if mode == INDEX: path = [COUNT_INDEX]
+        elif (mode is None) or (path is None):
             return self.update_notna(desc=desc, **kwargs)
         elif mode in (QUERY,LABEL): pass
-        elif mode == INDEX: path = [COUNT_INDEX]
         elif mode == NOTNULL: default, cast = init_origin(self[TYPE]), True
         elif mode == NOTZERO: cast, strict = True, False
         elif is_numeric_or_date_type(self[TYPE]):
