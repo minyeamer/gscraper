@@ -184,11 +184,11 @@ class GspreadReadContext(OptionalDict):
                 if_null: Literal["drop","pass"]="pass", head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
                 return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
-                size: Optional[int]=None):
+                size: Optional[int]=None, **kwargs):
         super().__init__(key=key, sheet=sheet, fields=fields,
             optional=dict(
                 default=default, if_null=if_null, head=head, headers=headers,
-                str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size),
+                str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size, **kwargs),
             null_if=dict(if_null="pass", head=1, to="name", return_type="dataframe"))
 
 
@@ -197,9 +197,9 @@ class GoogleQueryContext(GspreadReadContext):
                 if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, strict=True, unique=False,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, to: Optional[Literal["desc","name"]]="name",
-                rename: Optional[RenameMap]=None, size: Optional[int]=None):
+                rename: Optional[RenameMap]=None, size: Optional[int]=None, **kwargs):
         super().__init__(key, sheet, fields, default, if_null, head, headers, str_cols, to, rename=rename, size=size)
-        self.update_notna(axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+        self.update_notna(axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols, **kwargs,
             null_if=dict(axis=0, dropna=True, strict=True, unique=False))
 
 
@@ -267,21 +267,21 @@ class GspreadUpdateContext(OptionalDict):
                 cell: Optional[str]=None, base_sheet: Optional[str]=None, primary_key: Optional[_KT]=None,
                 default: Optional[Any]=None, head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
-                rename: Optional[RenameMap]=None):
+                rename: Optional[RenameMap]=None, **kwargs):
         super().__init__(key=key, sheet=sheet,
             optional=dict(
                 mode=mode, cell=cell, base_sheet=base_sheet, primary_key=primary_key, default=default,
-                head=head, headers=headers, str_cols=str_cols, to=to, rename=rename),
+                head=head, headers=headers, str_cols=str_cols, to=to, rename=rename, **kwargs),
             null_if=dict(mode="append", head=1, to="name"))
 
 
 class BigQueryContext(OptionalDict):
     def __init__(self, table: str, project_id: str, mode: Literal["append","replace","upsert"]="append",
                 partition: Optional[str]=None, partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
-                base_query: Optional[str]=None, primary_key: Optional[_KT]=None):
+                base_query: Optional[str]=None, primary_key: Optional[_KT]=None, **kwargs):
         super().__init__(table=table, project_id=project_id,
             optional=dict(
-                mode=mode, partition=partition, partition_by=partition_by, base_query=base_query, primary_key=primary_key),
+                mode=mode, partition=partition, partition_by=partition_by, base_query=base_query, primary_key=primary_key, **kwargs),
             null_if=dict(mode="append", partition_by="auto"))
 
 
@@ -291,11 +291,11 @@ class GoogleUpdateContext(OptionalDict):
                 default: Optional[Any]=None, head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, to: Optional[Literal["desc","name"]]="name",
                 rename: Optional[RenameMap]=None, cell: Optional[str]=None, partition: Optional[str]=None,
-                partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto"):
+                partition_by: Optional[Literal["auto","second","minute","hour","day","month","year","date"]]="auto", **kwargs):
         super().__init__(**self.validate_key(from_key, from_sheet, from_query, from_pid, to_key, to_sheet, to_table, to_pid),
             optional=dict(
                 mode=mode, default=default, head=head, headers=headers, str_cols=str_cols,
-                to=to, rename=rename, cell=cell, partition=partition, partition_by=partition_by),
+                to=to, rename=rename, cell=cell, partition=partition, partition_by=partition_by, **kwargs),
             null_if=dict(mode="append", head=1, to="name"))
 
     def validate_key(self, from_key=str(), from_sheet=str(), from_query=str(), from_pid=str(),
@@ -361,7 +361,7 @@ class GoogleUploader(BaseSession):
                         rename: Optional[RenameMap]=None, name=str(), account: Account=dict(), **context) -> bool:
         data = self._set_upload_columns(name, data, **context)
         if base_sheet or (mode == "upsert"):
-            data = self._from_base_sheet(**self.from_locals(locals()))
+            data = self.from_base_sheet(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
         data = self.map_upload_data(data, name=name, **context)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
@@ -370,16 +370,16 @@ class GoogleUploader(BaseSession):
         update_gspread(key, sheet, data, cell=cell, clear=clear, account=account)
         return True
 
-    def _from_base_sheet(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
+    def from_base_sheet(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
                         base_sheet=str(), primary_key: _KT=list(), **context) -> pd.DataFrame:
         base_sheet = base_sheet if base_sheet else sheet
-        base = self._read_gs_base(key, base_sheet, **context)
+        base = self.read_gs_base(key, base_sheet, **context)
         if (mode == "upsert") and primary_key:
             data = data.set_index(primary_key).combine_first(base.set_index(primary_key))
             data = data.reset_index().drop_duplicates(primary_key)
         return self.map_upload_base(data, base, **context)
 
-    def _read_gs_base(self, key: str, sheet: str, name=str(), default=None, head=1, headers=None,
+    def read_gs_base(self, key: str, sheet: str, name=str(), default=None, head=1, headers=None,
                     str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="name",
                     rename: Optional[RenameMap]=None, account: Account=dict(), **context) -> pd.DataFrame:
         data = read_gspread(key, sheet, default=default, head=head, headers=headers, numericise_ignore=str_cols,
@@ -398,7 +398,7 @@ class GoogleUploader(BaseSession):
                     base_query=str(), primary_key: _KT=list(), name=str(), account: Account=dict(), **context) -> bool:
         data = self._set_upload_columns(name, data, **context)
         if base_query or (mode == "upsert"):
-            data = self._from_base_query(**self.from_locals(locals()))
+            data = self.from_base_query(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
         data = self.map_upload_data(data, name=name, **context)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
@@ -406,16 +406,16 @@ class GoogleUploader(BaseSession):
         upload_gbq(table, project_id, data, if_exists=mode, partition=partition, partition_by=partition_by, account=account)
         return True
 
-    def _from_base_query(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
+    def from_base_query(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
                         base_query=str(), primary_key: _KT=list(), name=str(), account: Account=dict(), **context) -> pd.DataFrame:
         base_query = base_query if base_query else table
-        base = self._read_gbq_base(base_query, project_id, name, account)
+        base = self.read_gbq_base(base_query, project_id, name, account)
         if (mode == "upsert") and primary_key:
             data = data.set_index(primary_key).combine_first(base.set_index(primary_key))
             data = data.reset_index().drop_duplicates(primary_key)
         return self.map_upload_base(data, base, **context)
 
-    def _read_gbq_base(self, query: str, project_id: str, name=str(), account: Account=dict()) -> pd.DataFrame:
+    def read_gbq_base(self, query: str, project_id: str, name=str(), account: Account=dict()) -> pd.DataFrame:
         data = read_gbq(query, project_id, return_type="dataframe", account=account)
         self.checkpoint(READ(name), where="read_gbq_base", msg={QUERY:query, PID:project_id}, save=data)
         self.logger.info(log_table(data, name=name, query=query, pid=project_id, dump=self.logJson))
@@ -433,9 +433,9 @@ class GoogleUploader(BaseSession):
                     partition=str(), partition_by: Literal["auto","second","minute","hour","day","date"]="auto",name=str(),
                     account: Account=dict(), **context) -> bool:
         if from_key and from_sheet:
-            data = self._read_gs_base(from_key, from_sheet, name, default, head, headers, str_cols, to, rename, account)
+            data = self.read_gs_base(from_key, from_sheet, name, default, head, headers, str_cols, to, rename, account)
         elif from_query and from_pid:
-            data = self._read_gbq_base(from_query, from_pid, name, account)
+            data = self.read_gbq_base(from_query, from_pid, name, account)
         else: return False
         if to_key and to_sheet:
             return self.upload_gspread(to_key, to_sheet, data, mode, cell, name=name, account=account, **context)
@@ -496,7 +496,9 @@ def read_gspread(key: str, sheet: str, fields: Optional[IndexLabel]=list(), defa
 def clear_gspead(key: str, sheet: str, include_header=False, account: Account=dict(), gs: Optional[Worksheet]=None):
     if include_header: return gs.clear()
     last_row = len(gs.get_all_records())+1
-    if last_row > 2: gs.delete_rows(3, last_row)
+    if last_row > 2:
+        gs.insert_row([], 2)
+        gs.delete_rows(3, last_row+1)
 
 
 @gs_loaded
