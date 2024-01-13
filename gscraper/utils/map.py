@@ -968,42 +968,40 @@ def align_records(__r: Records, default=None, forward=True) -> Records:
 ###################################################################
 
 def between(__object: Comparable, left=None, right=None,
-            inclusive: Literal["both","neither","left","right"]="both", **kwargs) -> bool:
-    match_left = ((left is None) or (__object >= left if inclusive in ["both","left"] else __object > left))
-    match_right = ((right is None) or (__object <= right if inclusive in ["both","right"] else __object < right))
-    return match_left & match_right
+            inclusive: Literal["both","neither","left","right"]="both", null=False, **kwargs) -> bool:
+    try:
+        match_left = ((left is None) or (__object >= left if inclusive in ["both","left"] else __object > left))
+        match_right = ((right is None) or (__object <= right if inclusive in ["both","right"] else __object < right))
+        return match_left & match_right
+    except: return null
 
 
 def between_dict(__m: Dict, __keys: Optional[_KT]=list(), __ranges: Optional[BetweenRange]=list(),
-                inclusive: Literal["both","neither","left","right"]="both", null=False,
-                __default: _PASS=None, **context) -> bool:
+                inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> bool:
     match = True
     for __key, __range in map_context(__keys, __ranges, **context).items():
         if __key in __m:
-            if is_array(__range): match &= between(__m[__key], *__range[:2], inclusive=inclusive)
-            elif isinstance(__range, dict): match &= between(__m[__key], **__range, inclusive=inclusive)
+            if is_array(__range): match &= between(__m[__key], *__range[:2], inclusive=inclusive, null=null)
+            elif isinstance(__range, dict): match &= between(__m[__key], **__range, inclusive=inclusive, null=null)
             else: raise ValueError(BETWEEN_RANGE_TYPE_MSG)
         elif not null: return False
     return match
 
 
 def between_records(__r: Records, __keys: Optional[_KT]=list(), __ranges: Optional[BetweenRange]=list(),
-                    inclusive: Literal["both","neither","left","right"]="both", null=False,
-                    __default=None, **context) -> Records:
+                    inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> Records:
     return [__m for __m in __r
             if between_dict(__m, __keys, __ranges, inclusive=inclusive, null=null, **context)]
 
 
 def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __ranges: Optional[BetweenRange]=list(),
-                inclusive: Literal["both","neither","left","right"]="both", null=False,
-                __default: _PASS=None, **context) -> pd.DataFrame:
+                inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> pd.DataFrame:
     df, df.copy()
-    kwargs = {"inclusive": inclusive}
+    kwargs = dict(inclusive=inclusive, null=null)
     for __column, __range in map_context(__columns, __ranges, **context).items():
         if __column in df and isinstance(__column, str):
-            if_na = pd.Series([False]*len(df), index=df.index) if not null else df[__column].isna()
-            if is_array(__range): df = df[df[__column].apply(lambda x: between(x, *__range[:2], **kwargs))|if_na]
-            elif isinstance(__range, dict): df = df[df[__column].apply(lambda x: between(x, **__range, **kwargs))|if_na]
+            if is_array(__range): df = df[df[__column].apply(lambda x: between(x, *__range[:2], **kwargs))]
+            elif isinstance(__range, dict): df = df[df[__column].apply(lambda x: between(x, **__range, **kwargs))]
             else: raise ValueError(BETWEEN_RANGE_TYPE_MSG)
     return df
 
