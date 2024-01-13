@@ -219,7 +219,7 @@ class GoogleQueryReader(BaseSession):
                     if_null: Literal["drop","pass"]="pass", head=1, headers=None,
                     str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="name",
                     return_type: Optional[TypeHint]="dataframe", rename: Optional[RenameMap]=None,
-                    size: Optional[int]=None, name=str(), account: Account=dict()) -> TabularData:
+                    size: Optional[int]=None, name=str(), account: Account=dict(), **context) -> TabularData:
         context = dict(default=default, if_null=if_null, head=head, headers=headers, numericise_ignore=str_cols,
                         return_type=return_type, rename=(rename if rename else self.get_rename_map(to=to, query=True)))
         data = read_gspread(key, sheet, fields=fields, account=account, **context)
@@ -229,7 +229,7 @@ class GoogleQueryReader(BaseSession):
         return data
 
     def read_gbq(self, query: str, project_id: str, return_type: Literal["records","dataframe"]="dataframe",
-                size: Optional[int]=None, name=str(), account: Account=dict()) -> TabularData:
+                size: Optional[int]=None, name=str(), account: Account=dict(), **context) -> TabularData:
         data = read_gbq(query, project_id, return_type=return_type, account=account)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={QUERY:query, PID:project_id, DATA:data}, save=data)
