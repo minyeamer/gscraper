@@ -14,7 +14,7 @@ from gscraper.utils import isna, notna, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
 from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
-from gscraper.utils.map import isna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
+from gscraper.utils.map import isna_plus, notna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict, apply_dict
@@ -1079,8 +1079,7 @@ class Mapper(BaseSession):
         if discard or isinstance(data, Tag): return self.map_base_data(__base, **context)
         else: return self.map_merged_data(self._merge_base(data, __base), **context)
 
-    def _match_response(self, data: ResponseData,
-                    match: Optional[Union[MatchFunction,bool]]=None, **context) -> bool:
+    def _match_response(self, data: ResponseData, match: Optional[Union[MatchFunction,bool]]=None, **context) -> bool:
         if match is not None:
             if isinstance(match, Callable): return match(data, **context)
             else: return bool(match)
@@ -1097,9 +1096,15 @@ class Mapper(BaseSession):
             if not data: return __base
             else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
         data = self._merge_base(data, __base)
-        if self._match_data(data, process.get(MATCH), context=context, log=True):
+        if self._match_process(data, process, **context):
             return self._map_schema(data, __base, process[SCHEMA], **context)
         else: return __base
+
+    def _match_process(self, data: ResponseData, process: Process, **context):
+        match = self._match_data(data, process.get(MATCH), context=context, log=True)
+        if not isinstance(match, bool) and isinstance(data, pd.DataFrame):
+            return len(data[match])>0 if isinstance(match, (Sequence,pd.Series)) else notna_plus(match)
+        else: return match
 
     def _merge_base(self, data: ResponseData, __base: Data) -> Data:
         if isinstance(data, Dict):
@@ -1149,11 +1154,7 @@ class Mapper(BaseSession):
             __value = self._get_value_iterate(data, **field, context=context)
         else: raise TypeError(INVALID_PATH_TYPE_MSG(field[PATH]))
         self.checkpoint("field"+SUFFIX(context, field), where="_map_field", msg={"value":__value, "field":field})
-        if (__value == __MISMATCH__) or (field[MODE] in (OPTIONAL,REQUIRED) and isna_plus(__value)):
-            if field[MODE] == REQUIRED: raise ValueError(REQUIRED_MSG(context, field))
-            else: return __base
-        __base[field[NAME]] = __value
-        return __base
+        return self._set_value(__base, __value, field, **context)
 
     def _get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
                     apply: Apply=dict(), match: Match=dict(), cast=False, strict=True, sep=str(), strip=True,
@@ -1209,6 +1210,13 @@ class Mapper(BaseSession):
         return [self._get_value(__e, sub_path, apply=apply, **field, **log_context)
                 for __e in __value if self._match_data(__e, match, field=field, **log_context)]
 
+    def _set_value(self, __base: Data, __value: _VT, field: Field, **context) -> Data:
+        if (__value is __MISMATCH__) or ((field[MODE] in (OPTIONAL,REQUIRED)) and isna_plus(__value)):
+            if field[MODE] == REQUIRED: raise ValueError(REQUIRED_MSG(context, field))
+            else: return __base
+        __base[field[NAME]] = __value
+        return __base
+
     ###################################################################
     ############################ Apply Data ###########################
     ###################################################################
@@ -1230,12 +1238,12 @@ class Mapper(BaseSession):
     @_validate_apply
     def _apply_data(self, data: ResponseData, apply: Union[Apply,Sequence[Apply]], context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False) -> _VT:
+        __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
         if isinstance(apply[FUNC], Callable):
-            __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
             __applyFunc, apply = apply[FUNC], drop_dict(apply, FUNC, inplace=False)
             return __apply(data, __applyFunc, **dict(context, **apply))
         elif isinstance(apply[FUNC], str):
-            return self._special_apply(data, **apply, context=context, field=field, name=name)
+            return __apply(data, self._special_apply, **dict(apply, context=context, field=field, name=name))
         else: raise TypeError(INVALID_APPLY_TYPE_MSG(apply[FUNC], context, field, name))
 
     def _special_apply(self, __object, func: str, context: Context=dict(),
@@ -1256,9 +1264,7 @@ class Mapper(BaseSession):
     def __cast__(self, __object, type: TypeHint, default=None, strict=True,
                 context: Context=dict(), **kwargs) -> _VT:
         context = dict(context, default=default, strict=strict)
-        if isinstance(__object, PANDAS_DATA):
-            return safe_apply_df(__object, cast_object, by="cell", **context)
-        elif isinstance(__object, List):
+        if isinstance(__object, List):
             return [cast_object(__e, type, **context) for __e in __object]
         else: return cast_object(__object, type, **context)
 
@@ -1510,7 +1516,8 @@ class SequenceMapper(Mapper):
         start = self._get_start_by(countby, count=len(df), **context)
         if isinstance(start, int) and (RANK not in df):
             df[RANK] = range(start, len(df)+start)
-        df = df[self._match_response(df, match, **context)]
+        match = self._match_response(df, match, **context)
+        df = df[[match]*len(df) if isinstance(match, bool) else match]
         context = dict(context, responseType="dataframe", match=True, discard=discard, count=len(df))
         return self._map_response(df, flow, **context)
 
