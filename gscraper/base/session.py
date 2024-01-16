@@ -391,11 +391,11 @@ class Info(TypedDict):
         query.filter(match, **match_by_key, inplace=True)
         return query
 
-    def get_schema(self, keys: _KT=list(), keep: Literal["fist","last",True,False]=True,
+    def get_schema(self, keys: _KT=list(), primary_key: _KT=list(), keep: Literal["fist","last",True,False]=True,
                     match: Optional[MatchFunction]=None, **match_by_key) -> Schema:
         if (not is_array(keys)) and isinstance(self.get(keys), Schema): schema = self[keys]
         else: schema = Schema(*union(*self.get_by_dtype(dtype=Schema, keys=keys).values()))
-        schema.unique(keep=keep, inplace=True)
+        schema.unique(primary_key, keep=keep, inplace=True)
         schema.filter(match, **match_by_key, inplace=True)
         return schema
 
@@ -406,13 +406,13 @@ class Info(TypedDict):
 
     def get_schema_by_name(self, name: _KT, keys: _KT=list(), keep: Literal["fist","last",True,False]=True) -> Schema:
         match = lambda __value: __value in cast_list(name)
-        return self.get_schema(keys, keep=keep, name=match)
+        return self.get_schema(keys, primary_key=["name"], keep=keep, name=match)
 
     def get_schema_by_type(self, __type: Union[TypeHint,TypeList], keys: _KT=list(),
                             keep: Literal["fist","last",True,False]=True) -> Union[Schema,_VT]:
         __type = tuple(map(get_type, __type)) if is_array(__type) else get_type(__type)
         match = lambda __value: is_type(__value, __type)
-        return self.get_schema(keys, keep=keep, type=match)
+        return self.get_schema(keys, primary_key=["name"], keep=keep, type=match)
 
     ###################################################################
     ############################### Map ###############################
@@ -433,7 +433,7 @@ class Info(TypedDict):
     def map_schema(self, key: str, value: _KT, keys: _KT=list(), common_fields=True,
                     keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
                     values_only=False, match: Optional[MatchFunction]=None, **match_by_key) -> Dict[_VT,Union[_VT,Dict]]:
-        schema = self.get_schema(keys, keep=keep, match=match, **match_by_key)
+        schema = self.get_schema(keys, primary_key=[key], keep=keep, match=match, **match_by_key)
         return schema.map(key, value, if_null=if_null, reorder=reorder, values_only=values_only, common_fields=common_fields)
 
     def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc", query=False, common_fields=True,
@@ -549,9 +549,9 @@ class BaseSession(CustomDict):
     def get_query(self, match: Optional[MatchFunction]=None, **match_by_key) -> Query:
         return self.info.get_query(match=match, **match_by_key)
 
-    def get_schema(self, keys: _KT=list(), keep: Literal["fist","last",True,False]=True, common_fields=True,
+    def get_schema(self, keys: _KT=list(), primary_key: _KT=list(), keep: Literal["fist","last",True,False]=True,
                     match: Optional[MatchFunction]=None, **match_by_key) -> Schema:
-        return self.info.get_schema(keys, common_fields=common_fields, keep=keep, match=match, **match_by_key)
+        return self.info.get_schema(keys, primary_key=primary_key, keep=keep, match=match, **match_by_key)
 
     def get_info_map(self, key: str, value: _KT, query=False, keys: _KT=list(), common_fields=True,
                     keep: Literal["fist","last",False]="first", if_null: Literal["drop","pass"]="drop", reorder=True,
