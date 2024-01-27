@@ -366,8 +366,8 @@ class GoogleUploader(BaseSession):
         data = self.map_upload_data(data, name=name, **context)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
-        cell, clear = ("A2" if mode == "replace" else (cell if cell else str())), (True if mode == "replace" else clear)
-        update_gspread(key, sheet, data, cell=cell, clear=clear, account=account)
+        cell = "A2" if mode == "replace" else (cell if cell else str())
+        update_gspread(key, sheet, data, cell=cell, clear=(mode == "replace"), account=account)
         return True
 
     def from_base_sheet(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
@@ -514,8 +514,11 @@ def update_gspread(key: str, sheet: str, data: TabularData, col='A', row=0, cell
     records = to_records(data)
     if not records: return
     values = [[_to_excel_date(__value) for __value in __m.values()] for __m in records]
-    if clear: clear_gspead(gs=gs, include_header=clear_header)
-    cell = cell if cell else (col+str(row if row else len(gs.get_all_records())+2))
+    if clear:
+        clear_gspead(gs=gs, include_header=clear_header)
+    if not cell:
+        cell = col+str(row if row else len(gs.get_all_records())+2)
+        gs.add_rows(len(values))
     gs.update(cell, values)
 
 
