@@ -65,11 +65,12 @@ DecryptedKey = Union[Dict, str]
 Status = Union[Sequence[int], int]
 Shape = Union[Sequence[int], int]
 Unit = Union[Sequence[int], int]
+FloatUnit = Union[Sequence[float], Sequence[int], float, int]
 
 KEY_TYPES = {
     "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
     "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey, "DecryptedKey":DecryptedKey,
-    "Status":Status, "Shape":Shape, "Unit":Unit}
+    "Status":Status, "Shape":Shape, "Unit":Unit, "FloatUnit":FloatUnit}
 
 
 ###################################################################

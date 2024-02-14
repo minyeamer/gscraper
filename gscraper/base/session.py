@@ -3,7 +3,7 @@ from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, Optional
 from gscraper.base.abstract import INVALID_INSTANCE_MSG
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
-from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, FloatUnit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, TypeMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
@@ -469,7 +469,7 @@ class BaseSession(CustomDict):
     def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., **context):
+                numRetries: Optional[int]=None, delay: FloatUnit=1., **context):
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_retries(numRetries, delay)
@@ -492,7 +492,7 @@ class BaseSession(CustomDict):
         self.extraSave = cast_list(extraSave)
         self.interrupt = cast_list(interrupt)
 
-    def set_retries(self, numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1.):
+    def set_retries(self, numRetries: Optional[int]=None, delay: FloatUnit=1.):
         if isinstance(numRetries, int) and numRetries > 0:
             self.numRetries = numRetries
         self.delay = delay
@@ -715,12 +715,12 @@ class BaseSession(CustomDict):
         delay = self.get_delay(self.delay)
         if delay: time.sleep(delay)
 
-    def get_delay(self, delay: Union[float,int,Tuple]) -> Union[float,int]:
+    def get_delay(self, delay: FloatUnit) -> Union[float,int]:
         if isinstance(delay, (float,int)): return delay
         else: return self.get_random_delay(delay)
 
-    def get_random_delay(self, delay: Tuple) -> Union[float,int]:
-        if not (isinstance(delay, Tuple) and delay): return 0.
+    def get_random_delay(self, delay: Sequence) -> Union[float,int]:
+        if not (isinstance(delay, Sequence) and delay): return 0.
         min_ts, max_ts = delay[0], (delay[1] if len(delay) > 1 else None)
         is_float_ts = isinstance(min_ts, float) or isinstance(max_ts, float)
         if is_float_ts:
