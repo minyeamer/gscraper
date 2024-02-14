@@ -993,8 +993,8 @@ class AsyncSession(RequestSession):
             return response
         return wrapper
 
-    async def async_sleep(self, tsUnit: Literal["ms","s"]="ms"):
-        delay = self.get_delay(tsUnit)
+    async def async_sleep(self):
+        delay = self.get_delay(self.delay)
         if delay: await asyncio.sleep(delay)
 
     ###################################################################

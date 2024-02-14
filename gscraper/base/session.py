@@ -711,16 +711,23 @@ class BaseSession(CustomDict):
         self.logger.error(log_exception(func_name, json=self.logJson, **msg))
         self.errors.append(msg)
 
-    def sleep(self, tsUnit: Literal["ms","s"]="ms"):
-        delay = self.get_delay(tsUnit)
+    def sleep(self):
+        delay = self.get_delay(self.delay)
         if delay: time.sleep(delay)
 
-    def get_delay(self, tsUnit: Literal["ms","s"]="ms") -> Union[float,int]:
-        if isinstance(self.delay, (float,int)):
-            return self.delay
-        elif isinstance(self.delay, Tuple):
-            random.randrange(*self.delay[:2])/(1000 if tsUnit == "ms" else 1)
-        else: return 0.
+    def get_delay(self, delay: Union[float,int,Tuple]) -> Union[float,int]:
+        if isinstance(delay, (float,int)): return delay
+        else: return self.get_random_delay(delay)
+
+    def get_random_delay(self, delay: Tuple) -> Union[float,int]:
+        if not (isinstance(delay, Tuple) and delay): return 0.
+        min_ts, max_ts = delay[0], (delay[1] if len(delay) > 1 else None)
+        is_float_ts = isinstance(min_ts, float) or isinstance(max_ts, float)
+        if is_float_ts:
+            min_ts = int(min_ts * 1000)
+            max_ts = int(max_ts * 1000) if isinstance(max_ts, (float,int)) else None
+        delay = random.randrange(min_ts, max_ts)
+        return delay/1000 if is_float_ts else delay
 
     ###################################################################
     ############################ Print Log ############################
