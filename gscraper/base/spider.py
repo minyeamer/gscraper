@@ -16,7 +16,7 @@ from gscraper.base.types import is_date_type, is_array, is_int_array, init_origi
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
-from gscraper.utils.map import to_array, align_array, transpose_array, get_scala, union, inter, diff
+from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
@@ -70,18 +70,17 @@ GCLOUD_UNIQUE = ["queryInfo", "uploadInfo", "account"]
 FILTER_UNIQUE = ["fields", "returnType"]
 REQUEST_UNIQUE = ["numRetries", "delay", "cookies"]
 
-SPIDER_UNIQUE = ["discard", "progress"]
+SPIDER_UNIQUE = ["discard", "progress", "numTasks"]
+REDIRECT_UNIQUE = ["apiRedirect", "redirectUnit", "redirectUrl", "authorization", "account"]
+
 GATHER_UNIQUE = ["message", "where", "which", "by"]
 DATE_UNIQUE = ["byDate", "fromDate", "toDate"]
-
-ASYNC_UNIQUE = ["numTasks"]
-REDIRECT_UNIQUE = ["apiRedirect", "redirectUnit", "redirectUrl", "authorization", "account"]
 
 ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
 
 PROXY_LOG = ["logLevel", "logFile", "debug", "extraSave", "interrupt"]
 PIPELINE_UNIQUE = FILTER_UNIQUE + TIME_UNIQUE + PROXY_LOG + REQUEST_UNIQUE + ENCRYPTED_UNIQUE
-WORKER_UNIQUE = PIPELINE_UNIQUE + SPIDER_UNIQUE + ASYNC_UNIQUE + REDIRECT_UNIQUE
+WORKER_UNIQUE = PIPELINE_UNIQUE + SPIDER_UNIQUE + REDIRECT_UNIQUE
 WORKER_EXTRA = GATHER_UNIQUE + DATE_UNIQUE
 
 NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName", "dataType"
@@ -483,10 +482,8 @@ class Spider(RequestSession, Iterator, Parser):
     by = str()
     fields = list()
     iterateArgs = list()
-    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
-    redirectProduct = list()
     iterateUnit = 1
     redirectUnit = 1
     pagination = False
@@ -513,7 +510,7 @@ class Spider(RequestSession, Iterator, Parser):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
@@ -529,7 +526,8 @@ class Spider(RequestSession, Iterator, Parser):
         self._disable_warnings()
 
     def set_spider_variables(self, fromNow: Optional[Unit]=None, discard=True, progress=True):
-        self.fromNow = fromNow
+        if fromNow is not None:
+            self.fromNow = fromNow
         self.discard = discard
         self.progress = progress
 
@@ -539,7 +537,7 @@ class Spider(RequestSession, Iterator, Parser):
         if by: self.by = by
         if message: self.message = message
 
-    def set_redirect_variables(self, apiRedirect=False, redirectUnit: Optional[Unit]=None):
+    def set_redirect_variables(self, apiRedirect=False, redirectUnit: Optional[int]=None):
         self.apiRedirect = apiRedirect
         self.redirectUnit = exists_one(redirectUnit, self.redirectUnit, self.iterateUnit)
 
@@ -645,11 +643,12 @@ class Spider(RequestSession, Iterator, Parser):
         return wrapper
 
     @redirect_available
-    def gather(self, *args, message=str(), progress=True, fields: IndexLabel=list(),
+    def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True, fields: IndexLabel=list(),
                 byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                 returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else self.get_gather_message(**context)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        if not iterator:
+            iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, byDate=byDate, fromDate=fromDate, toDate=toDate, returnType=returnType, **context)
@@ -683,7 +682,6 @@ class Spider(RequestSession, Iterator, Parser):
     ########################### Gather Count ##########################
     ###################################################################
 
-    @redirect_available
     def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True, fields: IndexLabel=list(),
                     byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                     returnType: Optional[TypeHint]=None, size: Optional[int]=None, pageSize=0, **context) -> Data:
@@ -848,6 +846,14 @@ class Spider(RequestSession, Iterator, Parser):
     ############################# Redirect ############################
     ###################################################################
 
+    def run_iterator(self, iterator: List[Context], self_var=True, **context) -> Data:
+        context = UNIQUE_CONTEXT(**(dict(self, **context) if self_var else context))
+        self.checkpoint("context", where="run_iterator", msg={"iterator":iterator, "context":context})
+        with requests.Session() as session:
+            data = self.gather(iterator=iterator, session=session, **SESSION_CONTEXT(**context))
+        time.sleep(.25)
+        return data
+
     def gcloud_authorized(func):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
@@ -855,12 +861,12 @@ class Spider(RequestSession, Iterator, Parser):
         return wrapper
 
     @gcloud_authorized
-    def redirect(self, *args, progress=True, fields: IndexLabel=list(),
+    def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True, fields: IndexLabel=list(),
                 byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                 returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
-        iterator, context = self._redirect_iterator(args, context, self.redirectArgs, self.redirectProduct, self.pagination)
-        data = self._redirect_data(iterator, message=message, progress=progress, fields=fields, **context)
+        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        data = self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
 
@@ -870,22 +876,11 @@ class Spider(RequestSession, Iterator, Parser):
     @RequestSession.catch_exception
     @RequestSession.limit_request
     @gcloud_authorized
-    def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Data:
-        data = self._get_redirect_data(redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+    def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
+                        account: Account=dict(), cookies=str(), **context) -> Data:
+        data = self._get_redirect_data(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
         response = self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
-
-    def _redirect_iterator(self, args: Arguments, context: Context, redirectArgs: List[_KT]=list(), redirectProduct: List[_KT]=list(),
-                            pagination: Pagination=False, indexing=True) -> Tuple[List[Context],Context]:
-        iterateArgs = redirectArgs if redirectArgs is not None else self.iterateArgs
-        iterateProduct = redirectProduct if redirectProduct is not None else list()
-        context["iterateUnit"] = context.get("redirectUnit", self.iterateUnit)
-        return self._init_iterator(args, context, iterateArgs, iterateProduct, pagination, indexing=indexing)
-
-    def _redirect_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                            **context) -> List[Data]:
-        fields = fields if isinstance(fields, Sequence) else list()
-        return [self.fetch_redirect(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
 
     def _validate_redirect_info(self, redirectUrl=str(), authorization=str(), account: Account=dict()) -> Context:
         if not redirectUrl:
@@ -895,9 +890,17 @@ class Spider(RequestSession, Iterator, Parser):
             authorization = fetch_gcloud_authorization(redirectUrl, account)
         return dict(redirectUrl=redirectUrl, authorization=authorization, account=account)
 
-    def _get_redirect_data(self, redirectUrl: str, authorization: str, account: Account=dict(), **context) -> str:
+    def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None, message=str(), progress=True,
+                        fields: IndexLabel=list(), **context) -> List[Data]:
+        fields = fields if isinstance(fields, Sequence) else list()
+        iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
+        return [self.fetch_redirect(__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+
+    def _get_redirect_data(self, iterator: List[Context], redirectUrl: str, authorization: str,
+                            account: Account=dict(), **context) -> str:
         return json.dumps(dict(
             operation = self.operation,
+            iterator = iterator,
             redirectUrl = redirectUrl,
             authorization = authorization,
             account = account,
@@ -1052,10 +1055,8 @@ class AsyncSpider(Spider, AsyncSession):
     by = str()
     fields = list()
     iterateArgs = list()
-    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
-    redirectProduct = list()
     iterateUnit = 1
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectUnit = 1
@@ -1084,13 +1085,14 @@ class AsyncSpider(Spider, AsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
+        self.set_max_limit(apiRedirect)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
         self.set_iterator_unit(iterateUnit, interval)
@@ -1098,6 +1100,9 @@ class AsyncSpider(Spider, AsyncSession):
         self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
         self._disable_warnings()
+
+    def set_max_limit(self, apiRedirect=False):
+        self.maxLimit = min(self.maxLimit, self.redirectLimit) if apiRedirect else self.maxLimit
 
     ###################################################################
     ########################### Async Gather ##########################
@@ -1117,11 +1122,12 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @redirect_available
-    async def gather(self, *args, message=str(), progress=True, fields: IndexLabel=list(),
+    async def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True, fields: IndexLabel=list(),
                     byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                     returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else self.get_gather_message(**context)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        if not iterator:
+            iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
@@ -1135,7 +1141,6 @@ class AsyncSpider(Spider, AsyncSession):
     ########################### Gather Count ##########################
     ###################################################################
 
-    @redirect_available
     async def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True, fields: IndexLabel=list(),
                             byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                             returnType: Optional[TypeHint]=None, size: Optional[int]=None, pageSize=0, **context) -> Data:
@@ -1284,6 +1289,15 @@ class AsyncSpider(Spider, AsyncSession):
     ########################## Async Redirect #########################
     ###################################################################
 
+    async def run_iterator(self, iterator: List[Context], self_var=True, **context) -> Data:
+        context = UNIQUE_CONTEXT(**(dict(self, **context) if self_var else context))
+        self.checkpoint("context", where="run_iterator", msg={"iterator":iterator, "context":context})
+        semaphore = self.asyncio_semaphore(**context)
+        async with aiohttp.ClientSession() as session:
+            data = await self.gather(iterator=iterator, session=session, semaphore=semaphore, **SESSION_CONTEXT(**context))
+        await asyncio.sleep(.25)
+        return data
+
     def gcloud_authorized(func):
         @functools.wraps(func)
         async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
@@ -1291,27 +1305,29 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, progress=True, fields: IndexLabel=list(),
+    async def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True, fields: IndexLabel=list(),
                         byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
                         returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
-        iterator, context = self._redirect_iterator(args, context, self.redirectArgs, self.redirectProduct, self.pagination)
-        data = await self._redirect_data(iterator, message=message, progress=progress, fields=fields, **context)
+        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        data = await self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
-
-    async def _redirect_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                            **context) -> List[Data]:
-        fields = fields if isinstance(fields, Sequence) else list()
-        return await tqdm.gather(*[self.fetch_redirect(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
 
     @AsyncSession.catch_exception
     @AsyncSession.limit_request
     @gcloud_authorized
-    async def fetch_redirect(self, redirectUrl: str, authorization: str, account: Account=dict(), cookies=str(), **context) -> Records:
-        data = self._get_redirect_data(redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+    async def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
+                            account: Account=dict(), cookies=str(), **context) -> Records:
+        data = self._get_redirect_data(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
         response = await self.request_json(POST, url=redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
+
+    async def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None, message=str(), progress=True,
+                            fields: IndexLabel=list(), **context) -> List[Data]:
+        fields = fields if isinstance(fields, Sequence) else list()
+        iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
+        return await tqdm.gather(*[self.fetch_redirect(__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
 
 
 ###################################################################
@@ -1599,10 +1615,8 @@ class EncryptedSpider(Spider, EncryptedSession):
     by = str()
     fields = list()
     iterateArgs = list()
-    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
-    redirectProduct = list()
     iterateUnit = 1
     redirectUnit = 1
     pagination = False
@@ -1632,7 +1646,7 @@ class EncryptedSpider(Spider, EncryptedSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
                 byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1743,10 +1757,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     by = str()
     fields = list()
     iterateArgs = list()
-    redirectArgs = None
     iterateCount = dict()
     iterateProduct = list()
-    redirectProduct = None
     iterateUnit = 1
     maxLimit = MAX_ASYNC_TASK_LIMIT
     redirectUnit = 1
@@ -1778,7 +1790,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Union[float,int,Tuple[int]]=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Unit=0, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[Unit]=None,
+                iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
                 byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):

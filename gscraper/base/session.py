@@ -16,8 +16,8 @@ from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, i
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import isna_plus, notna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
-from gscraper.utils.map import iloc, fill_array, is_same_length, unit_array, concat_array, transpose_array
-from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict, apply_dict
+from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
+from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
 from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
 from gscraper.utils.map import get_value, filter_data, set_data, isin_data, chain_exists, groupby_data, is_single_selector
 
@@ -778,12 +778,12 @@ class Iterator(CustomDict):
     pageLimit = 0
     interval = str()
 
-    def __init__(self, iterateUnit: Optional[Unit]=0, interval: Optional[Timedelta]=str()):
+    def __init__(self, iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=str()):
         self.set_iterator_unit(iterateUnit, interval)
         super().__init__()
 
-    def set_iterator_unit(self, iterateUnit: Unit=0, interval: Timedelta=str()):
-        self.iterateUnit = iterateUnit if iterateUnit else self.iterateUnit
+    def set_iterator_unit(self, iterateUnit: Optional[int]=None, interval: Timedelta=str()):
+        self.iterateUnit = iterateUnit if isinstance(iterateUnit, int) else self.iterateUnit
         self.interval = interval if interval else self.interval
 
     ###################################################################
@@ -804,19 +804,19 @@ class Iterator(CustomDict):
 
     @BaseSession.ignore_exception
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
-                    iterateUnit: Unit=1, pagination: Pagination=False, interval: Timedelta=str(), indexing=True,
-                    **context) -> Tuple[List[Context],Context]:
-        arguments, periods, ranges, iterateUnit = list(), list(), list(), cast_list(iterateUnit)
+                    iterateUnit: Optional[int]=None, pagination: Pagination=False, interval: Timedelta=str(),
+                    indexing=True, **context) -> Tuple[List[Context],Context]:
+        arguments, periods, ranges = list(), list(), list()
         args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
         if args_context:
-            arguments, context = self._from_args(*args, **args_context, iterateUnit=iterateUnit, **context)
+            arguments, context = self._from_args(*args, **args_context, **context)
             iterateProduct = diff(iterateProduct, iterateArgs, PAGE_ITERATOR)
-            if len(iterateProduct) > 1: iterateUnit = iterateUnit[1:]
         if interval:
             periods, context = self._from_date(interval=interval, **context)
             iterateProduct = diff(iterateProduct, DATE_ITERATOR+["date"])
-        ranges, context = self._from_context(iterateProduct=iterateProduct, iterateUnit=iterateUnit, **context)
-        iterator = self._product_iterator(arguments, periods, ranges, indexing=indexing)
+        ranges, context = self._from_context(iterateProduct=iterateProduct, **context)
+        iterator = self._product_iterator(arguments, periods, ranges)
+        iterator = self._unit_iterator(iterator, iterateUnit, indexing)
         return iterator, context
 
     ###################################################################
@@ -830,17 +830,14 @@ class Iterator(CustomDict):
         valid_pages = isinstance(pagination, bool) or (isinstance(pagination, str) and (pagination in iterateArgs))
         return dict(iterateArgs=iterateArgs, pagination=pagination) if valid_args and valid_pages else dict()
 
-    def _from_args(self, *args: Sequence, iterateArgs: List[_KT], iterateUnit: Unit=1,
-                pagination: Pagination=False, **context) -> Tuple[List[Context],Context]:
+    def _from_args(self, *args: Sequence, iterateArgs: List[_KT], pagination: Pagination=False,
+                    **context) -> Tuple[List[Context],Context]:
         if not (is_same_length(*args) or pagination): return list(), context
         argnames, pagenames = self._split_argnames(*args, iterateArgs=iterateArgs, pagination=pagination, **context)
         if pagination:
             how = "numeric" if pagenames == PAGE_ITERATOR else "categorical"
             args, context = self._from_pages(*args, how=how, iterateArgs=iterateArgs, pagination=pagination, **context)
-        args = self._product_args(*args)
-        if get_scala(iterateUnit) > 1:
-            args = list(map(lambda __s: unit_array(__s, unit=get_scala(iterateUnit)), args))
-        args = [dict(zip(argnames, values)) for values in zip(*args)]
+        args = [dict(zip(argnames, values)) for values in zip(*self._product_args(*args))]
         return (self._map_pages(*args, keys=pagenames) if pagenames else args), context
 
     def _split_argnames(self, *args, iterateArgs: List[_KT], pagination: Pagination=False,
@@ -975,26 +972,24 @@ class Iterator(CustomDict):
     ########################### From Context ##########################
     ###################################################################
 
-    def _from_context(self, iterateProduct: List[_KT], iterateUnit: Unit=1, **context) -> Tuple[List[Context],Context]:
+    def _from_context(self, iterateProduct: List[_KT], **context) -> Tuple[List[Context],Context]:
         if not iterateProduct: return list(), context
         query, context = kloc(context, iterateProduct, if_null="drop"), drop_dict(context, iterateProduct, inplace=False)
         if not all(query.values()): raise ValueError(EMPTY_CONTEXT_QUERY_MSG)
-        if any(map(lambda x: x>1, iterateUnit)): query = self._group_context(iterateProduct, iterateUnit, **query)
-        else: query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
+        query = [dict(zip(query.keys(), values)) for values in product(*map(cast_tuple, query.values()))]
         return query, context
 
-    def _group_context(self, iterateProduct: List[_KT], iterateUnit: Unit=1, **context) -> List[Context]:
-        query = apply_dict(context, apply=cast_list, all_keys=True)
-        keys, unit = query.keys(), fill_array(iterateUnit, count=len(iterateProduct), value=1)
-        combinations = product(*[range(0, len(query[key]), unit[i]) for i, key in enumerate(keys)])
-        return [{key: query[key][index:index+unit[i]] for i, (key, index) in enumerate(zip(keys, indices))}
-                for indices in combinations]
-
-    def _product_iterator(self, *ranges: Sequence[Context], indexing=True) -> List[Context]:
+    def _product_iterator(self, *ranges: Sequence[Context]) -> List[Context]:
         if sum(map(len, ranges)) == 0: return list()
         ranges_array = map((lambda x: x if x else [{}]), ranges)
-        __indexing = lambda __i: {ITER_INDEX: __i} if indexing else dict()
-        return [dict(**__indexing(__i), **chain_dict(query)) for __i, query in enumerate(product(*ranges_array))]
+        return [chain_dict(query) for query in product(*ranges_array)]
+
+    def _unit_iterator(self, iterator: List[Context], unit: Optional[int]=None, indexing=True) -> List[Context]:
+        if isinstance(unit, int) and (unit > 1):
+            iterator = unit_records(iterator, unit)
+        if indexing:
+            iterator = [dict({ITER_INDEX: __i}, **query) for __i, query in enumerate(iterator)]
+        return iterator
 
 
 ###################################################################

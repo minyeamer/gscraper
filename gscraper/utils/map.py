@@ -1271,7 +1271,19 @@ def transpose_array(__s: Sequence[Sequence], count: Optional[int]=None, unroll=F
 
 
 def unit_array(__s: Sequence, unit=1) -> List[Sequence]:
-    return [__s[__i:__i+unit] for __i in range(0,len(__s),unit)]
+    return [__s[__i:__i+unit] for __i in range(0, len(__s), unit)]
+
+
+def unit_records(__r: Records, unit=1, keys: _KT=list()) -> Records:
+    keys = cast_list(keys) if keys else unique_keys(__r)
+    rows = list()
+    for __i in range(0, len(__r), unit):
+        __m = {__key: list() for __key in keys}
+        for row in __r[__i:__i+unit]:
+            for __key in __m.keys():
+                __m[__key].append(row.get(__key))
+        rows.append(__m)
+    return rows
 
 
 ###################################################################

@@ -44,7 +44,7 @@ MAP_CONTEXT = lambda flow=None, schema=None, responseType=None, match=None, root
 
 
 SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedReturn=None, \
-                        redirectArgs=None, redirectProduct=None, maxLimit=None, redirectLimit=None, **context: context
+                        maxLimit=None, redirectLimit=None, **context: context
 
 
 ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, sessionCookies=None, **context: context
@@ -432,7 +432,7 @@ SESSION_QUERY = lambda: Query(
 ###################################################################
 
 ITERATOR_QUERY = lambda: Query(
-    Variable(name="iterateUnit", type="INTEGER", iterable=False, default=0),
+    Variable(name="iterateUnit", type="INTEGER", iterable=False, default=None),
     Variable(name="interval", type="STRING", iterable=False, default=str()),
 )
 

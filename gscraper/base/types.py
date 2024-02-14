@@ -20,7 +20,7 @@ INVALID_TYPE_HINT_MSG = lambda x: f"'{x}' is not valid type hint."
 
 _KT = TypeVar("_KT", Sequence[Hashable], Hashable)
 _VT = TypeVar("_VT", Sequence[Any], Any)
-_PASS = None
+_PASS = TypeVar("_PASS")
 
 _TYPE = TypeVar("_TYPE", Sequence[Type], Type)
 _BOOL = TypeVar("_BOOL", Sequence[bool], bool)
