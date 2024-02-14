@@ -503,9 +503,8 @@ def read_gspread(key: str, sheet: str, fields: Optional[IndexLabel]=list(), defa
 def clear_gspead(key: str, sheet: str, include_header=False, account: Account=dict(), gs: Optional[Worksheet]=None):
     if include_header: return gs.clear()
     last_row = len(gs.get_all_records())+1
-    if last_row > 2:
-        gs.insert_row([], 2)
-        gs.delete_rows(3, last_row+1)
+    gs.insert_row([], 2)
+    gs.delete_rows(3, last_row+2)
 
 
 @gs_loaded
