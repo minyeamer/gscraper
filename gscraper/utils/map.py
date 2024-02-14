@@ -646,7 +646,7 @@ def groupby_data(data: Data, by: Union[Dict[_KT,_KT],_KT], if_null: Literal["dro
     if is_records(data): return groupby_records(data, by, if_null=if_null, hier=hier)
     elif is_dfarray(data): return groupby_df(data, by, if_null=if_null)
     elif is_tag_array(data): return groupby_source(data, by, if_null=if_null, hier=hier)
-    else: dict()
+    else: return dict()
 
 
 ###################################################################
