@@ -1056,7 +1056,7 @@ class Mapper(BaseSession):
         root = self.get_root(root=root, **context)
         if root: data = get_value(data, root)
         flow = self.get_flow(flow=flow, **context)
-        self.checkpoint("map"+SUFFIX(context), where="map", msg={"root":root, "data":data, "flow":flow}, save=data)
+        self.checkpoint("map"+SUFFIX(context), where="init_flow", msg={"root":root, "data":data, "flow":flow}, save=data)
         return data, dict(context, flow=flow, responseType=responseType, discard=discard)
 
     def _set_update_time_by_interval(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None,
@@ -1074,8 +1074,9 @@ class Mapper(BaseSession):
         __base = _get_response_origin(responseType)
         if not self._match_response(data, match, **context): return __base
         for process in flow:
-            if not (isinstance(process, Process) and isinstance(process[SCHEMA], Schema)): continue
-            else: __base = self._process(data, __base, process, responseType, __key=process[NAME], **context)
+            __data, is_valid = self._init_process(data, __base, process, responseType, **context)
+            if is_valid:
+                __base = self._map_schema(__data, __base, process[SCHEMA], **context)
         if discard or isinstance(data, Tag): return self.map_base_data(__base, **context)
         else: return self.map_merged_data(self._merge_base(data, __base), **context)
 
@@ -1088,17 +1089,17 @@ class Mapper(BaseSession):
     def match(self, data: ResponseData, **context) -> bool:
         return True
 
-    def _process(self, data: ResponseData, __base: Data, process: Process, responseType: Optional[TypeHint]=None,
-                **context) -> Data:
+    def _init_process(self, data: ResponseData, __base: Data, process: Process, responseType: Type, **context) -> Union[Data,bool]:
+        if not (isinstance(process, Process) and isinstance(process[SCHEMA], Schema)): return data, False
         data = get_value(data, process[ROOT]) if ROOT in process else data
-        self.checkpoint("schema"+SUFFIX(context), where="map_context", msg={"data":data, "schema":process[SCHEMA]}, save=data)
-        if not isinstance(data, _get_response_type(responseType if responseType else self.responseType)):
-            if not data: return __base
+        self.checkpoint("schema"+SUFFIX(context), where="init_process", msg={"data":data, "schema":process[SCHEMA]}, save=data)
+        if not isinstance(data, _get_response_type(responseType)):
+            if not data: return data, False
             else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
         data = self._merge_base(data, __base)
-        if self._match_process(data, process, **context):
-            return self._map_schema(data, __base, process[SCHEMA], **context)
-        else: return __base
+        __match = self._match_process(data, process, **context)
+        if isinstance(__match, pd.DataFrame): return __match, True
+        else: return data, __match
 
     def _match_process(self, data: ResponseData, process: Process, **context):
         match = self._match_data(data, process.get(MATCH), context=context, log=True)
@@ -1153,7 +1154,7 @@ class Mapper(BaseSession):
         elif (path_type == ITERATE) and (not isinstance(data, pd.DataFrame)):
             __value = self._get_value_iterate(data, **field, context=context)
         else: raise TypeError(INVALID_PATH_TYPE_MSG(field[PATH]))
-        self.checkpoint("field"+SUFFIX(context, field), where="_map_field", msg={"value":__value, "field":field})
+        self.checkpoint("field"+SUFFIX(context, field), where="map_field", msg={"value":__value, "field":field})
         return self._set_value(__base, __value, field, **context)
 
     def _get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
@@ -1507,7 +1508,8 @@ class SequenceMapper(Mapper):
             if not self._match_response(__m, match, **context): continue
             __i = __m[RANK] if isinstance(__m.get(RANK), int) else __i
             kwargs = dict(context, discard=discard, count=len(__r), __i=__i)
-            data.append(self._map_response(__m, flow, responseType="dict", match=True, **kwargs))
+            __m = self._map_response(__m, flow, responseType="dict", match=True, **kwargs)
+            if __m: data.append(__m)
         return data
 
     def _map_dataframe(self, df: pd.DataFrame, flow: Flow, countby: Optional[Literal["page","start"]]=None,
@@ -1529,7 +1531,8 @@ class SequenceMapper(Mapper):
         for __i, __s in enumerate(tag_list, start=(start if start else 0)):
             if not (isinstance(__s, Tag) and self._match_response(__s, match, **context)): continue
             kwargs = dict(context, count=len(tag_list), __i=__i)
-            data.append(self._map_response(__s, flow, responseType="tag", match=True, **kwargs))
+            __m = self._map_response(__s, flow, responseType="tag", match=True, **kwargs)
+            if __m: data.append(__m)
         return data
 
     def _limit_data_size(self, data: Data, size: Optional[int]=None, dataSize: Optional[int]=None, **context) -> Data:
