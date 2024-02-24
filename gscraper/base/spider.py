@@ -9,12 +9,13 @@ from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryI
 from gscraper.base.gcloud import fetch_gcloud_authorization, read_gcloud
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
-from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, FloatUnit, DateFormat, Timedelta, Timezone
+from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
 from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Account
-from gscraper.base.types import is_date_type, is_array, is_int_array, init_origin
+from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array, init_origin
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
+from gscraper.utils.date import get_date_pair, get_datetime_pair
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
@@ -35,6 +36,7 @@ import requests
 import time
 
 from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
+from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
@@ -67,21 +69,18 @@ LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debug", "extraSave
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
 GCLOUD_UNIQUE = ["queryInfo", "uploadInfo", "account"]
 
-FILTER_UNIQUE = ["fields", "returnType"]
+FILTER_UNIQUE = ["fields", "ranges", "returnType"]
 REQUEST_UNIQUE = ["numRetries", "delay", "cookies"]
 
 SPIDER_UNIQUE = ["discard", "progress", "numTasks"]
 REDIRECT_UNIQUE = ["apiRedirect", "redirectUnit", "redirectUrl", "authorization", "account"]
-
-GATHER_UNIQUE = ["message", "where", "which", "by"]
-DATE_UNIQUE = ["byDate", "fromDate", "toDate"]
 
 ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
 
 PROXY_LOG = ["logLevel", "logFile", "debug", "extraSave", "interrupt"]
 PIPELINE_UNIQUE = FILTER_UNIQUE + TIME_UNIQUE + PROXY_LOG + REQUEST_UNIQUE + ENCRYPTED_UNIQUE
 WORKER_UNIQUE = PIPELINE_UNIQUE + SPIDER_UNIQUE + REDIRECT_UNIQUE
-WORKER_EXTRA = GATHER_UNIQUE + DATE_UNIQUE
+WORKER_EXTRA = ["message", "where", "which", "by"]
 
 NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName", "dataType"
 FIELDS, ALLOWED, PARAMS, DERIV, CONTEXT = "fields", "allowedFields", "params", "derivData", "context"
@@ -257,6 +256,33 @@ def encode_object(__object: str) -> str:
 
 
 ###################################################################
+########################### Range Filter ##########################
+###################################################################
+
+class RangeContext(OptionalDict):
+    def __init__(self, field: _KT, left: Optional[Real]=None, right: Optional[Real]=None, valueType: Optional[TypeHint]=None,
+                inclusive: Literal["both","neither","left","right"]="both", null=False):
+        left, right = self.validate_value(left, right, valueType)
+        super().__init__(field=field,
+            optional=dict(left=left, right=right, inclusive=inclusive, null=null))
+
+    def validate_value(self, left: Optional[Real]=None, right: Optional[Real]=None,
+                        valueType: Optional[TypeHint]=None) -> Tuple[Real,Real]:
+        if not valueType: return left, right
+        elif is_datetime_type(valueType): return get_datetime_pair(left, right, if_null=(None, None))
+        elif is_date_type(valueType): return get_date_pair(left, right, if_null=(None, None))
+        else: return left, right
+
+
+class RangeFilter(TypedRecords):
+    dtype = RangeContext
+    typeCheck = True
+
+    def __init__(self, *args: RangeContext):
+        super().__init__(*args)
+
+
+###################################################################
 ######################### Request Session #########################
 ###################################################################
 
@@ -278,36 +304,32 @@ class RequestSession(UploadSession):
     asyncio = False
     operation = "session"
     fields = list()
+    ranges = list()
     returnType = None
     mappedReturn = False
     info = Info()
 
-    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
-        self.set_filter_variables(fields, returnType)
+        self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(numRetries, delay, cookies)
-        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
-    def set_filter_variables(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None):
+    def set_filter_variables(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None,
+                            returnType: Optional[TypeHint]=None):
         self.fields = fields if fields else self.fields
+        self.ranges = RangeFilter(*ranges) if isinstance(ranges, Sequence) and ranges else RangeFilter()
         self.returnType = returnType if returnType else self.returnType
 
-    def set_request_variables(self, numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None):
+    def set_request_variables(self, numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None):
         self.set_retries(numRetries, delay)
         self.cookies = cookies
-
-    def set_date_filter(self, byDate: IndexLabel, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None):
-        if byDate:
-            self.byDate = cast_list(byDate)
-            self.fromDate, self.toDate = self.get_date_pair(fromDate, toDate, if_null=(None, None))
 
     ###################################################################
     ######################### Request Managers ########################
@@ -374,24 +396,29 @@ class RequestSession(UploadSession):
         else: return {__key: self.filter_data(__data, fields, returnType) for __key, __data, in data.items()}
 
     ###################################################################
-    ########################## Validate Date ##########################
+    ########################## Validate Range #########################
     ###################################################################
 
-    def validate_date(func):
+    def validate_range(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, byDate: IndexLabel=list(),
-                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
-            data = func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
-            if self.mappedReturn: return data
-            else: return self.filter_date(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
+        def wrapper(self: RequestSession, *args, ranges: RangeFilter=list(), **params):
+            data = func(self, *args, **params)
+            if self.mappedReturn and isinstance(data, Dict):
+                return self.filter_mapped_range(data, ranges=ranges)
+            else: return self.filter_range(data, ranges=ranges)
         return wrapper
 
-    def filter_date(self, data: Data, byDate: IndexLabel=list(),
-                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None) -> Data:
-        if byDate and (fromDate or toDate):
-            between_context = {field: (fromDate, toDate) for field in cast_tuple(byDate)}
-            return between_data(data, **between_context)
-        else: return data
+    def filter_range(self, data: Data, ranges: RangeFilter=list()) -> Data:
+        if isinstance(ranges, Sequence):
+            for range in ranges:
+                data = between_data(data, **range)
+        return data
+
+    def filter_mapped_range(self, data: Data, ranges: RangeFilter=list()) -> MappedData:
+        if isinstance(ranges, Dict):
+            return {__key: (self.filter_range(__data, ranges[__key]) if __key in ranges else __data)
+                    for __key, __data in data.items()}
+        else: return {__key: self.filter_range(__data, ranges) for __key, __data, in data.items()}
 
     ###################################################################
     ########################### Arrange Data ##########################
@@ -481,6 +508,7 @@ class Spider(RequestSession, Iterator, Parser):
     which = WHICH
     by = str()
     fields = list()
+    ranges = list()
     iterateArgs = list()
     iterateCount = dict()
     iterateProduct = list()
@@ -504,16 +532,15 @@ class Spider(RequestSession, Iterator, Parser):
     info = Info()
     flow = Flow()
 
-    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
-        self.set_filter_variables(fields, returnType)
+        self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(numRetries, delay, cookies)
@@ -521,7 +548,6 @@ class Spider(RequestSession, Iterator, Parser):
         self.set_gather_message(where, which, by, message)
         self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
-        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
         self._disable_warnings()
 
@@ -643,15 +669,14 @@ class Spider(RequestSession, Iterator, Parser):
         return wrapper
 
     @redirect_available
-    def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True, fields: IndexLabel=list(),
-                byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True,
+                fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else self.get_gather_message(**context)
         if not iterator:
             iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, byDate=byDate, fromDate=fromDate, toDate=toDate, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     def get_gather_message(self, which=str(), where=str(), by=str(), **context) -> str:
         which = which if which else self.which
@@ -660,9 +685,8 @@ class Spider(RequestSession, Iterator, Parser):
         return GATHER_MSG(which, where, by)
 
     @RequestSession.arrange_data
-    @RequestSession.validate_date
-    def reduce(self, data: List[Data], fields: IndexLabel=list(), byDate: IndexLabel=list(),
-                fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
+    @RequestSession.validate_range
+    def reduce(self, data: List[Data], fields: IndexLabel=list(), ranges: RangeFilter=list(),
                 returnType: Optional[TypeHint]=None, **context) -> Data:
         return chain_exists(data) if is_array(data) else data
 
@@ -682,9 +706,9 @@ class Spider(RequestSession, Iterator, Parser):
     ########################### Gather Count ##########################
     ###################################################################
 
-    def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True, fields: IndexLabel=list(),
-                    byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                    returnType: Optional[TypeHint]=None, size: Optional[int]=None, pageSize=0, **context) -> Data:
+    def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
+                    fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None,
+                    size: Optional[int]=None, pageSize=0, **context) -> Data:
         hasSize = (size is not None) and (isinstance(size, int) or is_int_array(size, how="all", empty=False))
         context = dict(context, size=(size if hasSize else pageSize), pageSize=pageSize)
         iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=hasSize)
@@ -693,7 +717,7 @@ class Spider(RequestSession, Iterator, Parser):
         data = self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
         if iterator and (not hasSize):
             data += self._gather_next(iterator, progress=progress, fields=fields, **context)
-        return self.reduce(data, fields=fields, byDate=byDate, fromDate=fromDate, toDate=toDate, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     def _gather_first(self, iterator: List[Context], countPath: _KT=list(), hasSize=False,
                     message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
@@ -862,13 +886,12 @@ class Spider(RequestSession, Iterator, Parser):
 
     @gcloud_authorized
     def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True, fields: IndexLabel=list(),
-                byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                returnType: Optional[TypeHint]=None, **context) -> Data:
+                ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
         iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     def get_redirect_message(self, **context) -> str:
         return REDIRECT_MSG(self.operation)
@@ -928,26 +951,25 @@ class AsyncSession(RequestSession):
     asyncio = True
     operation = "session"
     fields = list()
+    ranges = list()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
     info = Info()
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None, numTasks=100,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
-        self.set_filter_variables(fields, returnType)
+        self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
-        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
 
-    def set_async_variables(self, numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None, numTasks=100):
+    def set_async_variables(self, numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100):
         self.set_request_variables(numRetries, delay, cookies)
         self.numTasks = cast_int(numTasks, default=MIN_ASYNC_TASK_LIMIT)
 
@@ -1028,14 +1050,15 @@ class AsyncSession(RequestSession):
             else: return self.filter_data(data, fields=fields, returnType=returnType)
         return wrapper
 
-    def validate_date(func):
+    def validate_range(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSession, *args, byDate: IndexLabel=list(),
-                    fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None, **params):
-            data = await func(self, *args, byDate=byDate, fromDate=fromDate, toDate=toDate, **params)
-            if self.mappedReturn: return data
-            else: return self.filter_date(data, byDate=byDate, fromDate=fromDate, toDate=toDate)
+        async def wrapper(self: AsyncSession, *args, ranges: RangeFilter=list(), **params):
+            data = await func(self, *args, **params)
+            if self.mappedReturn and isinstance(data, Dict):
+                return self.filter_mapped_range(data, ranges=ranges)
+            else: return self.filter_range(data, ranges=ranges)
         return wrapper
+
 
 
 ###################################################################
@@ -1051,6 +1074,7 @@ class AsyncSpider(Spider, AsyncSession):
     which = WHICH
     by = str()
     fields = list()
+    ranges = list()
     iterateArgs = list()
     iterateCount = dict()
     iterateProduct = list()
@@ -1076,16 +1100,15 @@ class AsyncSpider(Spider, AsyncSession):
     info = Info()
     flow = Flow()
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None, numTasks=100,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
-                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None, **context):
-        self.set_filter_variables(fields, returnType)
+        self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
@@ -1094,7 +1117,6 @@ class AsyncSpider(Spider, AsyncSession):
         self.set_gather_message(where, which, by, message)
         self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
-        self.set_date_filter(byDate, fromDate=fromDate, toDate=toDate)
         UploadSession.__init__(self, queryInfo, uploadInfo, account, **context)
         self._disable_warnings()
 
@@ -1119,15 +1141,14 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @redirect_available
-    async def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True, fields: IndexLabel=list(),
-                    byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                    returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True,
+                    fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else self.get_gather_message(**context)
         if not iterator:
             iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     async def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
                             **context) -> List[Data]:
@@ -1138,9 +1159,9 @@ class AsyncSpider(Spider, AsyncSession):
     ########################### Gather Count ##########################
     ###################################################################
 
-    async def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True, fields: IndexLabel=list(),
-                            byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                            returnType: Optional[TypeHint]=None, size: Optional[int]=None, pageSize=0, **context) -> Data:
+    async def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
+                            fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None,
+                            size: Optional[int]=None, pageSize=0, **context) -> Data:
         hasSize = (size is not None) and (isinstance(size, int) or is_int_array(size, how="all", empty=False))
         context = dict(context, size=(size if hasSize else pageSize), pageSize=pageSize)
         iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=hasSize)
@@ -1149,7 +1170,7 @@ class AsyncSpider(Spider, AsyncSession):
         data = await self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
         if iterator and (not hasSize):
             data += await self._gather_next(iterator, progress=progress, fields=fields, **context)
-        return self.reduce(data, fields=fields, byDate=byDate, fromDate=fromDate, toDate=toDate, returnType=returnType, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     async def _gather_first(self, iterator: List[Context], countPath: _KT=list(), hasSize=False,
                             message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
@@ -1302,14 +1323,13 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True, fields: IndexLabel=list(),
-                        byDate: IndexLabel=list(), fromDate: Optional[dt.date]=None, toDate: Optional[dt.date]=None,
-                        returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True,
+                        fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
         iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = await self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
-        return self.reduce(data, fields=fields, returnType=returnType, byDate=byDate, fromDate=fromDate, toDate=toDate, **context)
+        return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
     @AsyncSession.catch_exception
     @AsyncSession.limit_request
@@ -1479,6 +1499,7 @@ class EncryptedSession(RequestSession):
     operation = "session"
     where = WHERE
     fields = list()
+    ranges = list()
     returnType = None
     mappedReturn = False
     auth = LoginSpider
@@ -1487,12 +1508,11 @@ class EncryptedSession(RequestSession):
     sessionCookies = True
     info = Info()
 
-    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         RequestSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1599,7 +1619,7 @@ class EncryptedSession(RequestSession):
 
 
 ###################################################################
-######################## Encrypted Spiders ########################
+######################### Encrypted Spider ########################
 ###################################################################
 
 class EncryptedSpider(Spider, EncryptedSession):
@@ -1611,6 +1631,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     which = WHICH
     by = str()
     fields = list()
+    ranges = list()
     iterateArgs = list()
     iterateCount = dict()
     iterateProduct = list()
@@ -1637,14 +1658,13 @@ class EncryptedSpider(Spider, EncryptedSession):
     info = Info()
     flow = Flow()
 
-    def __init__(self, fields: Optional[IndexLabel]=None, returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1660,6 +1680,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     asyncio = True
     operation = "session"
     fields = list()
+    ranges = list()
     maxLimit = MAX_ASYNC_TASK_LIMIT
     returnType = None
     mappedReturn = False
@@ -1668,12 +1689,11 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     sessionCookies = True
     info = Info()
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None, numTasks=100,
-                byDate: Optional[IndexLabel]=None, fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1753,6 +1773,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     which = WHICH
     by = str()
     fields = list()
+    ranges = list()
     iterateArgs = list()
     iterateCount = dict()
     iterateProduct = list()
@@ -1781,14 +1802,13 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     info = Info()
     flow = Flow()
 
-    def __init__(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
-                numRetries: Optional[int]=None, delay: FloatUnit=1., cookies: Optional[str]=None, numTasks=100,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Timedelta=str(), apiRedirect=False, redirectUnit: Optional[int]=None,
-                byDate: IndexLabel=list(), fromDate: Optional[DateFormat]=None, toDate: Optional[DateFormat]=None,
                 queryInfo: GoogleQueryInfo=dict(), uploadInfo: GoogleUploadInfo=dict(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1876,6 +1896,7 @@ class Pipeline(EncryptedSession):
     operation = "pipeline"
     fields = list()
     derivFields = list()
+    ranges = list()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
@@ -1990,6 +2011,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     operation = "pipeline"
     fields = list()
     derivFields = list()
+    ranges = list()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()

@@ -381,6 +381,7 @@ class Query(ValueSet):
 
 FILTER_QUERY = lambda: Query(
     Variable(name="fields", type="STRING", iterable=True, default=list()),
+    Variable(name="ranges", type="DICT", desc="범위", iterable=True, default=list()),
     Variable(name="returnType", type="STRING", iterable=False, default=None),
 )
 
@@ -405,12 +406,6 @@ REQUEST_QUERY = lambda: Query(
     Variable(name="cookies", type="STRING", iterable=False, default=None),
 )
 
-DATE_FILTER_QUERY = lambda: Query(
-    Variable(name="byDate", type="DATE", iterable=False, default=None),
-    Variable(name="fromDate", type="DATE", iterable=False, default=None),
-    Variable(name="toDate", type="DATE", iterable=False, default=None),
-)
-
 GCLOUD_QUERY = lambda: Query(
     Variable(name="queryInfo", type="DICT", iterable=False, default=dict()),
     Variable(name="uploadInfo", type="DICT", iterable=False, default=dict()),
@@ -422,7 +417,6 @@ SESSION_QUERY = lambda: Query(
     *TIME_QUERY(),
     *LOG_QUERY(),
     *REQUEST_QUERY(),
-    *DATE_FILTER_QUERY(),
     *GCLOUD_QUERY(),
 )
 

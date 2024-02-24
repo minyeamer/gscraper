@@ -82,15 +82,25 @@ def get_datetime(__object: Optional[DateFormat]=None, if_null: Optional[Union[in
                 days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0,
                 tzinfo=None, astimezone=None, droptz=False,
                 unit: Literal["second","minute","hour","day","month","year"]="second") -> dt.datetime:
-    context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
-    __datetime = cast_datetime(__object, **context)
+    __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     if not isinstance(__datetime, dt.datetime):
-        if isinstance(__object, int): __datetime = now(hours=__object, **context)
-        elif isinstance(if_null, int): __datetime = now(hours=if_null, **context)
-        elif isinstance(if_null, str): __datetime = cast_datetime(__object, **context)
+        if isinstance(__object, int): __datetime = now(hours=__object, tzinfo=tzinfo, droptz=droptz)
+        elif isinstance(if_null, int): __datetime = now(hours=if_null, tzinfo=tzinfo, droptz=droptz)
+        elif isinstance(if_null, str): __datetime = cast_datetime(__object, tzinfo=tzinfo, astimezone=astimezone, droptz=droptz)
     if isinstance(__datetime, dt.datetime):
         __datetime = __datetime - dt.timedelta(days, seconds, microseconds, milliseconds, minutes, hours, weeks)
         return trunc_datetime(__datetime, unit=unit) if unit else __datetime
+
+
+def get_datetime_pair(startTime: Optional[DateFormat]=None, endTime: Optional[DateFormat]=None,
+                    if_null: Optional[Unit]=None, tzinfo=None, astimezone=None, droptz=False,
+                    unit: Literal["second","minute","hour","day","month","year"]="second") -> Tuple[dt.datetime,dt.datetime]:
+    context = dict(tzinfo=tzinfo, astimezone=astimezone, droptz=droptz, unit=unit)
+    startTime = get_datetime(startTime, if_null=get_scala(if_null, 0), **context)
+    endTime = get_datetime(endTime, if_null=get_scala(if_null, 1), **context)
+    __min = min(startTime, endTime) if startTime and endTime else startTime
+    __max = max(startTime, endTime) if startTime and endTime else endTime
+    return __min, __max
 
 
 def get_time(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
@@ -126,9 +136,9 @@ def get_date_pair(startDate: Optional[DateFormat]=None, endDate: Optional[DateFo
                     if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
     startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=busdate)
     endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=busdate)
-    if startDate: startDate = min(startDate, endDate) if endDate else startDate
-    if endDate: endDate = max(startDate, endDate) if startDate else endDate
-    return startDate, endDate
+    __min = min(startDate, endDate) if startDate and endDate else startDate
+    __max = max(startDate, endDate) if startDate and endDate else endDate
+    return __min, __max
 
 
 def set_datetime(__datetime: dt.datetime, __format="%Y-%m-%d %H:%M:%S",

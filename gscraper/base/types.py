@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Set, get_type_hints, get_origin, get_args
 
 from bs4.element import Tag
 from datetime import datetime, date, time, timedelta
+from numbers import Real
 from pandas import DataFrame, Series
 from pytz import BaseTzInfo
 
@@ -65,12 +66,13 @@ DecryptedKey = Union[Dict, str]
 Status = Union[Sequence[int], int]
 Shape = Union[Sequence[int], int]
 Unit = Union[Sequence[int], int]
-FloatUnit = Union[Sequence[float], Sequence[int], float, int]
+Range = Union[Sequence[Real], Real]
+
 
 KEY_TYPES = {
     "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
     "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey, "DecryptedKey":DecryptedKey,
-    "Status":Status, "Shape":Shape, "Unit":Unit, "FloatUnit":FloatUnit}
+    "Status":Status, "Shape":Shape, "Unit":Unit, "Range":Range}
 
 
 ###################################################################
@@ -161,7 +163,6 @@ Pagination = Union[bool, str]
 Pages = Union[Tuple[int], Tuple[Tuple[int,int,int]]]
 
 RegexFormat = str
-BetweenRange = Union[Sequence[Tuple], Sequence[Dict]]
 
 CastError = (ValueError, TypeError)
 
@@ -169,7 +170,7 @@ ApplyFunction = Union[Callable[[Any],Any], Sequence[Callable[[Any],Any]], Dict]
 MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 
 SPECIAL_TYPES = {
-    "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat, "BetweenRange":BetweenRange,
+    "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat,
     "ApplyFunction":ApplyFunction, "MatchFunction":MatchFunction}
 
 

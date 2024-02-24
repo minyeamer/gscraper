@@ -1,7 +1,7 @@
 from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint
 from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence, RenameMap
 from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
-from gscraper.base.types import ApplyFunction, MatchFunction, BetweenRange, RegexFormat, PANDAS_DATA
+from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat, PANDAS_DATA
 from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
 from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type
 from gscraper.base.types import is_comparable, is_kwargs_allowed
@@ -11,6 +11,7 @@ from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
 
 from typing import Any, Callable, Dict, List, Set
 from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
+from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from pandas.core.indexes.base import Index as PandasIndex
 import pandas as pd
@@ -25,7 +26,6 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 
 
-BETWEEN_RANGE_TYPE_MSG = "Between condition must be an iterable or a dictionary."
 INVALID_ISIN_MSG = "Isin function requires at least one parameter: exact, include, and exclude."
 SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
 LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are mismatched: [{left}, {right}]"
@@ -109,7 +109,7 @@ def to_records(__object: MappingData, depth=1) -> Records:
     if is_records(__object, empty=True): return __object
     elif isinstance(__object, pd.DataFrame):
         return fillna_records(__object.to_dict("records"), value=None, strict=True, depth=depth)
-    elif isinstance(__object, dict): return [__object]
+    elif isinstance(__object, Dict): return [__object]
     else: return list()
 
 
@@ -967,8 +967,8 @@ def align_records(__r: Records, default=None, forward=True) -> Records:
 ############################# Between #############################
 ###################################################################
 
-def between(__object: Comparable, left=None, right=None,
-            inclusive: Literal["both","neither","left","right"]="both", null=False, **kwargs) -> bool:
+def between(__object: Comparable, left: Optional[Real]=None, right: Optional[Real]=None,
+            inclusive: Literal["both","neither","left","right"]="both", null=False) -> bool:
     try:
         match_left = ((left is None) or (__object >= left if inclusive in ["both","left"] else __object > left))
         match_right = ((right is None) or (__object <= right if inclusive in ["both","right"] else __object < right))
@@ -976,42 +976,23 @@ def between(__object: Comparable, left=None, right=None,
     except: return null
 
 
-def between_dict(__m: Dict, __keys: Optional[_KT]=list(), __ranges: Optional[BetweenRange]=list(),
-                inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> bool:
-    match = True
-    for __key, __range in map_context(__keys, __ranges, **context).items():
-        if __key in __m:
-            if is_array(__range): match &= between(__m[__key], *__range[:2], inclusive=inclusive, null=null)
-            elif isinstance(__range, dict): match &= between(__m[__key], **__range, inclusive=inclusive, null=null)
-            else: raise ValueError(BETWEEN_RANGE_TYPE_MSG)
-        elif not null: return False
-    return match
+def between_records(__r: Records, __key: Optional[_KT]=list(), left: Optional[Real]=None, right: Optional[Real]=None,
+            inclusive: Literal["both","neither","left","right"]="both", null=False) -> Records:
+    if __key not in unique_keys(__r): return __r
+    else: return [__m for __m in __r if between(__m.get(__key), left, right, inclusive, null)]
 
 
-def between_records(__r: Records, __keys: Optional[_KT]=list(), __ranges: Optional[BetweenRange]=list(),
-                    inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> Records:
-    return [__m for __m in __r
-            if between_dict(__m, __keys, __ranges, inclusive=inclusive, null=null, **context)]
+def between_df(df: pd.DataFrame, __column: Optional[IndexLabel]=list(), left: Optional[Real]=None, right: Optional[Real]=None,
+            inclusive: Literal["both","neither","left","right"]="both", null=False) -> pd.DataFrame:
+    if __column not in df: return df
+    else: return df[df[__column].apply(lambda x: between(x, left, right, inclusive, null))]
 
 
-def between_df(df: pd.DataFrame, __columns: Optional[IndexLabel]=list(), __ranges: Optional[BetweenRange]=list(),
-                inclusive: Literal["both","neither","left","right"]="both", null=False, **context) -> pd.DataFrame:
-    df, df.copy()
-    kwargs = dict(inclusive=inclusive, null=null)
-    for __column, __range in map_context(__columns, __ranges, **context).items():
-        if __column in df and isinstance(__column, str):
-            if is_array(__range): df = df[df[__column].apply(lambda x: between(x, *__range[:2], **kwargs))]
-            elif isinstance(__range, dict): df = df[df[__column].apply(lambda x: between(x, **__range, **kwargs))]
-            else: raise ValueError(BETWEEN_RANGE_TYPE_MSG)
-    return df
-
-
-def between_data(data: MappingData, inclusive: Literal["both","neither","left","right"]="both",
-                null=False, **context) -> MappingData:
-    if is_records(data): return between_records(data, inclusive=inclusive, null=null, **context)
-    elif isinstance(data, pd.DataFrame): return between_df(data, inclusive=inclusive, null=null, **context)
-    elif isinstance(data, Dict): return data if between_dict(data, inclusive=inclusive, null=null, **context) else dict()
-    else: return between(data, inclusive=inclusive, **context)
+def between_data(data: MappingData, field: Optional[_KT]=list(), left: Optional[Real]=None, right: Optional[Real]=None,
+                inclusive: Literal["both","neither","left","right"]="both", null=False) -> MappingData:
+    if is_records(data): return between_records(data, field, left, right, inclusive, null)
+    elif isinstance(data, pd.DataFrame): return between_df(data, field, left, right, inclusive, null)
+    else: return data
 
 
 ###################################################################
