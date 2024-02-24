@@ -8,7 +8,7 @@ from gscraper.base.types import TabularData, Account, PostData, from_literal
 from gscraper.utils.cast import cast_list, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_empty, to_array, get_scala, kloc, to_dict, set_dict, to_records
+from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, set_dict, to_records
 from gscraper.utils.map import cloc, to_dataframe, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account

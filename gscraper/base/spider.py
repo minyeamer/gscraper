@@ -843,7 +843,7 @@ class Spider(RequestSession, Iterator, Parser):
         self.logger.info(log_data(data, **self.get_iterator(**context)))
 
     ###################################################################
-    ############################# Redirect ############################
+    ######################### Redirect Request ########################
     ###################################################################
 
     def run_iterator(self, iterator: List[Context], self_var=True, **context) -> Data:
@@ -1003,14 +1003,12 @@ class AsyncSession(RequestSession):
     def catch_exception(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, **context):
-            for retry in range(0, self.numRetries+1):
+            for retry in range(self.numRetries+1):
                 try: return await func(self, *args, **context)
                 except KeyboardInterrupt as interrupt:
                     raise interrupt
                 except Exception as exception:
-                    if retry+1 < self.numRetries:
-                        await self.async_sleep()
-                        continue
+                    if retry+1 < self.numRetries: await self.async_sleep()
                     return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
         return wrapper
 
@@ -1299,7 +1297,7 @@ class AsyncSpider(Spider, AsyncSession):
 
     def gcloud_authorized(func):
         @functools.wraps(func)
-        async def wrapper(self: Spider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
+        async def wrapper(self: AsyncSpider, *args, redirectUrl=str(), authorization=str(), account: Account=dict(), **context):
             return await func(self, *args, **self._validate_redirect_info(redirectUrl, authorization, account), **context)
         return wrapper
 
@@ -1516,7 +1514,7 @@ class EncryptedSession(RequestSession):
 
     def login_task(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
+        def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
                 login_context = TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context))
@@ -1528,7 +1526,7 @@ class EncryptedSession(RequestSession):
 
     def login_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
+        def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
                 login_context = SESSION_CONTEXT(**self.validate_account(session, **context))
@@ -1579,7 +1577,7 @@ class EncryptedSession(RequestSession):
 
     def api_task(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
+        def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             api_context = TASK_CONTEXT(**self.get_auth_info(update=True, **context))
             data = func(self, *args, **api_context)
@@ -1589,7 +1587,7 @@ class EncryptedSession(RequestSession):
 
     def api_session(func):
         @functools.wraps(func)
-        def wrapper(self: EncryptedSpider, *args, self_var=True, **context):
+        def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with requests.Session() as session:
                 api_context = SESSION_CONTEXT(**self.get_auth_info(update=True, **context))

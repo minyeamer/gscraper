@@ -681,14 +681,12 @@ class BaseSession(CustomDict):
     def catch_exception(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, *args, **context):
-            for retry in range(0, self.numRetries+1):
+            for retry in range(self.numRetries+1):
                 try: return func(self, *args, **context)
                 except KeyboardInterrupt as interrupt:
                     raise interrupt
                 except Exception as exception:
-                    if retry+1 < self.numRetries:
-                        self.sleep()
-                        continue
+                    if retry+1 < self.numRetries: self.sleep()
                     else: return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
         return wrapper
 
