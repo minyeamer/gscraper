@@ -1014,8 +1014,8 @@ class AsyncSession(RequestSession):
             return response
         return wrapper
 
-    async def async_sleep(self):
-        delay = self.get_delay(self.delay)
+    async def async_sleep(self, delay: Optional[Range]=None):
+        delay = delay if delay is not None else self.get_delay(self.delay)
         if delay: await asyncio.sleep(delay)
 
     ###################################################################

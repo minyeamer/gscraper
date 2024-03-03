@@ -709,8 +709,8 @@ class BaseSession(CustomDict):
         self.logger.error(log_exception(func_name, json=self.logJson, **msg))
         self.errors.append(msg)
 
-    def sleep(self):
-        delay = self.get_delay(self.delay)
+    def sleep(self, delay: Optional[Range]=None):
+        delay = delay if delay is not None else self.get_delay(self.delay)
         if delay: time.sleep(delay)
 
     def get_delay(self, delay: Range) -> Union[float,int]:
