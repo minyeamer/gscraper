@@ -76,7 +76,7 @@ GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, b
                         progress=None, partition=None, prtition_by=None, base=None, **context: context
 
 
-UPLOAD_CONTEXT = lambda queryInfo=None, uploadInfo=None, **context: context
+UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, **context: context
 
 
 TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
@@ -407,8 +407,8 @@ REQUEST_QUERY = lambda: Query(
 )
 
 GCLOUD_QUERY = lambda: Query(
-    Variable(name="queryInfo", type="DICT", iterable=False, default=dict()),
-    Variable(name="uploadInfo", type="DICT", iterable=False, default=dict()),
+    Variable(name="queryList", type="DICT", iterable=True, default=list()),
+    Variable(name="uploadList", type="DICT", iterable=True, default=list()),
     Variable(name="account", type="STRING", iterable=False, default=None),
 )
 
