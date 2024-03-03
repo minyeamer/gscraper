@@ -363,7 +363,7 @@ class GoogleUploader(BaseSession):
                         cell=str(), base_sheet=str(), primary_key: _KT=list(), default=None, head=1, headers=None,
                         str_cols: NumericiseIgnore=list(), to: Optional[Literal["desc","name"]]="name",
                         rename: Optional[RenameMap]=None, name=str(), account: Account=dict(), **context) -> bool:
-        data = self._validate_upload_columns(name, data, **context)
+        data = self._validate_upload_columns(name, data, key=key, sheet=sheet, **context)
         if base_sheet or (mode == "upsert"):
             data = self.from_base_sheet(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
@@ -400,7 +400,7 @@ class GoogleUploader(BaseSession):
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
                     partition=str(), partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
                     base_query=str(), primary_key: _KT=list(), name=str(), account: Account=dict(), **context) -> bool:
-        data = self._validate_upload_columns(name, data, **context)
+        data = self._validate_upload_columns(name, data, table=table, project_id=project_id, **context)
         if base_query or (mode == "upsert"):
             data = self.from_base_query(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
