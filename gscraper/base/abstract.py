@@ -70,10 +70,10 @@ RESPONSE_CONTEXT = lambda tzinfo=None, iterateUnit=None, logName=None, logLevel=
                         progress=None, message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
 
 
-GCLOUD_CONTEXT = lambda name=None, key=None, sheet=None, mode=None, cell=None, base_sheet=None, clear=None, \
-                        default=None, head=None, headers=None, numericise_ignore=None, str_cols=None, arr_cols=None, \
-                        to=None, rename=None, table=None, project_id=None, schema=None, base_query=None, \
-                        progress=None, partition=None, prtition_by=None, base=None, **context: context
+GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None, table=None, query=None, project_id=None, \
+                        columns=None, mode=None, primary_key=None, base=None, base_sheet=None, base_query=None, \
+                        cell=None, clear=None, default=None, head=None, headers=None, str_cols=None, arr_cols=None, \
+                        rename=None, to=None, progress=None, partition=None, partition_by=None, fields=None, **context: context
 
 
 UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, **context: context
