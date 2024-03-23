@@ -420,7 +420,7 @@ class GoogleUploader(BaseSession):
         if base_sheet or (mode == "upsert"):
             data = self.from_base_sheet(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
-        data = self.map_upload_data(data, name=name, **context)
+        data = self.map_upload_data(data, primary_key=primary_key, name=name, **context)
         data = self._validate_primary_key(data, primary_key)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
@@ -429,12 +429,12 @@ class GoogleUploader(BaseSession):
         return True
 
     def from_base_sheet(self, key: str, sheet: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
-                        base_sheet=str(), primary_key: _KT=list(), **context) -> pd.DataFrame:
+                        base_sheet=str(), primary_key: _KT=list(), name=str(), **context) -> pd.DataFrame:
         base_sheet = base_sheet if base_sheet else sheet
-        base = self.read_gs_base(key, base_sheet, **context)
+        base = self.read_gs_base(key, base_sheet, name, **context)
         if (mode == "upsert") and primary_key:
             data = data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
-        return self.map_upload_base(data, base, **context)
+        return self.map_upload_base(data, base, primary_key=primary_key, name=name, **context)
 
     def read_gs_base(self, key: str, sheet: str, name=str(), default=None, head=1, headers=None,
                     str_cols: NumericiseIgnore=list(), rename: Optional[RenameMap]=None,
@@ -458,7 +458,7 @@ class GoogleUploader(BaseSession):
         if base_query or (mode == "upsert"):
             data = self.from_base_query(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
-        data = self.map_upload_data(data, name=name, **context)
+        data = self.map_upload_data(data, primary_key=primary_key, name=name, **context)
         data = self._validate_primary_key(data, primary_key)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, dump=self.logJson))
@@ -471,7 +471,7 @@ class GoogleUploader(BaseSession):
         base = self.read_gbq_base(base_query, project_id, name, account)
         if (mode == "upsert") and primary_key:
             data = data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
-        return self.map_upload_base(data, base, **context)
+        return self.map_upload_base(data, base, primary_key=primary_key, name=name, **context)
 
     def read_gbq_base(self, query: str, project_id: str, name=str(), account: Account=dict()) -> pd.DataFrame:
         data = read_gbq(query, project_id, return_type="dataframe", account=account)
