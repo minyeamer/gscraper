@@ -6,11 +6,11 @@ from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONT
 from gscraper.base.session import BaseSession, Iterator, Parser, Info, Schema, Field, Flow, Process
 from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryList, GoogleUploadList
-from gscraper.base.gcloud import fetch_gcloud_authorization, read_gcloud
+from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Account
+from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array, init_origin
 
 from gscraper.utils import notna

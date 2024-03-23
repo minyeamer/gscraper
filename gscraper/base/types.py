@@ -143,8 +143,8 @@ PANDAS_DATA = (DataFrame, Series)
 HtmlData = Union[str, Tag, List[str], List[Tag]]
 HTML_DATA = (str, Tag, List)
 
-Account = Union[Dict[str,str], str]
-PostData = Union[Dict[str,Any],str]
+Account = Dict[str,str]
+PostData = Union[Dict[str,Any], str]
 
 ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict, str, Tag, List[str], List[Tag]]
 

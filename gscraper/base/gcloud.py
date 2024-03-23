@@ -3,7 +3,7 @@ from gscraper.base.abstract import OptionalDict, TypedRecords, Value, ValueSet, 
 from gscraper.base.session import BaseSession
 
 from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap
-from gscraper.base.types import TabularData, Account, PostData, from_literal
+from gscraper.base.types import TabularData, PostData, from_literal
 
 from gscraper.utils.cast import cast_list, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
@@ -35,6 +35,8 @@ import json
 import re
 import pandas as pd
 
+
+Account = Union[Dict[str,str], str]
 
 ENV_PATH = "env/"
 GCLOUD_ACCOUNT = ENV_PATH+"gcloud.json"
