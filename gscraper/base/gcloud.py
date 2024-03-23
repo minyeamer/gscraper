@@ -8,7 +8,7 @@ from gscraper.base.types import TabularData, Account, PostData, from_literal
 from gscraper.utils.cast import cast_list, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records
+from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_excel
 from gscraper.utils.map import cloc, to_dataframe, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account
@@ -44,6 +44,8 @@ NAME = "name"
 KEY, SHEET, FIELDS = "key", "sheet", "fields"
 TABLE, QUERY, PID = "table", "query", "project_id"
 MODE, DATA = "mode", "data"
+
+FILEPATH, SHEETNAME = "file_path", "sheet_name"
 
 FROM_GS, TO_GBQ = ["from_key", "from_sheet"], ["to_table", "to_pid"]
 FROM_GBQ, TO_GS = ["from_query", "from_pid"], ["to_key", "to_sheet"]
@@ -190,7 +192,7 @@ class GspreadReadContext(OptionalDict):
         super().__init__(key=key, sheet=sheet,
             optional=dict(
                 fields=fields, default=default, if_null=if_null, head=head, headers=headers,
-                str_cols=str_cols, to=to, return_type=return_type, rename=rename, size=size, name=name, **kwargs),
+                str_cols=str_cols, return_type=return_type, rename=rename, to=to, size=size, name=name, **kwargs),
             null_if=dict(if_null="pass", head=1, to="name", return_type="dataframe", name=str()))
 
 
@@ -230,11 +232,40 @@ class BigQueryContext(BigQueryReadContext):
             null_if=dict(axis=0, dropna=True, strict=True, unique=False, as_records=False, as_frame=False))
 
 
-GoogleReadContext = Union[GspreadReadContext, BigQueryReadContext]
-GoogleQueryContext = Union[GspreadQueryContext, BigQueryContext]
+class ExcelReadContext(OptionalDict):
+    def __init__(self, file_path: str, sheet_name: Union[str,int]=0, fields: Optional[IndexLabel]=None,
+                default: Optional[Any]=None, if_null: Literal["drop","pass"]="pass",
+                str_cols: Optional[NumericiseIgnore]=None, return_type: Optional[TypeHint]="dataframe",
+                rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
+                file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **kwargs):
+        super().__init__(file_path=file_path, sheet_name=sheet_name,
+            optional=dict(
+                fields=fields, default=default, if_null=if_null, str_cols=str_cols, return_type=return_type,
+                rename=rename, to=to, file_pattern=file_pattern, reverse=reverse, size=size, name=name, **kwargs),
+            null_if=dict(if_null="pass", return_type="dataframe", to="name", file_pattern=False, reverse=False, name=str()))
+
+
+class ExcelQueryContext(ExcelReadContext):
+    def __init__(self, file_path: str, sheet_name: Union[str,int]=0, fields: Optional[IndexLabel]=None,
+                default: Optional[Any]=None, if_null: Literal["drop","pass"]="pass", axis=0,
+                dropna=True, strict=True, unique=False, str_cols: Optional[NumericiseIgnore]=None,
+                arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
+                rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
+                file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **kwargs):
+        return_type = "records" if as_records else "dataframe"
+        super().__init__(
+            file_path, sheet_name, fields, default, if_null, str_cols, return_type, rename, to, file_pattern, reverse, size, name)
+        self.update_notna(
+                axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+                as_records=as_records, as_frame=as_frame, **kwargs,
+            null_if=dict(axis=0, dropna=True, strict=True, unique=False, as_records=False, as_frame=False))
+
+
+GoogleReadContext = Union[GspreadReadContext, BigQueryReadContext, ExcelReadContext]
+GoogleQueryContext = Union[GspreadQueryContext, BigQueryContext, ExcelQueryContext]
 
 class GoogleQueryList(TypedRecords):
-    dtype = (GspreadQueryContext, BigQueryContext)
+    dtype = (GspreadQueryContext, BigQueryContext, ExcelQueryContext)
     typeCheck = True
 
     def __init__(self, *args: GoogleQueryContext):
@@ -245,6 +276,7 @@ class GoogleQueryList(TypedRecords):
         elif isinstance(__object, Dict):
             if len(kloc(__object, [KEY, SHEET], if_null="drop")) == 2: return GspreadQueryContext(**__object)
             elif len(kloc(__object, [QUERY, PID], if_null="drop")) == 2: return BigQueryContext(**__object)
+            elif FILEPATH in __object: return ExcelQueryContext(**__object)
             else: self.raise_dtype_error(__object, "QueryContext")
         else: self.raise_dtype_error(__object, dict.__name__)
 
@@ -274,12 +306,27 @@ class GoogleQueryReader(BaseSession):
         self.logger.info(log_table(data, name=name, query=query, project_id=project_id, dump=self.logJson))
         return data
 
+    def read_excel(self, file_path: str, sheet_name: Union[str,int]=0,
+                    fields: IndexLabel=list(), default=None, if_null: Literal["drop","pass"]="pass",
+                    str_cols: NumericiseIgnore=list(), return_type: Literal["records","dataframe"]="dataframe",
+                    rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
+                    file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **context) -> TabularData:
+        rename_map = rename if rename else self.get_rename_map(to=to, query=True)
+        kwargs = dict(str_cols=str_cols, return_type=return_type, rename=rename_map, file_pattern=file_pattern, reverse=reverse)
+        data = read_excel(file_path, sheet_name, fields, default, if_null, **kwargs)
+        if isinstance(size, int): data = data[:size]
+        self.checkpoint(READ(name), where="read_excel", msg={FILEPATH:file_path, SHEETNAME:sheet_name, DATA:data}, save=data)
+        self.logger.info(log_table(data, name=name, file_path=file_path, sheet_name=sheet_name, dump=self.logJson))
+        return data
+
     def set_query(self, queryList: GoogleQueryList=list(), account: Account=dict()):
         for queryContext in GoogleQueryList(*queryList):
             if isinstance(queryContext, GspreadQueryContext):
                 data = self.read_gspread(**queryContext, account=account)
             elif isinstance(queryContext, BigQueryContext):
                 data = self.read_gbq(**queryContext, account=account)
+            elif isinstance(queryContext, ExcelQueryContext):
+                data = self.read_excel(**queryContext, account=account)
             else: continue
             self.update(self.map_query_data(data, **queryContext), inplace=True)
 

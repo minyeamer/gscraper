@@ -9,8 +9,8 @@ from gscraper.base.types import is_comparable, is_kwargs_allowed
 from gscraper.utils import isna, notna, empty, exists
 from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
 
-from typing import Any, Callable, Dict, List, Set
-from typing import Iterable, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Set
+from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Type, Union
 from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from pandas.core.indexes.base import Index as PandasIndex
@@ -19,6 +19,7 @@ import pandas as pd
 from collections import defaultdict
 from itertools import chain
 import functools
+import os
 import random as rand
 import re
 
@@ -29,6 +30,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 INVALID_ISIN_MSG = "Isin function requires at least one parameter: exact, include, and exclude."
 SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
 LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are mismatched: [{left}, {right}]"
+FILE_PATTERN_MISMATCH_MSG = "No files matching the filename pattern exist."
 
 
 def arg_or(*args: bool) -> bool:
@@ -1348,3 +1350,42 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
     if not isinstance(trunc, int): return df
     __round = lambda x: round(x,trunc) if isinstance(x,float) else x
     return apply_df(df, **{__column: __round for __column in cast_tuple(columns)})
+
+
+###################################################################
+############################## Excel ##############################
+###################################################################
+
+def read_excel(file_path: str, sheet_name: Optional[Union[str,int,List]]=0, columns: Optional[IndexLabel]=list(),
+                default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
+                str_cols: Union[bool,Sequence[Union[str,int]]]=list(), return_type: Optional[TypeHint]="dataframe",
+                rename: RenameMap=dict(), file_pattern=False, reverse=False) -> Union[Data,Dict[str,Data]]:
+    file_path = get_file_path(file_path, file_pattern, reverse)
+    data = pd.read_excel(file_path, sheet_name=sheet_name, dtype=get_str_dtype(str_cols))
+    args = (columns, default, if_null, reorder, return_type, rename)
+    if isinstance(data, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in data.items()}
+    else: return _to_data(data, *args)
+
+
+def get_file_path(file_path: str, file_pattern=False, reverse=False) -> str:
+    if not file_pattern: return file_path
+    dir_name, file_name = os.path.split(file_path)
+    for file in sorted(os.listdir(dir_name if dir_name else None), reverse=reverse):
+        if re.search(file_name, file): return os.path.join(dir_name, file)
+    raise ValueError(FILE_PATTERN_MISMATCH_MSG)
+
+
+def get_str_dtype(str_cols: Union[bool,Sequence[Union[str,int]]]=list()) -> Union[Type,Dict[Union[str,int],Type]]:
+    if not str_cols: return None
+    elif isinstance(str_cols, bool): return str
+    elif isinstance(str_cols, Sequence): return {col:str for col in str_cols}
+    elif isinstance(str_cols, Dict): return str_cols
+    else: return None
+
+
+def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
+                default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
+                return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict()) -> Data:
+    data = convert_data(df, return_type)
+    data = rename_data(data, rename)
+    return filter_data(data, columns, default=default, if_null=if_null, reorder=reorder)
