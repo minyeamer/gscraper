@@ -1520,7 +1520,7 @@ class EncryptedSession(RequestSession):
         self.set_secret(encryptedKey, decryptedKey)
 
     def set_secret(self, encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None):
-        if self.cookies or ((encryptedKey is None) and (decryptedKey is None)): return
+        if (encryptedKey is None) and (decryptedKey is None): return
         elif isinstance(decryptedKey, Dict): pass
         elif isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
             try: decryptedKey = json.loads((decryptedKey if decryptedKey else decrypt(encryptedKey)).replace('\'','\"'))
