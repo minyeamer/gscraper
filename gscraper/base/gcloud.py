@@ -245,7 +245,7 @@ class GoogleQueryList(TypedRecords):
         elif isinstance(__object, Dict):
             if len(kloc(__object, [KEY, SHEET], if_null="drop")) == 2: return GspreadQueryContext(**__object)
             elif len(kloc(__object, [QUERY, PID], if_null="drop")) == 2: return BigQueryContext(**__object)
-            else: self.raise_dtype_error(__object, "UploadContext")
+            else: self.raise_dtype_error(__object, "QueryContext")
         else: self.raise_dtype_error(__object, dict.__name__)
 
 
