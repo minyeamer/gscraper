@@ -94,8 +94,8 @@ SUCCESS_RESULT = [{"response": "completed"}]
 
 INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 
-GATHER_MSG = lambda which, where=str(), by=str(): \
-    f"Collecting {which}{(' '+by) if by else str()}{(' from '+where) if where else str()}"
+GATHER_MSG = lambda action, which, by=str(), where=str(): \
+    f"{action} {which}{(' '+by) if by else str()}{(' from '+where) if where else str()}"
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
@@ -106,7 +106,7 @@ INVALID_API_INFO_MSG = lambda where=str(): f"{re.sub(' API$','',where)} API info
 
 DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
 
-WHERE, WHICH = "urls", "data"
+ACTION, WHERE, WHICH = "Collecting", "urls", "data"
 FIRST_PAGE, NEXT_PAGE = "of first page", "of next pages"
 
 AUTH_KEY = "Auth Key"
@@ -507,6 +507,7 @@ class Spider(RequestSession, Iterator, Parser):
     host = str()
     where = WHERE
     which = WHICH
+    verb = ACTION
     by = str()
     fields = list()
     ranges = list()
@@ -679,11 +680,12 @@ class Spider(RequestSession, Iterator, Parser):
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
-    def get_gather_message(self, which=str(), where=str(), by=str(), **context) -> str:
+    def get_gather_message(self, where=str(), which=str(), verb=str(), by=str(), **context) -> str:
+        action = verb if verb else self.verb
         which = which if which else self.which
-        where = where if where else self.where
         by = by if by else self.by
-        return GATHER_MSG(which, where, by)
+        where = where if where else self.where
+        return GATHER_MSG(action, which, by, where)
 
     @RequestSession.arrange_data
     @RequestSession.validate_range
@@ -1073,6 +1075,7 @@ class AsyncSpider(Spider, AsyncSession):
     host = str()
     where = WHERE
     which = WHICH
+    verb = ACTION
     by = str()
     fields = list()
     ranges = list()
@@ -1630,6 +1633,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     host = str()
     where = WHERE
     which = WHICH
+    verb = ACTION
     by = str()
     fields = list()
     ranges = list()
@@ -1772,6 +1776,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     host = str()
     where = WHERE
     which = WHICH
+    verb = ACTION
     by = str()
     fields = list()
     ranges = list()

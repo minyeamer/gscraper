@@ -54,7 +54,7 @@ UNIQUE_CONTEXT = lambda derivFields=None, dags=None, **context: \
     ENCRYPTED_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 
-PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, \
+PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, verb=None, \
                         how=None, default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
                         depth=None, hier=None, to=None, countPath=None, hasSize=None, **context: context
 
@@ -439,6 +439,7 @@ TASK_QUERY = lambda: Query(
 GATHER_QUERY = lambda: Query(
     Variable(name="where", type="STRING", iterable=False, default=str()),
     Variable(name="which", type="STRING", iterable=False, default=str()),
+    Variable(name="verb", type="STRING", iterable=False, default=str()),
     Variable(name="by", type="STRING", iterable=False, default=str()),
     Variable(name="message", type="STRING", iterable=False, default=str()),
 )
