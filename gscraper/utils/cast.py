@@ -185,8 +185,8 @@ def cast_str(__object, default=str(), strict=True, strip=False,
     else: return default
 
 
-def cast_id(__object, default=str()) -> str:
-    return cast_str(cast_int(__object, default=__object), default, match=r"^((?!nan).)*$")
+def cast_id(__object, default=None) -> str:
+    return cast_str(cast_int(__object, default=None), default)
 
 
 def cast_list(__object, strict=True, iter_type: _TYPE=(List,Set,Tuple)) -> List:
