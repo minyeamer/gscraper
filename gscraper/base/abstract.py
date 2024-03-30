@@ -427,7 +427,7 @@ SESSION_QUERY = lambda: Query(
 
 ITERATOR_QUERY = lambda: Query(
     Variable(name="iterateUnit", type="INTEGER", iterable=False, default=None),
-    Variable(name="interval", type="STRING", iterable=False, default=str()),
+    Variable(name="interval", type="STRING", iterable=False, default=None),
 )
 
 TASK_QUERY = lambda: Query(

@@ -783,13 +783,13 @@ class Iterator(CustomDict):
     pageLimit = 0
     interval = str()
 
-    def __init__(self, iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=str()):
+    def __init__(self, iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None):
         self.set_iterator_unit(iterateUnit, interval)
         super().__init__()
 
-    def set_iterator_unit(self, iterateUnit: Optional[int]=None, interval: Timedelta=str()):
+    def set_iterator_unit(self, iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None):
         self.iterateUnit = iterateUnit if isinstance(iterateUnit, int) else self.iterateUnit
-        self.interval = interval if interval else self.interval
+        self.interval = interval if interval is not None else self.interval
 
     ###################################################################
     ########################### Set Iterator ##########################
