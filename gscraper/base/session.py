@@ -597,9 +597,10 @@ class BaseSession(CustomDict):
         if self.interrupt and self._isin_log_list(point, self.interrupt):
             raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
 
-    def save_data(self, data: Data, prefix=str(), ext: Optional[TypeHint]=None):
+    def save_data(self, data: Data, prefix=str(), suffix="now", ext: Optional[TypeHint]=None):
         prefix = prefix if prefix else self.operation
-        file_name = prefix+'_'+self.now("%Y%m%d%H%M%S")
+        suffix = self.now("%Y%m%d%H%M%S") if suffix == "now" else suffix
+        file_name = '_'.join(filter(None, [prefix, suffix]))
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
             self.save_dataframe(data, file_name+".xlsx")
