@@ -97,6 +97,15 @@ SUFFIX = lambda context, field=dict(), name=str(): \
 TZINFO = None
 START, END = 0, 1
 
+class UserInterrupt(Exception):
+    ...
+
+class ForbiddenError(ValueError):
+    ...
+
+class ParseError(ValueError):
+    ...
+
 
 ###################################################################
 ############################# Messages ############################
@@ -463,6 +472,8 @@ class BaseSession(CustomDict):
     datetimeUnit = "second"
     numRetries = 0
     delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     errors = list()
     info = Info()
 
@@ -595,7 +606,7 @@ class BaseSession(CustomDict):
             self._validate_dir(CHECKPOINT_PATH)
             self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
         if self.interrupt and self._isin_log_list(point, self.interrupt):
-            raise KeyboardInterrupt(USER_INTERRUPT_MSG(where))
+            raise UserInterrupt(USER_INTERRUPT_MSG(where))
 
     def save_data(self, data: Data, prefix=str(), suffix="now", ext: Optional[TypeHint]=None):
         prefix = prefix if prefix else self.operation
@@ -682,13 +693,13 @@ class BaseSession(CustomDict):
     def catch_exception(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, *args, **context):
-            for retry in range(self.numRetries+1):
+            for count in reversed(range(self.numRetries+1)):
                 try: return func(self, *args, **context)
-                except KeyboardInterrupt as interrupt:
-                    raise interrupt
                 except Exception as exception:
-                    if retry+1 < self.numRetries: self.sleep()
-                    else: return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                    if self.is_interrupt(exception): raise exception
+                    elif self.is_error(exception) or (count == 0):
+                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                    else: self.sleep()
         return wrapper
 
     def ignore_exception(func):
@@ -697,6 +708,12 @@ class BaseSession(CustomDict):
             try: return func(self, *args, **context)
             except: return init_origin(func)
         return wrapper
+
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, UserInterrupt) or isinstance(exception, self.interruptType)
+
+    def is_error(self, exception: Exception) -> bool:
+        return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
 
     def pass_exception(self, exception: Exception, func: Callable, msg: Dict) -> Any:
         self.log_errors(func=func, msg=msg)
@@ -1214,7 +1231,7 @@ class Mapper(BaseSession):
 
     def _set_value(self, __base: Data, __value: _VT, field: Field, **context) -> Data:
         if (__value is __MISMATCH__) or ((field[MODE] in (OPTIONAL,REQUIRED)) and isna_plus(__value)):
-            if field[MODE] == REQUIRED: raise ValueError(REQUIRED_MSG(context, field))
+            if field[MODE] == REQUIRED: raise ParseError(REQUIRED_MSG(context, field))
             else: return __base
         __base[field[NAME]] = __value
         return __base
@@ -1261,7 +1278,7 @@ class Mapper(BaseSession):
         elif func == __MAP__:
             field = dict(type=field[TYPE], name=name)
             return self.__map__(__object, **dict(field, **kwargs), context=context)
-        else: raise ValueError(INVALID_APPLY_SPECIAL_MSG(func, context, field, name))
+        else: raise ForbiddenError(INVALID_APPLY_SPECIAL_MSG(func, context, field, name))
 
     def __cast__(self, __object, type: TypeHint, default=None, strict=True,
                 context: Context=dict(), **kwargs) -> _VT:

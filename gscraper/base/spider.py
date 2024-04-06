@@ -3,7 +3,9 @@ from gscraper.base.abstract import CustomDict, OptionalDict, TypedRecords, Query
 from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
-from gscraper.base.session import BaseSession, Iterator, Parser, Info, Schema, Field, Flow, Process
+from gscraper.base.session import BaseSession, Iterator, Parser
+from gscraper.base.session import UserInterrupt, ForbiddenError, ParseError
+from gscraper.base.session import Info, Schema, Field, Flow, Process
 from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryList, GoogleUploadList
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
@@ -86,6 +88,21 @@ NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName
 FIELDS, ALLOWED, PARAMS, DERIV, CONTEXT = "fields", "allowedFields", "params", "derivData", "context"
 
 SUCCESS_RESULT = [{"response": "completed"}]
+
+class RequestInterrupt(requests.ConnectionError):
+    ...
+
+class AuthenticationError(ValueError):
+    ...
+
+class ParameterError(ValueError):
+    ...
+
+SPIDER_INTERRUPT = (UserInterrupt, RequestInterrupt, ParameterError)
+SPIDER_ERROR = (ForbiddenError, ParseError)
+
+ENCRYPTED_SESSION_INTERRUPT = (UserInterrupt, AuthenticationError, ParameterError)
+ENCRYPTED_SPIDER_INTERRUPT = (UserInterrupt, RequestInterrupt, AuthenticationError, ParameterError)
 
 
 ###################################################################
@@ -579,6 +596,12 @@ class Spider(RequestSession, Iterator, Parser):
     ############################# Override ############################
     ###################################################################
 
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
+
+    def is_error(self, exception: Exception) -> bool:
+        return isinstance(exception, SPIDER_ERROR) or isinstance(exception, self.errorType)
+
     def log_errors(self, func: Callable, msg: Dict):
         iterator = self.get_iterator(**msg.get("context", dict()))
         super().log_errors(func=func, msg=(iterator if iterator else msg))
@@ -863,7 +886,7 @@ class Spider(RequestSession, Iterator, Parser):
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status_code
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
-            if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            if how == "interrupt": raise RequestInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise requests.ConnectionError(INVALID_STATUS_MSG(self.where))
 
     def log_results(self, data: Data, **context):
@@ -1028,13 +1051,13 @@ class AsyncSession(RequestSession):
     def catch_exception(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, **context):
-            for retry in range(self.numRetries+1):
+            for count in reversed(range(self.numRetries+1)):
                 try: return await func(self, *args, **context)
-                except KeyboardInterrupt as interrupt:
-                    raise interrupt
                 except Exception as exception:
-                    if retry+1 < self.numRetries: await self.async_sleep()
-                    return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                    if isinstance(exception, self.interruptType): raise exception
+                    elif isinstance(exception, self.errorType) or (count == 0):
+                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                    else: await self.async_sleep()
         return wrapper
 
     def ignore_exception(func):
@@ -1304,7 +1327,7 @@ class AsyncSpider(Spider, AsyncSession):
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
         status = response.status
         if (valid and (status not in cast_tuple(valid))) or (invalid and (status in cast_tuple(invalid))):
-            if how == "interrupt": raise KeyboardInterrupt(INVALID_STATUS_MSG(self.where))
+            if how == "interrupt": raise RequestInterrupt(INVALID_STATUS_MSG(self.where))
             else: raise aiohttp.ServerConnectionError(INVALID_STATUS_MSG(self.where))
 
     ###################################################################
@@ -1527,10 +1550,13 @@ class EncryptedSession(RequestSession):
         elif isinstance(decryptedKey, Dict): pass
         elif isinstance(encryptedKey, str) or isinstance(decryptedKey, str):
             try: decryptedKey = json.loads((decryptedKey if decryptedKey else decrypt(encryptedKey)).replace('\'','\"'))
-            except JSONDecodeError: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+            except JSONDecodeError: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
         decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
         if decryptedKey:
             self.update(encryptedKey=encrypt(decryptedKey,1), decryptedKey=decryptedKey)
+
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SESSION_INTERRUPT) or isinstance(exception, self.interruptType)
 
     ###################################################################
     ########################## Login Managers #########################
@@ -1569,7 +1595,7 @@ class EncryptedSession(RequestSession):
         if not self.authKey: return dict()
         auth_info = self._from_auth_key(**context)
         if not (auth_info and isinstance(auth_info, Dict) and all(auth_info.values())):
-            raise ValueError(INVALID_USER_INFO_MSG(self.where))
+            raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
         self.logger.info(log_encrypt(**auth_info, show=3))
         return dict(context, **auth_info) if update else auth_info
 
@@ -1577,11 +1603,11 @@ class EncryptedSession(RequestSession):
         auth_info = self.decryptedKey if self.decryptedKey else context
         if isinstance(self.authKey, Sequence): return kloc(auth_info, self.authKey, if_null="pass")
         elif isinstance(self.authKey, Callable): return self.authKey(**auth_info)
-        else: raise ValueError(INVALID_OBJECT_TYPE_MSG(self.authKey, AUTH_KEY))
+        else: raise AuthenticationError(INVALID_OBJECT_TYPE_MSG(self.authKey, AUTH_KEY))
 
     def validate_account(self, auth: LoginSpider, sessionCookies=False, **context) -> Context:
         try: self.login(auth, **context)
-        except: raise ValueError(INVALID_USER_INFO_MSG(self.where))
+        except: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
         if isinstance(auth, LoginCookie) or not (sessionCookies and self.sessionCookies):
             context["cookies"] = self.cookies
         return context
@@ -1675,6 +1701,9 @@ class EncryptedSpider(Spider, EncryptedSession):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
 
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
+
 
 ###################################################################
 ##################### Encrypted Async Session #####################
@@ -1703,6 +1732,9 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
+
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SESSION_INTERRUPT) or isinstance(exception, self.interruptType)
 
     ###################################################################
     ########################## Login Managers #########################
@@ -1819,6 +1851,9 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
+
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
 
 
 ###################################################################
