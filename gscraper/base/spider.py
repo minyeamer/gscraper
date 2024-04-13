@@ -1,12 +1,12 @@
 from __future__ import annotations
 from gscraper.base.abstract import CustomDict, OptionalDict, TypedRecords, Query, INVALID_OBJECT_TYPE_MSG
-from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT, RESPONSE_CONTEXT
+from gscraper.base.abstract import UNIQUE_CONTEXT, TASK_CONTEXT, REQUEST_CONTEXT
 from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONTEXT
 
 from gscraper.base.session import BaseSession, Iterator, Parser
 from gscraper.base.session import UserInterrupt, ForbiddenError, ParseError
 from gscraper.base.session import Info, Schema, Field, Flow, Process
-from gscraper.base.session import ITER_INDEX, ITER_SUFFIX, ITER_MSG, PAGE_ITERATOR
+from gscraper.base.session import ITER_INDEX, ITER_TEXT, ITER_MSG, PAGE_ITERATOR
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryList, GoogleUploadList
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
@@ -20,9 +20,9 @@ from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_f
 from gscraper.utils.date import get_date_pair, get_datetime_pair
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
-from gscraper.utils.map import kloc, exists_dict, drop_dict, split_dict
+from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
-from gscraper.utils.map import exists_one, unique, chain_exists, between_data, re_get
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, join, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
@@ -115,6 +115,7 @@ INVALID_VALUE_MSG = lambda name, value: f"'{value}' value is not valid {name}."
 GATHER_MSG = lambda action, which, by=str(), where=str(): \
     f"{action} {which}{(' '+by) if by else str()}{(' from '+where) if where else str()}"
 INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
+MISSING_CLIENT_SESSION_MSG = "Async client session does not exist."
 
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
 INVALID_REDIRECT_RESPONSE_MSG = "Please verify the redirect response."
@@ -682,15 +683,6 @@ class Spider(RequestSession, Iterator, Parser):
         context = self.from_locals(locals, drop, **context)
         return self.local_args(**context), self.local_context(**context)
 
-    def local_request(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
-        context = self.from_locals(locals, drop, **context)
-        keys = unique(ITER_INDEX, *self.get_iterator(keys_only=True), *inspect.getfullargspec(REQUEST_CONTEXT)[0])
-        return kloc(context, keys, if_null="drop")
-
-    def local_response(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
-        context = self.from_locals(locals, drop, **context)
-        return RESPONSE_CONTEXT(**REQUEST_CONTEXT(**context))
-
     ###################################################################
     ####################### Parameter Validator #######################
     ###################################################################
@@ -830,98 +822,113 @@ class Spider(RequestSession, Iterator, Parser):
     def fetch(self, *args, **context) -> Data:
         ...
 
-    def encode_messages(func):
+    def validate_request(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, method: str, url: str, session: Optional[requests.Session]=None,
-                    messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, **context):
-            session = session if session is not None else requests
-            url, params = self.encode_params(url, params, encode=encode)
-            if headers and cookies: headers["Cookie"] = str(cookies)
-            messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
-            self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
-            response = func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response)
+        def wrapper(self: Spider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
+            context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
+            self.checkpoint(ITER_TEXT("request",context), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            response = func(self, **self._validate_session(context))
+            self.checkpoint(ITER_TEXT("response",context), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
-    @encode_messages
-    def request(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                valid: Optional[Status]=None, invalid: Optional[Status]=None, close=True, **context) -> requests.Response:
+    def _encode_messages(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, **context) -> Context:
+        url, params = self.encode_params(url, params, encode=encode)
+        if headers and cookies: headers["Cookie"] = str(cookies)
+        messages = messages if messages else notna_dict(params=params, data=data, json=json, headers=headers)
+        self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
+        return dict(context, method=method, url=url, messages=messages)
+
+    def _validate_session(self, context: Context) -> Context:
+        if not (("session" in context) and isinstance(context["session"], requests.Session)):
+            context["session"] = requests
+        return context
+
+    @validate_request
+    def request(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                close=True, **context) -> requests.Response:
         response = session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl)
         self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
         if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
 
-    @encode_messages
-    def request_status(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
+    @validate_request
+    def request_status(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                        session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                        exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                        **context) -> int:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status_code
 
-    @encode_messages
-    def request_content(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
+    @validate_request
+    def request_content(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                        session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                        exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                        **context) -> bytes:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.content
 
-    @encode_messages
-    def request_text(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                    valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> str:
+    @validate_request
+    def request_text(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                    data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                    session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                    exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                    **context) -> str:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.text
 
-    @encode_messages
-    def request_json(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                    valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> JsonData:
+    @validate_request
+    def request_json(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                    data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                    session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                    exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                    **context) -> JsonData:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.json()
 
-    @encode_messages
-    def request_headers(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                        valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
+    @validate_request
+    def request_headers(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                        session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                        exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                        **context) -> Dict:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
 
-    @encode_messages
-    def request_source(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                        params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                        allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                        valid: Optional[Status]=None, invalid: Optional[Status]=None, features="html.parser", **context) -> Tag:
+    @validate_request
+    def request_source(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                        session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                        exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                        features="html.parser", **context) -> Tag:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(response.text, features)
 
-    @encode_messages
-    def request_table(self, method: str, url: str, session: requests.Session, messages: Dict=dict(),
-                    params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                    allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                    valid: Optional[Status]=None, invalid: Optional[Status]=None, html=True, table_header=0, table_idx=0,
-                    engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+    @validate_request
+    def request_table(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                    data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                    session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
+                    exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                    html=True, table_header=0, table_idx=0, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None,
+                    **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
@@ -1277,98 +1284,104 @@ class AsyncSpider(Spider, AsyncSession):
     async def fetch(self, *args, **context) -> Data:
         ...
 
-    def encode_messages(func):
+    def validate_request(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSpider, method: str, url: str, session: Optional[aiohttp.ClientSession]=None,
-                        messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                        data=None, json=None, headers=None, cookies=str(), *args, **context):
-            session = session if session is not None else aiohttp
-            url, params = self.encode_params(url, params, encode=encode)
-            if headers and cookies: headers["Cookie"] = str(cookies)
-            messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint("request"+ITER_SUFFIX(context), where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
-            self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
-            response = await func(self, method=method, url=url, session=session, messages=messages, **context)
-            self.checkpoint("response"+ITER_SUFFIX(context), where=func.__name__, msg={"response":response}, save=response)
+        async def wrapper(self: AsyncSpider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
+            context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
+            self.checkpoint(ITER_TEXT("request",context), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            response = await func(self, **self._validate_session(context))
+            self.checkpoint(ITER_TEXT("response",context), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
-    @encode_messages
-    async def request(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context):
+    def _validate_session(self, context: Context) -> Context:
+        if not (("session" in context) and isinstance(context["session"], aiohttp.ClientSession)):
+            raise RequestInterrupt(MISSING_CLIENT_SESSION_MSG)
+        return context
+
+    @validate_request
+    async def request(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                        data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                        session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                        exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                        **context):
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
 
-    @encode_messages
-    async def request_status(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> int:
+    @validate_request
+    async def request_status(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            **context) -> int:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status
 
-    @encode_messages
-    async def request_content(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt", 
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> bytes:
+    @validate_request
+    async def request_content(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt",  valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            **context) -> bytes:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.read()
 
-    @encode_messages
-    async def request_text(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> str:
+    @validate_request
+    async def request_text(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            encoding=None, **context) -> str:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.text(encoding=encoding)
 
-    @encode_messages
-    async def request_json(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None, **context) -> JsonData:
+    @validate_request
+    async def request_json(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            encoding=None, **context) -> JsonData:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.json(encoding=encoding, content_type=None)
 
-    @encode_messages
-    async def request_headers(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, **context) -> Dict:
+    @validate_request
+    async def request_headers(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            **context) -> Dict:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
 
-    @encode_messages
-    async def request_source(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, encoding=None,
-                            features="html.parser", **context) -> Tag:
+    @validate_request
+    async def request_source(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            encoding=None, features="html.parser", **context) -> Tag:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(await response.text(encoding=encoding), features)
 
-    @encode_messages
-    async def request_table(self, method: str, url: str, session: aiohttp.ClientSession, messages: Dict=dict(),
-                            params=None, encode: Optional[bool]=None, data=None, json=None, headers=None, cookies=str(),
-                            allow_redirects=True, validate=False, exception: Literal["error","interrupt"]="interrupt",
-                            valid: Optional[Status]=None, invalid: Optional[Status]=None, html=False, table_header=0, table_idx=0,
-                            engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None, **context) -> pd.DataFrame:
+    @validate_request
+    async def request_table(self, method: str, url: str, messages: Dict=dict(), params=None, encode: Optional[bool]=None,
+                            data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
+                            session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
+                            exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
+                            html=False, table_header=0, table_idx=0, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None,
+                            **context) -> pd.DataFrame:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
@@ -1416,7 +1429,7 @@ class AsyncSpider(Spider, AsyncSession):
     async def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
                             account: Account=dict(), cookies=str(), **context) -> Records:
         data = self._get_redirect_data(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
-        response = await self.request_json(POST, url=redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
+        response = await self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
 
     async def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None, message=str(), progress=True,
@@ -1471,90 +1484,86 @@ class LoginSpider(requests.Session, Spider):
     ########################## Fetch Request ##########################
     ###################################################################
 
-    def encode_messages(func):
+    def validate_request(func):
         @functools.wraps(func)
-        def wrapper(self: LoginSpider, method: str, url: str, origin: str,
-                    messages: Dict=dict(), params=None, encode: Optional[bool]=None,
-                    data=None, json=None, headers=None, cookies=str(), *args, **context):
-            url, params = self.encode_params(url, params, encode=encode)
-            if headers and cookies: headers["Cookie"] = str(cookies)
-            messages = messages if messages else dict(params=params, data=data, json=json, headers=headers)
-            self.checkpoint(origin+"_request", where=func.__name__, msg=dict(url=url, **exists_dict(messages)))
-            self.logger.debug(log_messages(**messages, dump=self.logJson))
-            response = func(self, method=method, url=url, origin=origin, messages=messages, **context)
-            self.checkpoint(origin+"_response", where=func.__name__, msg={"response":response}, save=response)
+        def wrapper(self: Spider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
+            context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
+            origin = context.get("origin")
+            self.checkpoint(join(origin,"request",sep='_'), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            response = func(self, **context)
+            self.checkpoint(join(origin,"response",sep='_'), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
-    @encode_messages
-    def request_url(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_url(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, **context):
+                    headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context):
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
 
-    @encode_messages
-    def request_status(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_status(self, method: str, url: str, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
-                        headers=None, cookies=str(), allow_redirects=True, **context) -> int:
+                        headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> int:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.status_code
 
-    @encode_messages
-    def request_content(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_content(self, method: str, url: str, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
-                        headers=None, cookies=str(), allow_redirects=True, **context) -> bytes:
+                        headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> bytes:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.content
 
-    @encode_messages
-    def request_text(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_text(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, **context) -> str:
+                    headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> str:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return response.text
 
-    @encode_messages
-    def request_json(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_json(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, **context) -> JsonData:
+                    headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> JsonData:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.json()
 
-    @encode_messages
-    def request_headers(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_headers(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, **context) -> Dict:
+                    headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> Dict:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
             return response.headers
 
-    @encode_messages
-    def request_source(self, method: str, url: str, origin: str, messages: Dict=dict(),
+    @validate_request
+    def request_source(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
-                    headers=None, cookies=str(), allow_redirects=True, features="html.parser", **context) -> Tag:
+                    headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, features="html.parser", **context) -> Tag:
         with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return BeautifulSoup(response.text, features)
 
-    def log_response_text(self, response: requests.Response, origin: str):
-        self.checkpoint(origin+"_text", where=origin, msg={"response":response.text}, save=response)
+    def log_response_text(self, response: requests.Response, origin=str()):
+        self.checkpoint(join(origin,"text",sep='_'), where=origin, msg={"response":response.text}, save=response)
 
 
 class LoginCookie(LoginSpider):

@@ -1163,6 +1163,10 @@ def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True) -> Data:
 ############################## String #############################
 ###################################################################
 
+def join(*args: str, sep=',') -> str:
+    return sep.join(list(filter(None, args)))
+
+
 def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:
     __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
     if not isinstance(index, int): return __pattern.findall(string)

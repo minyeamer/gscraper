@@ -10,4 +10,4 @@ from .utils.date import *
 from .utils.logs import *
 from .utils.map import *
 
-__version__ = "3.6.8"
+__version__ = "3.6.9"

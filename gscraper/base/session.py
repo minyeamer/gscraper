@@ -1,6 +1,6 @@
 from __future__ import annotations
 from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, OptionalDict, Value, ValueSet, Query
-from gscraper.base.abstract import INVALID_INSTANCE_MSG
+from gscraper.base.abstract import REQUEST_CONTEXT, RESPONSE_CONTEXT, INVALID_INSTANCE_MSG
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
@@ -80,6 +80,7 @@ __MISMATCH__ = "__MISMATCH__"
 ITER_INDEX = "__index"
 ITER_SUFFIX = lambda context: f"_{context[ITER_INDEX]}" if ITER_INDEX in context else str()
 ITER_MSG = lambda context: {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in context else dict()
+ITER_TEXT = lambda text, context: f"{text}_{context[ITER_INDEX]}" if ITER_INDEX in context else text
 
 COUNT_INDEX = "__i"
 _NESTED_SUFFIX = lambda context: \
@@ -1562,14 +1563,15 @@ class Parser(SequenceMapper):
 
     def validate_response(func):
         @functools.wraps(func)
-        def wrapper(self: Parser, response: Any, *args, countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context):
+        def wrapper(self: Parser, response: Any, *args, locals: Dict=dict(), drop: _KT=list(), **context):
+            context = RESPONSE_CONTEXT(**REQUEST_CONTEXT(**self.from_locals(locals, drop, **context)))
             is_valid = self.is_valid_response(response)
-            if notna(countPath) and (ITER_INDEX in context):
-                self.iterateCount[context[ITER_INDEX]] = cast_int(get_value(response, countPath))
-            if notna(returnPath):
-                return get_value(response, returnPath)
+            if notna(context.get("countPath")) and (ITER_INDEX in context):
+                self.iterateCount[context[ITER_INDEX]] = cast_int(get_value(response, context["countPath"]))
+            if notna(context.get("returnPath")):
+                return get_value(response, context["returnPath"])
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
-            self.checkpoint(f"parse"+ITER_SUFFIX(context), where=func.__name__, msg={"data":data}, save=data)
+            self.checkpoint(ITER_TEXT("parse",context), where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **context)
             return data
         return wrapper
@@ -1581,5 +1583,6 @@ class Parser(SequenceMapper):
         self.logger.info(log_data(data, **context))
 
     @validate_response
-    def parse(self, response: Any, countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context) -> Data:
+    def parse(self, response: Any, *args, locals: Dict=dict(), drop: _KT=list(),
+            countPath: Optional[_KT]=None, returnPath: Optional[_KT]=None, **context) -> Data:
         return self.map(response, **context)

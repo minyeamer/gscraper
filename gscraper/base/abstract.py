@@ -66,7 +66,7 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         engine=None, **context: context
 
 
-RESPONSE_CONTEXT = lambda tzinfo=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, \
+RESPONSE_CONTEXT = lambda response=None, tzinfo=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, \
                         progress=None, message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
 
 
