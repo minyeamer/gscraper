@@ -13,7 +13,7 @@ from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gclou
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
 from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
-from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array, init_origin
+from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
@@ -34,6 +34,7 @@ import aiohttp
 import copy
 import functools
 import inspect
+import random
 import requests
 import time
 
@@ -322,6 +323,10 @@ class RequestSession(UploadSession):
     operation = "session"
     fields = list()
     ranges = list()
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = None
     mappedReturn = False
     info = Info()
@@ -345,7 +350,9 @@ class RequestSession(UploadSession):
         self.returnType = returnType if returnType else self.returnType
 
     def set_request_variables(self, numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None):
-        self.set_retries(numRetries, delay)
+        if isinstance(numRetries, int) and numRetries > 0:
+            self.numRetries = numRetries
+        self.delay = delay
         self.cookies = cookies
 
     ###################################################################
@@ -386,6 +393,46 @@ class RequestSession(UploadSession):
             self.sleep()
             return response
         return wrapper
+
+    ###################################################################
+    ########################### Log Managers ##########################
+    ###################################################################
+
+    def retry_request(func):
+        @functools.wraps(func)
+        def wrapper(self: RequestSession, *args, **context):
+            for count in reversed(range(self.numRetries+1)):
+                try: return func(self, *args, **context)
+                except Exception as exception:
+                    if self.is_interrupt(exception): raise exception
+                    elif self.is_error(exception) or (count == 0):
+                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                    else: self.sleep()
+        return wrapper
+
+    def is_interrupt(self, exception: Exception) -> bool:
+        return isinstance(exception, UserInterrupt) or isinstance(exception, self.interruptType)
+
+    def is_error(self, exception: Exception) -> bool:
+        return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
+
+    def sleep(self, delay: Optional[Range]=None):
+        delay = delay if delay is not None else self.get_delay(self.delay)
+        if delay: time.sleep(delay)
+
+    def get_delay(self, delay: Range) -> Union[float,int]:
+        if isinstance(delay, (float,int)): return delay
+        else: return self.get_random_delay(delay)
+
+    def get_random_delay(self, delay: Sequence) -> Union[float,int]:
+        if not (isinstance(delay, Sequence) and delay): return 0.
+        min_ts, max_ts = delay[0], (delay[1] if len(delay) > 1 else None)
+        is_float_ts = isinstance(min_ts, float) or isinstance(max_ts, float)
+        if is_float_ts:
+            min_ts = int(min_ts * 1000)
+            max_ts = int(max_ts * 1000) if isinstance(max_ts, (float,int)) else None
+        delay = random.randrange(min_ts, max_ts)
+        return delay/1000 if is_float_ts else delay
 
     ###################################################################
     ########################## Validate Data ##########################
@@ -476,7 +523,7 @@ class RequestSession(UploadSession):
     ############################ With Data ############################
     ###################################################################
 
-    def with_data(self, data: Data, uploadList: Optional[GoogleUploadList]=list(), func=str(), **context):
+    def with_data(self, data: Data, uploadList: GoogleUploadList=list(), func=str(), **context):
         self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
         self.save_result(data)
         self.upload_result(data, uploadList, **context)
@@ -541,6 +588,10 @@ class Spider(RequestSession, Iterator, Parser):
     interval = str()
     fromNow = None
     ssl = None
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     responseType = "records"
     returnType = "records"
     mappedReturn = False
@@ -557,7 +608,7 @@ class Spider(RequestSession, Iterator, Parser):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Optional[int]=None, interval: Timedelta=None, apiRedirect=False, redirectUnit: Optional[int]=None,
+                iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
@@ -774,7 +825,7 @@ class Spider(RequestSession, Iterator, Parser):
     ###################################################################
 
     @abstractmethod
-    @RequestSession.catch_exception
+    @RequestSession.retry_request
     @RequestSession.limit_request
     def fetch(self, *args, **context) -> Data:
         ...
@@ -922,7 +973,7 @@ class Spider(RequestSession, Iterator, Parser):
     def get_redirect_message(self, **context) -> str:
         return REDIRECT_MSG(self.operation)
 
-    @RequestSession.catch_exception
+    @RequestSession.retry_request
     @RequestSession.limit_request
     @gcloud_authorized
     def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
@@ -979,6 +1030,10 @@ class AsyncSession(RequestSession):
     fields = list()
     ranges = list()
     maxLimit = MAX_ASYNC_TASK_LIMIT
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = None
     mappedReturn = False
     info = Info()
@@ -1048,7 +1103,7 @@ class AsyncSession(RequestSession):
     ########################## Async Override #########################
     ###################################################################
 
-    def catch_exception(func):
+    def retry_request(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, **context):
             for count in reversed(range(self.numRetries+1)):
@@ -1058,13 +1113,6 @@ class AsyncSession(RequestSession):
                     elif isinstance(exception, self.errorType) or (count == 0):
                         return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
                     else: await self.async_sleep()
-        return wrapper
-
-    def ignore_exception(func):
-        @functools.wraps(func)
-        async def wrapper(self: AsyncSession, *args, **context):
-            try: return await func(self, *args, **context)
-            except: return init_origin(func)
         return wrapper
 
     def validate_data(func):
@@ -1117,6 +1165,10 @@ class AsyncSpider(Spider, AsyncSession):
     interval = str()
     fromNow = None
     ssl = None
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     responseType = "records"
     returnType = "records"
     mappedReturn = False
@@ -1133,7 +1185,7 @@ class AsyncSpider(Spider, AsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Optional[int]=None, interval: Timedelta=None, apiRedirect=False, redirectUnit: Optional[int]=None,
+                iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, datetimeUnit)
@@ -1220,7 +1272,7 @@ class AsyncSpider(Spider, AsyncSession):
     ###################################################################
 
     @abstractmethod
-    @AsyncSession.catch_exception
+    @AsyncSession.retry_request
     @AsyncSession.limit_request
     async def fetch(self, *args, **context) -> Data:
         ...
@@ -1358,7 +1410,7 @@ class AsyncSpider(Spider, AsyncSession):
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
-    @AsyncSession.catch_exception
+    @AsyncSession.retry_request
     @AsyncSession.limit_request
     @gcloud_authorized
     async def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
@@ -1527,6 +1579,10 @@ class EncryptedSession(RequestSession):
     where = WHERE
     fields = list()
     ranges = list()
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = None
     mappedReturn = False
     auth = LoginSpider
@@ -1676,6 +1732,10 @@ class EncryptedSpider(Spider, EncryptedSession):
     interval = str()
     fromNow = None
     ssl = None
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     responseType = "records"
     returnType = "records"
     mappedReturn = False
@@ -1695,7 +1755,7 @@ class EncryptedSpider(Spider, EncryptedSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Optional[int]=None, interval: Timedelta=None, apiRedirect=False, redirectUnit: Optional[int]=None,
+                iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1716,6 +1776,10 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     fields = list()
     ranges = list()
     maxLimit = MAX_ASYNC_TASK_LIMIT
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = None
     mappedReturn = False
     auth = LoginSpider
@@ -1827,6 +1891,10 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     interval = str()
     fromNow = None
     ssl = None
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     responseType = "records"
     returnType = "records"
     mappedReturn = False
@@ -1846,7 +1914,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
-                iterateUnit: Optional[int]=None, interval: Timedelta=None, apiRedirect=False, redirectUnit: Optional[int]=None,
+                iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
@@ -1938,6 +2006,10 @@ class Pipeline(EncryptedSession):
     fields = list()
     derivFields = list()
     ranges = list()
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
@@ -2053,6 +2125,10 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     fields = list()
     derivFields = list()
     ranges = list()
+    numRetries = 0
+    delay = 1.
+    interruptType = tuple()
+    errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
     info = PipelineInfo()
