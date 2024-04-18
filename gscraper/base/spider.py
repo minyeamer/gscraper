@@ -6,7 +6,7 @@ from gscraper.base.abstract import SESSION_CONTEXT, PROXY_CONTEXT, REDIRECT_CONT
 from gscraper.base.session import BaseSession, Iterator, Parser
 from gscraper.base.session import UserInterrupt, ForbiddenError, ParseError
 from gscraper.base.session import Info, Schema, Field, Flow, Process
-from gscraper.base.session import ITER_INDEX, ITER_TEXT, ITER_MSG, PAGE_ITERATOR
+from gscraper.base.session import ITER_INDEX, PAGE_ITERATOR, iter_task
 from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryList, GoogleUploadList
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
@@ -22,7 +22,7 @@ from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_cli
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
-from gscraper.utils.map import exists_one, unique, chain_exists, between_data, join, re_get
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
@@ -826,9 +826,9 @@ class Spider(RequestSession, Iterator, Parser):
         @functools.wraps(func)
         def wrapper(self: Spider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
             context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
-            self.checkpoint(ITER_TEXT("request",context), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            self.checkpoint(iter_task(context, "request"), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
             response = func(self, **self._validate_session(context))
-            self.checkpoint(ITER_TEXT("response",context), where=func.__name__, msg={"response":response}, save=response)
+            self.checkpoint(iter_task(context, "response"), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -837,7 +837,8 @@ class Spider(RequestSession, Iterator, Parser):
         url, params = self.encode_params(url, params, encode=encode)
         if headers and cookies: headers["Cookie"] = str(cookies)
         messages = messages if messages else notna_dict(params=params, data=data, json=json, headers=headers)
-        self.logger.debug(log_messages(**ITER_MSG(context), **messages, dump=self.logJson))
+        iter_context = {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in context else dict()
+        self.logger.debug(log_messages(**iter_context, **messages, dump=self.logJson))
         return dict(context, method=method, url=url, messages=messages)
 
     def _validate_session(self, context: Context) -> Context:
@@ -1288,9 +1289,9 @@ class AsyncSpider(Spider, AsyncSession):
         @functools.wraps(func)
         async def wrapper(self: AsyncSpider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
             context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
-            self.checkpoint(ITER_TEXT("request",context), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            self.checkpoint(iter_task(context, "request"), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
             response = await func(self, **self._validate_session(context))
-            self.checkpoint(ITER_TEXT("response",context), where=func.__name__, msg={"response":response}, save=response)
+            self.checkpoint(iter_task(context, "response"), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -1486,12 +1487,11 @@ class LoginSpider(requests.Session, Spider):
 
     def validate_request(func):
         @functools.wraps(func)
-        def wrapper(self: Spider, *args, locals: Dict=dict(), drop: _KT=list(), **context):
+        def wrapper(self: Spider, *args, locals: Dict=dict(), drop: _KT=list(), origin=str(), **context):
             context = self._encode_messages(*args, **self.from_locals(locals, drop, **context))
-            origin = context.get("origin")
-            self.checkpoint(join(origin,"request",sep='_'), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
-            response = func(self, **context)
-            self.checkpoint(join(origin,"response",sep='_'), where=func.__name__, msg={"response":response}, save=response)
+            self.checkpoint(concat(origin, "request", sep='_'), where=func.__name__, msg=dict(url=context["url"], **context["messages"]))
+            response = func(self, origin=origin, **context)
+            self.checkpoint(concat(origin, "response", sep='_'), where=func.__name__, msg={"response":response}, save=response)
             return response
         return wrapper
 
@@ -1563,7 +1563,7 @@ class LoginSpider(requests.Session, Spider):
             return BeautifulSoup(response.text, features)
 
     def log_response_text(self, response: requests.Response, origin=str()):
-        self.checkpoint(join(origin,"text",sep='_'), where=origin, msg={"response":response.text}, save=response)
+        self.checkpoint(concat(origin, "text", sep='_'), where=origin, msg={"response":response.text}, save=response)
 
 
 class LoginCookie(LoginSpider):

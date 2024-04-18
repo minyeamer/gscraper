@@ -15,7 +15,7 @@ from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, ca
 from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import isna_plus, notna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
-from gscraper.utils.map import re_get, replace_map, startswith, endswith, arg_and, union, diff
+from gscraper.utils.map import concat, re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
 from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
@@ -77,24 +77,22 @@ __SUM__ = "__SUM__"
 __MAP__ = "__MAP__"
 __MISMATCH__ = "__MISMATCH__"
 
-ITER_INDEX = "__index"
-ITER_SUFFIX = lambda context: f"_{context[ITER_INDEX]}" if ITER_INDEX in context else str()
-ITER_MSG = lambda context: {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in context else dict()
-ITER_TEXT = lambda text, context: f"{text}_{context[ITER_INDEX]}" if ITER_INDEX in context else text
-
-COUNT_INDEX = "__i"
-_NESTED_SUFFIX = lambda context: \
-    f"[{context[COUNT_INDEX]}]" if (ITER_INDEX in context) and isinstance(context[ITER_INDEX], str) else f"-{context[COUNT_INDEX]}"
-_COUNT_SUFFIX = lambda context: _NESTED_SUFFIX(context) if COUNT_INDEX in context else str()
-
-_SCHEMA_SUFFIX = lambda context: f"_{context[SCHEMA_KEY]}" if SCHEMA_KEY in context else str()
-_FIELD_SUFFIX = lambda field: f"_{field[NAME]}" if NAME in field else str()
-_NAME_SUFFIX = lambda name: f"_{name}" if name else str()
-SUFFIX = lambda context, field=dict(), name=str(): \
-    _SCHEMA_SUFFIX(context) + _FIELD_SUFFIX(field) + _NAME_SUFFIX(name) + ITER_SUFFIX(context) + _COUNT_SUFFIX(context)
-
-TZINFO = None
+TZINFO = "Asia/Seoul"
 START, END = 0, 1
+
+TASK = "task"
+ITER_INDEX = "__index"
+COUNT_INDEX = "__i"
+
+def iter_task(context: Context, method=str(), sep='_', strict=True) -> str:
+    return concat(context.get(TASK), method, context.get(ITER_INDEX), sep=sep, strict=strict)
+
+def count_task(context: Context, method=str(), field: Field=dict(), name=str(), sep='_', strict=True) -> str:
+    if COUNT_INDEX in context:
+        count_index = f"[{context[COUNT_INDEX]}]" if isinstance(context.get(ITER_INDEX), str) else f"-{context[COUNT_INDEX]}"
+    else: count_index = None
+    args = (context.get(TASK), method, context.get(SCHEMA_KEY), field.get(NAME), name, context.get(ITER_INDEX), count_index)
+    return concat(*args, sep=sep, strict=strict)
 
 class UserInterrupt(Exception):
     ...
@@ -599,7 +597,7 @@ class BaseSession(CustomDict):
     def save_data(self, data: Data, prefix=str(), suffix="now", ext: Optional[TypeHint]=None):
         prefix = prefix if prefix else self.operation
         suffix = self.now("%Y%m%d%H%M%S") if suffix == "now" else suffix
-        file_name = '_'.join(filter(None, [prefix, suffix]))
+        file_name = concat(prefix, suffix, sep='_')
         ext = ext if ext else type(data)
         if is_dataframe_type(ext):
             self.save_dataframe(data, file_name+".xlsx")
@@ -1027,7 +1025,7 @@ class Mapper(BaseSession):
         root = self.get_root(root=root, **context)
         if root: data = get_value(data, root)
         flow = self.get_flow(flow=flow, **context)
-        self.checkpoint("map"+SUFFIX(context), where="init_flow", msg={"root":root, "data":data, "flow":flow}, save=data)
+        self.checkpoint(count_task(context, "map"), where="init_flow", msg={"root":root, "data":data, "flow":flow}, save=data)
         return data, dict(context, flow=flow, responseType=responseType, discard=discard)
 
     def _set_update_time_by_interval(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None,
@@ -1063,7 +1061,7 @@ class Mapper(BaseSession):
     def _init_process(self, data: ResponseData, __base: Data, process: Process, responseType: Type, **context) -> Union[Data,bool]:
         if not (isinstance(process, Process) and isinstance(process[SCHEMA], Schema)): return data, False
         data = get_value(data, process[ROOT]) if ROOT in process else data
-        self.checkpoint("schema"+SUFFIX(context), where="init_process", msg={"data":data, "schema":process[SCHEMA]}, save=data)
+        self.checkpoint(count_task(context, "schema"), where="init_process", msg={"data":data, "schema":process[SCHEMA]}, save=data)
         if not isinstance(data, _get_response_type(responseType)):
             if not data: return data, False
             else: raise TypeError(INVALID_DATA_TYPE_MSG(data, context))
@@ -1125,7 +1123,7 @@ class Mapper(BaseSession):
         elif (path_type == ITERATE) and (not isinstance(data, pd.DataFrame)):
             __value = self._get_value_iterate(data, **field, context=context)
         else: raise TypeError(INVALID_PATH_TYPE_MSG(field[PATH]))
-        self.checkpoint("field"+SUFFIX(context, field), where="map_field", msg={"value":__value, "field":field})
+        self.checkpoint(count_task(context, "field", field), where="map_field", msg={"value":__value, "field":field})
         return self._set_value(__base, __value, field, **context)
 
     def _get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
@@ -1357,13 +1355,13 @@ class Mapper(BaseSession):
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs):
         if not log: return
         msg = dict({"value":__value, point:__object}, **msg)
-        self.checkpoint(f"[origin]_{point}"+SUFFIX(context, field, name), where=where, msg=msg)
+        self.checkpoint(count_task(context, f"[origin]_{point}", field, name), where=where, msg=msg)
 
     def _log_result(self, __result: _VT, __object: Any, point: str, where: str, msg=dict(), context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs):
         if not log: return
         msg = dict({"result":__result, point:__object}, **msg)
-        self.checkpoint(point+SUFFIX(context, field, name), where=where, msg=msg)
+        self.checkpoint(count_task(context, point, field, name), where=where, msg=msg)
 
 
 def _get_response_type(responseType: TypeHint) -> Type:
@@ -1461,7 +1459,7 @@ class SequenceMapper(Mapper):
                     if_null: Literal["drop","pass"]="drop", hier=False, **context) -> Data:
         groups = groupby_data(data, by=groupby, if_null=if_null, hier=hier)
         log_msg = {"groups":list(groups.keys()), "groupSize":[safe_len(group) for group in groups.values()]}
-        self.checkpoint("group"+SUFFIX(context), where="groupby_data", msg=log_msg)
+        self.checkpoint(count_task(context, "group"), where="groupby_data", msg=log_msg)
         results = [self._map_sequence(__data, **dict(context, group=group, dataSize=groupSize.get(group)))
                     for group, __data in groups.items()]
         return chain_exists(results)
@@ -1571,7 +1569,7 @@ class Parser(SequenceMapper):
             if notna(context.get("returnPath")):
                 return get_value(response, context["returnPath"])
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
-            self.checkpoint(ITER_TEXT("parse",context), where=func.__name__, msg={"data":data}, save=data)
+            self.checkpoint(iter_task(context, "parse"), where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **context)
             return data
         return wrapper

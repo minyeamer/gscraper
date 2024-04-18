@@ -1163,8 +1163,8 @@ def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True) -> Data:
 ############################## String #############################
 ###################################################################
 
-def join(*args: str, sep=',') -> str:
-    return sep.join(list(filter(None, args)))
+def concat(*args: str, sep=',', strict=True) -> str:
+    return sep.join([str(__s) for __s in args if notna(__s, strict=strict)])
 
 
 def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:
