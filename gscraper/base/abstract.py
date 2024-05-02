@@ -50,7 +50,7 @@ SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedRet
 ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, sessionCookies=None, **context: context
 
 
-UNIQUE_CONTEXT = lambda derivFields=None, dags=None, **context: \
+UNIQUE_CONTEXT = lambda derivFields=None, taskErrors=None, dags=None, **context: \
     ENCRYPTED_CONTEXT(**SPIDER_CONTEXT(**MAP_CONTEXT(**ITERATOR_CONTEXT(**LOG_CONTEXT(**BASE_CONTEXT(**context))))))
 
 

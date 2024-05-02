@@ -1673,7 +1673,7 @@ class EncryptedSession(RequestSession):
     def validate_account(self, auth: LoginSpider, sessionCookies=False, **context) -> Context:
         try: self.login(auth, **context)
         except: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
-        if isinstance(auth, LoginCookie) or not (sessionCookies and self.sessionCookies):
+        if isinstance(auth, LoginCookie) or (not self.sessionCookies):
             context["cookies"] = self.cookies
         return context
 
@@ -2021,6 +2021,7 @@ class Pipeline(EncryptedSession):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
 
@@ -2051,7 +2052,7 @@ class Pipeline(EncryptedSession):
         fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = method(**params)
-        self.errors.append({task[NAME]:worker.errors})
+        self.taskErrors[task[NAME]] = worker.errors
         self.checkpoint(task[NAME], where=method.__name__, msg={"data":response}, save=response)
         return response
 
@@ -2140,6 +2141,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
 
@@ -2162,7 +2164,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
-        self.errors.append({task[NAME]:worker.errors})
+        self.taskErrors[task[NAME]] = worker.errors
         self.checkpoint(task[NAME], where=task, msg={"data":response}, save=response)
         return response
 
