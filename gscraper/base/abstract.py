@@ -379,9 +379,9 @@ class Query(ValueSet):
 ########################## Session Query ##########################
 ###################################################################
 
-FILTER_QUERY = lambda: Query(
-    Variable(name="fields", type="STRING", iterable=True, default=list()),
-    Variable(name="ranges", type="DICT", desc="범위", iterable=True, default=list()),
+FILTER_QUERY = lambda mapped=False: Query(
+    Variable(name="fields", type="STRING", iterable=(not mapped), default=(dict() if mapped else list())),
+    Variable(name="ranges", type="STRING", iterable=True, default=list()),
     Variable(name="returnType", type="STRING", iterable=False, default=None),
 )
 
@@ -412,14 +412,6 @@ GCLOUD_QUERY = lambda: Query(
     Variable(name="account", type="STRING", iterable=False, default=None),
 )
 
-SESSION_QUERY = lambda: Query(
-    *FILTER_QUERY(),
-    *TIME_QUERY(),
-    *LOG_QUERY(),
-    *REQUEST_QUERY(),
-    *GCLOUD_QUERY(),
-)
-
 
 ###################################################################
 ########################### Spider Query ##########################
@@ -444,74 +436,32 @@ GATHER_QUERY = lambda: Query(
     Variable(name="message", type="STRING", iterable=False, default=str()),
 )
 
-SPIDER_QUERY = lambda: Query(
-    *SESSION_QUERY(),
-    *TASK_QUERY(),
-    *GATHER_QUERY(),
-)
-
 
 ###################################################################
-########################### Async Query ###########################
+############################ Base Query ###########################
 ###################################################################
 
 ASYNC_QUERY = lambda: Query(
     Variable(name="numTasks", type="INTEGER", iterable=False, default=100),
-)
-
-REDIRECT_QUERY = lambda: Query(
     Variable(name="apiRedirect", type="BOOLEAN", iterable=False, default=False),
     Variable(name="redirectUnit", type="INTEGER", iterable=False, default=None),
 )
-
-ASYNC_SESSION_QUERY = lambda: Query(
-    *SESSION_QUERY(),
-    *ASYNC_QUERY(),
-)
-
-ASYNC_SPIDER_QUERY = lambda: Query(
-    *ASYNC_SESSION_QUERY(),
-    *TASK_QUERY(),
-    *REDIRECT_QUERY(),
-)
-
-
-###################################################################
-######################### Encrypted Query #########################
-###################################################################
 
 ENCRYPTED_QUERY = lambda: Query(
     Variable(name="encryptedKey", type="STRING", iterable=False, default=None),
     Variable(name="decryptedKey", type="STRING", iterable=False, default=None),
 )
 
-ENCRYPTED_SESSION_QUERY = lambda: Query(
-    *SESSION_QUERY(),
-    *ENCRYPTED_QUERY(),
-)
 
-ENCRYPTED_SPIDER_QUERY = lambda: Query(
-    *SPIDER_QUERY(),
-    *ENCRYPTED_QUERY(),
-)
-
-ENCRYPTED_ASYNC_SESSION_QUERY = lambda: Query(
-    *ASYNC_SESSION_QUERY(),
-    *ENCRYPTED_QUERY(),
-)
-
-ENCRYPTED_ASYNC_SPIDER_QUERY = lambda: Query(
-    *ASYNC_SPIDER_QUERY(),
-    *ENCRYPTED_QUERY(),
-)
-
-PIPELINE_QUERY = ENCRYPTED_SESSION_QUERY
-ASYNC_PIPELINE_QUERY = ENCRYPTED_ASYNC_SESSION_QUERY
-
-
-def get_base_query(asyncio=False, encrypted=False, pipeline=False, **kwargs) -> Query:
-    if pipeline:
-        return ASYNC_PIPELINE_QUERY() if asyncio else PIPELINE_QUERY()
-    elif encrypted:
-        return ENCRYPTED_ASYNC_SPIDER_QUERY() if asyncio else ENCRYPTED_SPIDER_QUERY()
-    else: return ASYNC_SPIDER_QUERY() if asyncio else SPIDER_QUERY()
+def get_base_query(asyncio=False, encrypted=False, mapped=False, pipeline=False, **kwargs) -> Query:
+    return Query(
+        *FILTER_QUERY(mapped),
+        *TIME_QUERY(),
+        *LOG_QUERY(),
+        *REQUEST_QUERY(),
+        *(list() if pipeline else TASK_QUERY()),
+        *(list() if pipeline else GATHER_QUERY()),
+        *(ASYNC_QUERY() if asyncio else list()),
+        *GCLOUD_QUERY(),
+        *(ENCRYPTED_QUERY() if encrypted else list()),
+    )
