@@ -688,7 +688,7 @@ class Spider(RequestSession, Iterator, Parser):
     ###################################################################
 
     def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None,
-                        dropna=False, strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
+                        dropna=True, strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
                         **context) -> Tuple[Arguments,Context]:
         args, context = self.local_params(locals, **context)
         array_context = dict(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename)
@@ -697,14 +697,14 @@ class Spider(RequestSession, Iterator, Parser):
         return args, context
 
     def validate_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                    dropna=False, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
+                    dropna=True, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
         if not args: return args
         elif len(args) == 1: args = (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
         else: args = align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
         rename_args = lambda __s, __key: rename_data(__s, rename=rename[__key]) if __key in rename else __s
         return tuple(rename_args(args[__i], __key) for __i, __key in enumerate(self.iterateArgs[:len(args)]))
 
-    def validate_context(self, locals: Dict=dict(), default=None, dropna=False, strict=False, unique=True,
+    def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                         drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
         if locals:
             context = self.local_context(locals, **context, drop=drop)
