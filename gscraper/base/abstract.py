@@ -128,7 +128,7 @@ class CustomDict(dict):
     def get(self, __key: _KT, default=None, if_null: Literal["drop","pass"]="pass", values_only=True) -> Union[_VT,Dict]:
         if not is_array(__key): return self[__key] if __key in self else default
         elif if_null == "drop": __m = {__k: self[__k] for __k in __key if __k in self}
-        else: __m = {__k: (self[__k] if __key in self else default) for __k in __key}
+        else: __m = {__k: (self[__k] if __k in self else default) for __k in __key}
         return list(__m.values()) if values_only else __m
 
     def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, double_quotes=False, sep=' '):
