@@ -60,7 +60,7 @@ UNIQUE_CONTEXT = lambda **context: \
 
 PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, verb=None, \
                         how=None, default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
-                        depth=None, hier=None, to=None, countPath=None, hasSize=None, **context: context
+                        depth=None, hier=None, to=None, countPath=None, hasSize=None, primary=None, **context: context
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \

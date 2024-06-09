@@ -12,7 +12,7 @@ from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gclou
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
+from gscraper.base.types import Records, Data, MappedData, MappedFields, JsonData, RedirectData
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
 
 from gscraper.utils import notna
@@ -20,7 +20,7 @@ from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_f
 from gscraper.utils.date import get_date_pair, get_datetime_pair
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
-from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict
+from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict, traversal_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
@@ -38,7 +38,7 @@ import random
 import requests
 import time
 
-from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
@@ -443,11 +443,11 @@ class RequestSession(UploadSession):
 
     def validate_data(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None, **params):
-            data = func(self, *args, fields=fields, returnType=returnType, **params)
-            if self.mappedReturn and isinstance(data, Dict):
-                return self.filter_mapped_data(data, fields=fields, returnType=returnType)
-            else: return self.filter_data(data, fields=fields, returnType=returnType)
+        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None, **context):
+            data = func(self, *args, fields=fields, returnType=returnType, **context)
+            if self.mappedReturn:
+                return traversal_dict(data, fields, apply=self.filter_data, dropna=True, returnType=returnType)
+            else: return self.filter_data(data, fields, returnType=returnType)
         return wrapper
 
     def filter_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
@@ -456,23 +456,17 @@ class RequestSession(UploadSession):
         data = filter_data(data, fields=fields, default=default, if_null=if_null)
         return data
 
-    def filter_mapped_data(self, data: Data, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None) -> MappedData:
-        if isinstance(fields, Dict):
-            return {__key: self.filter_data(data[__key], __fields, returnType)
-                    for __key, __fields, in fields.items() if __key in data}
-        else: return {__key: self.filter_data(__data, fields, returnType) for __key, __data, in data.items()}
-
     ###################################################################
     ########################## Validate Range #########################
     ###################################################################
 
     def validate_range(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, ranges: RangeFilter=list(), **params):
-            data = func(self, *args, **params)
-            if self.mappedReturn and isinstance(data, Dict):
-                return self.filter_mapped_range(data, ranges=ranges)
-            else: return self.filter_range(data, ranges=ranges)
+        def wrapper(self: RequestSession, *args, ranges: RangeFilter=list(), **context):
+            data = func(self, *args, **context)
+            if self.mappedReturn:
+                return traversal_dict(data, ranges, apply=self.filter_range, dropna=False)
+            else: return self.filter_range(data, ranges)
         return wrapper
 
     def filter_range(self, data: Data, ranges: RangeFilter=list()) -> Data:
@@ -480,12 +474,6 @@ class RequestSession(UploadSession):
             for range in ranges:
                 data = between_data(data, **range)
         return data
-
-    def filter_mapped_range(self, data: Data, ranges: RangeFilter=list()) -> MappedData:
-        if isinstance(ranges, Dict):
-            return {__key: (self.filter_range(__data, ranges[__key]) if __key in ranges else __data)
-                    for __key, __data in data.items()}
-        else: return {__key: self.filter_range(__data, ranges) for __key, __data, in data.items()}
 
     ###################################################################
     ########################### Arrange Data ##########################
@@ -496,31 +484,20 @@ class RequestSession(UploadSession):
         def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None,
                     convert_dtypes=False, sortby=str(), reset_index=False, **context):
             data = func(self, *args, fields=fields, returnType=returnType, **context)
-            arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
-            if self.mappedReturn and isinstance(data, Dict):
-                return self.arrange_mapped_data(data, fields=fields, returnType=returnType, **arrange_context)
-            else: return self.arrange_single_data(data, fields=fields, returnType=returnType, **arrange_context)
+            params = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+            if self.mappedReturn:
+                return traversal_dict(data, fields, apply=self.filter_data_plus, dropna=True, **params)
+            else: return self.filter_data_plus(data, fields, **params)
         return wrapper
 
-    def arrange_single_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
-                            convert_dtypes=False, sortby=str(), reset_index=False) -> Data:
+    def filter_data_plus(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+                        convert_dtypes=False, sortby=str(), reset_index=False) -> Data:
         data = self.filter_data(data, fields=fields, returnType=returnType)
         if not isinstance(data, pd.DataFrame): return data
-        else: return self.arrange_dataframe(data, convert_dtypes, sortby, reset_index)
-
-    def arrange_dataframe(self, data: pd.DataFrame, convert_dtypes=False, sortby=str(), reset_index=False) -> pd.DataFrame:
         if convert_dtypes: data = _convert_dtypes(data)
         if sortby: data = data.sort_values(sortby)
         if reset_index: data = data.reset_index(drop=True)
         return data
-
-    def arrange_mapped_data(self, data: Data, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None,
-                            convert_dtypes=False, sortby=str(), reset_index=False) -> MappedData:
-        context = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
-        if isinstance(fields, Dict):
-            return {__key: self.arrange_single_data(data[__key], __fields, **context)
-                    for __key, __fields, in fields.items() if __key in data}
-        else: return {__key: self.arrange_single_data(__data, fields, **context) for __key, __data, in data.items()}
 
     ###################################################################
     ############################ With Data ############################
@@ -528,11 +505,11 @@ class RequestSession(UploadSession):
 
     def with_data(self, data: Data, uploadList: GoogleUploadList=list(), func=str(), **context):
         self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
-        self.save_result(data)
+        self.save_result(data, **context)
         self.upload_result(data, uploadList, **context)
 
     @BaseSession.catch_exception
-    def save_result(self, data: Data):
+    def save_result(self, data: Data, **context):
         if not self.localSave: return
         file_name = self.get_save_name()+'_'+self.now("%Y%m%d%H%M%S")+".xlsx"
         if self.mappedReturn and isinstance(data, Dict):
@@ -1129,18 +1106,18 @@ class AsyncSession(RequestSession):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
             data = await func(self, *args, fields=fields, returnType=returnType, **params)
-            if self.mappedReturn and isinstance(data, Dict):
-                return self.filter_mapped_data(data, fields=fields, returnType=returnType)
-            else: return self.filter_data(data, fields=fields, returnType=returnType)
+            if self.mappedReturn:
+                return traversal_dict(data, fields, apply=self.filter_data, dropna=True, returnType=returnType)
+            else: return self.filter_data(data, fields, returnType=returnType)
         return wrapper
 
     def validate_range(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, ranges: RangeFilter=list(), **params):
             data = await func(self, *args, **params)
-            if self.mappedReturn and isinstance(data, Dict):
-                return self.filter_mapped_range(data, ranges=ranges)
-            else: return self.filter_range(data, ranges=ranges)
+            if self.mappedReturn:
+                return traversal_dict(data, ranges, apply=self.filter_range, dropna=False)
+            else: return self.filter_range(data, ranges)
         return wrapper
 
 
@@ -2056,21 +2033,21 @@ class Pipeline(EncryptedSession):
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
-        fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
+        fields = self.get_task_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = method(**params)
         self.taskErrors[task[NAME]] = worker.errors
         self.checkpoint(task[NAME], where=method.__name__, msg={"data":response}, save=response)
         return response
 
-    def _get_fields(self, fields: IndexLabel=list(), allowed: Optional[IndexLabel]=None, name=str()) -> IndexLabel:
-        if self.mappedReturn and isinstance(fields, Dict):
-            fields = fields.get(name, list())
-            if isinstance(fields, Dict):
-                return {__key: self._set_fields(__fields, allowed) for __key, __fields in fields.items()}
-        return self._set_fields(fields, allowed)
+    def get_task_fields(self, fields: Union[List,Dict], allowed: Optional[IndexLabel]=None, name=str()) -> IndexLabel:
+        if self.mappedReturn:
+            if name and isinstance(fields, Dict):
+                fields = fields.get(name, list())
+            return traversal_dict(fields, allowed, apply=self.set_allowed_fields, dropna=False)
+        else: return self.set_allowed_fields(fields, allowed)
 
-    def _set_fields(self, fields: IndexLabel, allowed: Optional[IndexLabel]=None) -> IndexLabel:
+    def set_allowed_fields(self, fields: IndexLabel, allowed: Optional[IndexLabel]=None) -> IndexLabel:
         fields = cast_list(fields)
         if self.derivFields:
             fields = diff(fields, cast_list(self.derivFields))
@@ -2094,7 +2071,7 @@ class Pipeline(EncryptedSession):
     def _from_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(),
                     **context) -> Tuple[Callable,Spider,Context]:
         method = getattr(self, task[TASK])
-        task_filter = dict(fields=self._get_task_fields(task[FIELDS], fields), returnType=task[DATATYPE])
+        task_filter = dict(fields=self.validate_task_fields(task[FIELDS], fields), returnType=task[DATATYPE])
         configs, params = self._get_task_params(task, **context)
         worker = task[OPERATOR](**task_filter, **configs)
         data = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
@@ -2102,16 +2079,12 @@ class Pipeline(EncryptedSession):
         self.checkpoint("params", where=method.__name__, msg=dict(zip(["task","configs","params"],[task[NAME],configs,params])))
         return method, worker, params
 
-    def _get_task_fields(self, task_fields: Union[List,Dict,Tuple]=list(), fields: Union[List,Dict]=list()) -> IndexLabel:
-        if isinstance(task_fields, Dict):
-            if isinstance(fields, Dict):
-                return {__key: self._set_task_fields(task_fields[__key], __fields)
-                        for __key, __fields in fields.items() if __key in task_fields}
-            else: return {__key: self._set_task_fields(__fields, fields)
-                        for __key, __fields in task_fields.items()}
-        else: return self._set_task_fields(task_fields, fields)
+    def validate_task_fields(self, task_fields: Union[List,Dict,Tuple], fields: Union[List,Dict]) -> IndexLabel:
+        if self.mappedReturn:
+            return traversal_dict(task_fields, fields, apply=self.concat_task_fields, dropna=True)
+        else: return self.concat_task_fields(task_fields, fields)
 
-    def _set_task_fields(self, task_fields: IndexLabel=list(), fields: IndexLabel=list()) -> IndexLabel:
+    def concat_task_fields(self, task_fields: IndexLabel, fields: IndexLabel) -> IndexLabel:
         if isinstance(task_fields, Tuple): return task_fields
         else: return unique(*cast_list(task_fields), *fields)
 
@@ -2174,7 +2147,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     async def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
-        fields = self._get_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
+        fields = self.get_task_fields(fields, allowed=task.get(ALLOWED), name=task[DATANAME])
         method, worker, params = self._from_task(task, fields=fields, data=data, **context)
         response = (await method(**params)) if inspect.iscoroutinefunction(method) else method(**params)
         self.taskErrors[task[NAME]] = worker.errors

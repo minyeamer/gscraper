@@ -677,7 +677,6 @@ def safe_apply(__object, __applyFunc: ApplyFunction, default=None, **context) ->
 def map_context(__keys: Optional[_KT]=list(), __values: Optional[_VT]=list(), __default=None, **context) -> Context:
     if context: return context
     elif not (__keys and (__values or __default)): return dict()
-
     __keys, __values = cast_tuple(__keys), (__values if __values else __default)
     if not is_array(__values): __values = [__values]*len(__keys)
     elif len(__keys) != len(__values): return dict()
@@ -1285,6 +1284,28 @@ def unit_records(__r: Records, unit=1, keys: _KT=list()) -> Records:
                 __m[__key].append(row.get(__key))
         rows.append(__m)
     return rows
+
+
+###################################################################
+############################### Map ###############################
+###################################################################
+
+def traversal_dict(left: Union[Dict,Any], right: Union[Dict,Any], apply: Optional[Callable]=None,
+                    primary: Literal["left","right"]="left", dropna=False, **context) -> Union[Dict,Any]:
+    if isinstance(left, Dict):
+        if isinstance(right, Dict):
+            return _traversal_next(*((left, right) if primary == "left" else (right, left)), apply, primary, dropna, **context)
+        else: return {__k1: traversal_dict(__v1, right, apply, **context) for __k1, __v1, in left.items()}
+    elif isinstance(apply, Callable): return apply(left, right, **context)
+    else: return (left if primary == "left" else right)
+
+
+def _traversal_next(__m1: Dict, __m2: Dict, apply: Optional[Callable]=None,
+                    primary: Literal["left","right"]="left", dropna=False, **context) -> Dict:
+    args = lambda __v1, __v2: (__v1, __v2) if primary == "left" else (__v2, __v1)
+    context.update(apply=apply, primary=primary, dropna=dropna)
+    if dropna: return {__k1: traversal_dict(*args(__v1, __m2[__k1]), **context) for __k1, __v1 in __m1.items() if __k1 in __m2}
+    else: return {__k1: (traversal_dict(*args(__v1, __m2[__k1]), **context) if __k1 in __m2 else __v1) for __k1, __v1 in __m1.items()}
 
 
 ###################################################################
