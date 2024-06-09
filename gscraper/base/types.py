@@ -199,6 +199,7 @@ DICT_TYPES = [Dict, dict, "dict", "dictionary"]
 RECORDS_TYPES = [Records, "records"]
 DATAFRAME_TYPES = [DataFrame, "dataframe", "df", "pandas", "pd"]
 TAG_TYPES = [Tag, "tag", "bs4", "html", "source"]
+BYTE_TYPES = [bytes, "bytes"]
 
 TYPE_LIST = {
     bool: BOOLEAN_TYPES,
@@ -214,6 +215,7 @@ TYPE_LIST = {
     dict: DICT_TYPES,
     DataFrame: DATAFRAME_TYPES,
     Tag: TAG_TYPES,
+    bytes: BYTE_TYPES,
 }
 
 _abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
@@ -325,6 +327,9 @@ def is_dataframe_type(__type: TypeHint) -> bool:
 
 def is_tag_type(__type: TypeHint) -> bool:
     return is_type(__type, TAG_TYPES)
+
+def is_bytes_type(__type: TypeHint) -> bool:
+    return is_type(__type, BYTE_TYPES)
 
 
 def is_comparable(__object) -> bool:
