@@ -213,7 +213,7 @@ class CustomRecords(list):
     def unique(self, keys: Optional[_KT]=list(), keep: Literal["fist","last",True,False]="first",
                 inplace=False) -> CustomRecords:
         if keep == True: return None if inplace else self
-        else: self.update(drop_duplicates(self, keys, keep=keep), inplace=inplace)
+        else: return self.update(drop_duplicates(self, keys, keep=keep), inplace=inplace)
 
     def print(self, *__object, path: Optional[_KT]=None, drop: Optional[_KT]=None, indent=2, step=2, double_quotes=False, sep=' '):
         __object = __object if __object else (self,)
