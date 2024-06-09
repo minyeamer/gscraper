@@ -1755,6 +1755,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     groupSize = dict()
     countby = str()
     auth = LoginSpider
+    authKey = list()
     decryptedKey = dict()
     sessionCookies = True
     info = Info()
@@ -1794,6 +1795,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     returnType = None
     mappedReturn = False
     auth = LoginSpider
+    authKey = list()
     decryptedKey = dict()
     sessionCookies = True
     info = Info()
@@ -1914,6 +1916,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     groupSize = dict()
     countby = str()
     auth = LoginSpider
+    authKey = list()
     decryptedKey = dict()
     sessionCookies = True
     info = Info()
@@ -2023,6 +2026,8 @@ class Pipeline(EncryptedSession):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    globalProgress = False
+    taskProgress = True
     taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
@@ -2044,9 +2049,9 @@ class Pipeline(EncryptedSession):
     ########################### Gather Task ###########################
     ###################################################################
 
-    def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, message=str(), progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        for task in self.dags:
+        for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
             data[task[DATANAME]] = self.run_task(task, fields=fields, data=data, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
@@ -2128,6 +2133,8 @@ class Pipeline(EncryptedSession):
         if CONTEXT in task:
             context = dict(context, **kloc(task[CONTEXT], WORKER_EXTRA, if_null="drop"))
             params = dict(params, **drop_dict(task[CONTEXT], WORKER_EXTRA, inplace=False))
+        if ("progress" in context) or (not self.taskProgress):
+            context["progress"] = context.get("progress", True) and self.taskProgress
         return context, params
 
 
@@ -2143,6 +2150,9 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    globalProgress = False
+    asyncProgress = False
+    taskProgress = True
     taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
@@ -2152,12 +2162,13 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     async def crawl(self, **context) -> Data:
         return await self.gather(**context)
 
-    async def gather(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, message=str(), progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        for task in self.dags:
+        for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
             if isinstance(task, Sequence):
-                response = await asyncio.gather(*[
-                    self.run_task(subtask, fields=fields, data=data, **context) for subtask in task])
+                response = await tqdm.gather(*[
+                    self.run_task(subtask, fields=fields, data=data, **context) for subtask in task],
+                        desc=message, disable=(self.globalProgress or (not (self.asyncProgress and progress))))
                 data = dict(data, **dict(zip(vloc(task, DATANAME), response)))
             else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
