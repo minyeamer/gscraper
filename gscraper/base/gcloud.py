@@ -469,7 +469,8 @@ class GoogleUploader(BaseSession):
         if base_sheet or (mode == "upsert"):
             data = self.from_base_sheet(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
-        data = self.map_upload_data(data, primary_key=primary_key, name=name, **context)
+        data = self.map_upload_data(data,
+            key=key, sheet=sheet, mode=mode, primary_key=primary_key, name=name, account=account, **context)
         data = self._validate_primary_key(data, primary_key)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
@@ -507,7 +508,8 @@ class GoogleUploader(BaseSession):
         if base_query or (mode == "upsert"):
             data = self.from_base_query(**self.from_locals(locals()))
             if mode == "upsert": mode = "replace"
-        data = self.map_upload_data(data, primary_key=primary_key, name=name, **context)
+        data = self.map_upload_data(data,
+            table=table, project_id=project_id, mode=mode, primary_key=primary_key, name=name, account=account, **context)
         data = self._validate_primary_key(data, primary_key)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, dump=self.logJson))
