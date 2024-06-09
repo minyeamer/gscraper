@@ -42,6 +42,7 @@ from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, 
 from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
+from io import BytesIO
 from json import JSONDecodeError
 import datetime as dt
 import json
@@ -934,8 +935,8 @@ class Spider(RequestSession, Iterator, Parser):
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            if html: return pd.read_html(response.content, header=table_header)[table_idx]
-            else: return pd.read_excel(response.content, engine=engine)
+            if html: return pd.read_html(BytesIO(response.content), header=table_header)[table_idx]
+            else: return pd.read_excel(BytesIO(response.content), engine=engine)
 
     def encode_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
         if not params: return url, None
@@ -1387,8 +1388,8 @@ class AsyncSpider(Spider, AsyncSession):
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            if html: return pd.read_html(await response.read(), header=table_header)[table_idx]
-            else: return pd.read_excel(await response.read(), engine=engine)
+            if html: return pd.read_html(BytesIO(await response.read()), header=table_header)[table_idx]
+            else: return pd.read_excel(BytesIO(await response.read()), engine=engine)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
