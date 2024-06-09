@@ -22,7 +22,7 @@ from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_cli
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict, traversal_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
-from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get, read_table
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
 from abc import ABCMeta, abstractmethod
@@ -42,7 +42,6 @@ from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, 
 from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
-from io import BytesIO
 from json import JSONDecodeError
 import datetime as dt
 import json
@@ -910,13 +909,11 @@ class Spider(RequestSession, Iterator, Parser):
                     data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                    html=True, table_header=0, table_idx=0, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None,
-                    **context) -> pd.DataFrame:
+                    html="auto", table_header=0, table_idx=0, engine=None, **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            if html: return pd.read_html(BytesIO(response.content), header=table_header)[table_idx]
-            else: return pd.read_excel(BytesIO(response.content), engine=engine)
+            return read_table(response.content, html=html, header=table_header, idx=table_idx, engine=engine)
 
     def encode_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
         if not params: return url, None
@@ -1125,7 +1122,6 @@ class AsyncSession(RequestSession):
                 return traversal_dict(data, ranges, apply=self.filter_range, dropna=False)
             else: return self.filter_range(data, ranges)
         return wrapper
-
 
 
 ###################################################################
@@ -1366,13 +1362,11 @@ class AsyncSpider(Spider, AsyncSession):
                             data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                            html=False, table_header=0, table_idx=0, engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None,
-                            **context) -> pd.DataFrame:
+                            html="auto", table_header=0, table_idx=0, engine=None, **context) -> pd.DataFrame:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            if html: return pd.read_html(BytesIO(await response.read()), header=table_header)[table_idx]
-            else: return pd.read_excel(BytesIO(await response.read()), engine=engine)
+            return read_table(await response.read(), html=html, header=table_header, idx=table_idx, engine=engine)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):

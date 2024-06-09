@@ -1440,3 +1440,13 @@ def read_bytes(__object: Union[str,MappingData], pandas=False,
         with open(__object, "rb") as file:
             return file.read()
     else: return to_bytes(__object)
+
+
+def read_table(__object: bytes, html: Union[bool,Literal["auto"]]="auto", header=0, idx=0,
+                engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None) -> pd.DataFrame:
+    io = BytesIO(__object)
+    if html == "auto":
+        try: return pd.read_html(io, header=header)[idx]
+        except: return pd.read_excel(io, engine=engine)
+    elif html: return pd.read_html(io, header=header)[idx]
+    else: return pd.read_excel(io, engine=engine)
