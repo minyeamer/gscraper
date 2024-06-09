@@ -3,16 +3,17 @@ from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequenc
 from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat, PANDAS_DATA
 from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
-from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type
+from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type, is_bytes_type
 from gscraper.base.types import is_comparable, is_kwargs_allowed
 
 from gscraper.utils import isna, notna, empty, exists
-from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
+from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set, cast_int
 
 from typing import Any, Dict, List, Set
 from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Type, Union
 from numbers import Real
 from bs4 import BeautifulSoup, Tag
+from io import BytesIO
 from pandas.core.indexes.base import Index as PandasIndex
 import pandas as pd
 
@@ -119,6 +120,9 @@ def to_dataframe(__object: MappingData, columns: Optional[IndexLabel]=None, inde
     if isinstance(__object, pd.DataFrame): pass
     elif is_records(__object, empty=False): __object = convert_dtypes(pd.DataFrame(align_records(__object)))
     elif isinstance(__object, (dict,pd.Series)): __object = pd.DataFrame([__object])
+    elif isinstance(__object, bytes) and __object:
+        try: __object = pd.read_excel(__object)
+        except: return pd.DataFrame(columns=cast_columns(columns))
     else: return pd.DataFrame(columns=cast_columns(columns))
     if (index is not None) and (safe_len(index, -1) == len(__object)): __object.index = index
     return __object
@@ -132,12 +136,22 @@ def to_series(__object: Union[pd.Series,Sequence,Any], index: Optional[Sequence]
     return __object
 
 
+def to_bytes(__object: MappingData) -> bytes:
+    if isinstance(__object, bytes): return __object
+    elif is_records(__object, empty=False): __object = pd.DataFrame(__object)
+    elif not isinstance(__object, pd.DataFrame): return str(__object).encode()
+    with BytesIO() as output:
+        __object.to_excel(output, index=False)
+        return output.getvalue()
+
+
 def convert_data(data: Data, return_type: Optional[TypeHint]=None, depth=1) -> Data:
     if not return_type: return data
     elif is_records_type(return_type): return to_records(data, depth=depth)
     elif is_dataframe_type(return_type): return to_dataframe(data)
     elif is_dict_type(return_type): return to_dict(data, depth=depth)
     elif is_list_type(return_type): return cast_list(data)
+    elif is_bytes_type(return_type): return to_bytes(data)
     try: return data if data else init_origin(return_type)
     except: return None
 
@@ -1052,7 +1066,7 @@ def diff_df(*args: pd.DataFrame, skip: IndexLabel=list(),
 
 def drop_duplicates(__r: Records, keys: Optional[_KT]=list(), keep: Literal["fist","last",False]="first") -> Records:
     if keep == False: return _drop_duplicates_all(__r, keys)
-    base, history, keys = list(), list(), cast_tuple(keys)
+    base, history, keys = list(), list(), cast_list(keys)
     for __m in (__r[::-1] if keep == "last" else __r):
         values = tuple(kloc(__m, keys, if_null="pass").values())
         if values not in history:
@@ -1062,7 +1076,7 @@ def drop_duplicates(__r: Records, keys: Optional[_KT]=list(), keep: Literal["fis
 
 
 def _drop_duplicates_all(__r: Records, keys: Optional[_KT]=list()) -> Records:
-    history, keys = defaultdict(list), cast_tuple(keys)
+    history, keys = defaultdict(list), cast_list(keys)
     to_comparable = lambda x: x if is_comparable(x) else str(x)
     for __i, __m in enumerate(__r):
         values = tuple(map(to_comparable, kloc(__m, keys, if_null="pass").values()))
@@ -1360,19 +1374,21 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
 ############################## Excel ##############################
 ###################################################################
 
-def read_excel(file_path: str, sheet_name: Optional[Union[str,int,List]]=0, columns: Optional[IndexLabel]=list(),
-                default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
+def read_excel(io: Union[bytes,str], sheet_name: Optional[Union[str,int,List]]=0, columns: Optional[IndexLabel]=list(),
+                default=None, if_null: Literal["drop","pass"]="pass", reorder=True, html=False, header=0,
                 str_cols: Union[bool,Sequence[Union[str,int]]]=list(), return_type: Optional[TypeHint]="dataframe",
                 rename: RenameMap=dict(), file_pattern=False, reverse=False) -> Union[Data,Dict[str,Data]]:
-    file_path = get_file_path(file_path, file_pattern, reverse)
-    data = pd.read_excel(file_path, sheet_name=sheet_name, dtype=get_str_dtype(str_cols))
+    io = get_file_path(io, file_pattern, reverse)
+    if html: data = pd.read_html(io, header=header)[cast_int(sheet_name)]
+    elif isinstance(io, str) and io.endswith(".csv"): data = pd.read_csv(io, header=header, dtype=get_str_dtype(str_cols))
+    else: data = pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=get_str_dtype(str_cols))
     args = (columns, default, if_null, reorder, return_type, rename)
     if isinstance(data, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in data.items()}
     else: return _to_data(data, *args)
 
 
 def get_file_path(file_path: str, file_pattern=False, reverse=False) -> str:
-    if not file_pattern: return file_path
+    if not (isinstance(file_path, str) and file_pattern): return file_path
     dir_name, file_name = os.path.split(file_path)
     for file in sorted(os.listdir(dir_name if dir_name else None), reverse=reverse):
         if re.search(file_name, file): return os.path.join(dir_name, file)
@@ -1393,3 +1409,13 @@ def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
     data = convert_data(df, return_type)
     data = rename_data(data, rename)
     return filter_data(data, columns, default=default, if_null=if_null, reorder=reorder)
+
+
+def read_bytes(__object: Union[str,MappingData], pandas=False,
+                sheet_name: Optional[Union[str,int,List]]=0, html=False, header=0) -> bytes:
+    if isinstance(__object, str):
+        if pandas:
+            return to_bytes(read_excel(__object, sheet_name, html=html, header=header))
+        with open(__object, "rb") as file:
+            return file.read()
+    else: return to_bytes(__object)
