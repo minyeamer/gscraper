@@ -78,6 +78,7 @@ __MAP__ = "__MAP__"
 __MISMATCH__ = "__MISMATCH__"
 
 TZINFO = "Asia/Seoul"
+COUNTRY_CODE = "KR"
 START, END = 0, 1
 
 TASK = "task"
@@ -466,19 +467,22 @@ class BaseSession(CustomDict):
     __metaclass__ = ABCMeta
     operation = "session"
     tzinfo = TZINFO
+    countryCode = COUNTRY_CODE
     datetimeUnit = "second"
     errors = list()
     info = Info()
 
-    def __init__(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+    def __init__(self, tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None, **context):
-        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         super().__init__(context)
 
-    def set_init_time(self, tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None):
+    def set_init_time(self, tzinfo: Optional[Timezone]=None, countryCode=str(),
+                    datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None):
         self.tzinfo = tzinfo if tzinfo else self.tzinfo
+        self.countryCode = countryCode if countryCode else self.countryCode
         self.datetimeUnit = datetimeUnit if datetimeUnit else self.datetimeUnit
         self.initTime = now(tzinfo=self.tzinfo, droptz=True)
 
@@ -518,11 +522,11 @@ class BaseSession(CustomDict):
         return today(__format, days, weeks, tzinfo=self.tzinfo, droptime=droptime)
 
     def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=None, busdate=False) -> dt.date:
-        return get_date(date, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate)
+        return get_date(date, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate, country_code=self.countryCode)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
-        return get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
+                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[dt.date,dt.date]:
+        return get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate, country_code=self.countryCode)
 
     def set_date(self, date: Optional[DateFormat]=None, __format="%Y-%m-%d",
                 if_null: Optional[Union[int,str]]=None, busdate=False) -> str:
@@ -530,7 +534,7 @@ class BaseSession(CustomDict):
         return set_date(date, __format)
 
     def set_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, __format="%Y-%m-%d",
-                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[str,str]:
+                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[str,str]:
         startDate, endDate = self.get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
         return set_date(startDate, __format), set_date(endDate, __format)
 

@@ -67,7 +67,7 @@ MIN_ASYNC_TASK_LIMIT = 1
 MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
-TIME_UNIQUE = ["tzinfo", "datetimeUnit"]
+TIME_UNIQUE = ["tzinfo", "countryCode", "datetimeUnit"]
 LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debug", "extraSave", "interrupt"]
 
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
@@ -335,13 +335,13 @@ class RequestSession(UploadSession):
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
-        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(numRetries, delay, cookies)
         UploadSession.__init__(self, queryList, uploadList, account, **context)
@@ -606,7 +606,7 @@ class Spider(RequestSession, Iterator, Parser):
     flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
@@ -614,7 +614,7 @@ class Spider(RequestSession, Iterator, Parser):
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
-        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(numRetries, delay, cookies)
         self.set_spider_variables(fromNow, discard, progress)
@@ -665,7 +665,7 @@ class Spider(RequestSession, Iterator, Parser):
         return super().get_date(date, if_null=get_scala(if_null, index), busdate=busdate)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
+                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[dt.date,dt.date]:
         if_null = if_null if if_null is not None else self.fromNow
         return super().get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
 
@@ -1049,13 +1049,13 @@ class AsyncSession(RequestSession):
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
-        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
         UploadSession.__init__(self, queryList, uploadList, account, **context)
@@ -1190,7 +1190,7 @@ class AsyncSpider(Spider, AsyncSession):
     flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
@@ -1198,7 +1198,7 @@ class AsyncSpider(Spider, AsyncSession):
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
         self.set_filter_variables(fields, ranges, returnType)
-        self.set_init_time(tzinfo, datetimeUnit)
+        self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
         self.set_max_limit(apiRedirect)
@@ -1603,7 +1603,7 @@ class EncryptedSession(RequestSession):
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
@@ -1761,7 +1761,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
@@ -1799,7 +1799,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
@@ -1920,7 +1920,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     flow = Flow()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
-                tzinfo: Optional[Timezone]=None, datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,

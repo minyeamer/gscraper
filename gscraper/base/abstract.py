@@ -66,8 +66,8 @@ REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, re
                         engine=None, **context: context
 
 
-RESPONSE_CONTEXT = lambda response=None, tzinfo=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, delay=None, \
-                        progress=None, message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
+RESPONSE_CONTEXT = lambda response=None, tzinfo=None, countryCode=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, \
+                        delay=None, progress=None, message=None, numTasks=None, apiRedirect=None, redirectUnit=None, **context: context
 
 
 GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None, table=None, query=None, project_id=None, \
@@ -387,6 +387,7 @@ FILTER_QUERY = lambda mapped=False: Query(
 
 TIME_QUERY = lambda: Query(
     Variable(name="tzinfo", type="STRING", iterable=False, default=None),
+    Variable(name="countryCode", type="STRING", iterable=False, default=None),
     Variable(name="datetimeUnit", type="STRING", iterable=False, default=None),
 )
 

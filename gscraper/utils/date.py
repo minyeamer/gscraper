@@ -4,17 +4,23 @@ from gscraper.base.types import is_type, is_str_type, is_timestamp_type, INTEGER
 from gscraper.utils.cast import cast_datetime, cast_date, get_timezone
 from gscraper.utils.map import isin, drop_dict, get_scala
 
-from typing import List, Literal, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
 from pandas.tseries.frequencies import to_offset
-from pandas.tseries.offsets import BDay
 import datetime as dt
-import numpy as np
 import pandas as pd
 import re
+
+from workalendar.core import Calendar
+from workalendar.registry import registry
+import holidays
+
 
 UTC = "UTC"
 EST = "US/Eastern"
 KST = "Asia/Seoul"
+
+US = "US"
+KR = "KR"
 
 DATE_UNIT = ["second", "minute", "hour", "day", "month", "year"]
 
@@ -121,7 +127,7 @@ def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Union[i
 
 
 def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,
-            days=0, weeks=0, tzinfo=None, busdate=False) -> dt.date:
+            days=0, weeks=0, tzinfo=None, busdate=False, country_code=str()) -> dt.date:
     __date = cast_date(__object)
     if not isinstance(__date, dt.date):
         if isinstance(__object, int): __date = today(days=__object, tzinfo=tzinfo)
@@ -129,13 +135,13 @@ def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,st
         elif isinstance(if_null, str): __date = cast_date(if_null)
     if isinstance(__date, dt.date):
         __date = __date - dt.timedelta(days=days, weeks=weeks)
-        return (__date-BDay(1)).date() if busdate and (not np.is_busday(__date)) else __date
+        return get_last_working_day(__date, country_code) if busdate and country_code else __date
 
 
 def get_date_pair(startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                    if_null: Optional[Unit]=None, busdate=False) -> Tuple[dt.date,dt.date]:
-    startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=busdate)
-    endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=busdate)
+                if_null: Optional[Unit]=None, busdate: Optional[Unit]=False, country_code=str()) -> Tuple[dt.date,dt.date]:
+    startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=get_scala(busdate, 0), country_code=country_code)
+    endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=get_scala(busdate, 1), country_code=country_code)
     __min = min(startDate, endDate) if startDate and endDate else startDate
     __max = max(startDate, endDate) if startDate and endDate else endDate
     return __min, __max
@@ -156,6 +162,32 @@ def set_date(__date: dt.date, __format="%Y-%m-%d", __type: TypeHint=str) -> Unio
     elif is_str_type(__type): return str(__date)
     elif is_type(__type, INTEGER_TYPES+["ordinal"]): return __date.toordinal()
     else: return
+
+###################################################################
+############################# Holidays ############################
+###################################################################
+
+def get_calendar(country_code: str) -> Calendar:
+    return registry.get_calendars()[country_code]()
+
+
+def get_holidays(country_code: str) -> Dict:
+    return holidays.country_holidays(country_code)
+
+
+def is_holiday(__date: dt.date, country_code: str) -> bool:
+    return (__date in get_holidays(country_code)) or (not get_calendar(country_code).is_working_day(__date))
+
+
+def is_working_day(__date: dt.date, country_code: str) -> bool:
+    return (__date not in get_holidays(country_code)) and get_calendar(country_code).is_working_day(__date)
+
+
+def get_last_working_day(__date: dt.date, country_code: str, how: Literal["backward","forward"]="backward") -> dt.date:
+    calendar, holidays = get_calendar(country_code), get_holidays(country_code)
+    while (__date in holidays) or (not calendar.is_working_day(__date)):
+        __date = __date + (dt.timedelta(days=1) * (-1 if how == "backward" else 1))
+    return __date
 
 
 ###################################################################
