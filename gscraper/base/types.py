@@ -45,7 +45,8 @@ GENERAL_TYPES = {
     "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "_TYPE":_TYPE, "_BOOL":_BOOL, "Comparable":Comparable,
     "ClassInstance":ClassInstance, "Arguments":Arguments, "ArgsMapper":ArgsMapper,
     "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "LogMessage":LogMessage,
-    "TypeHint":TypeHint, "TypeList":TypeList}
+    "TypeHint":TypeHint, "TypeList":TypeList
+}
 
 
 ###################################################################
@@ -72,7 +73,8 @@ Range = Union[Sequence[Real], Real]
 KEY_TYPES = {
     "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
     "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey, "DecryptedKey":DecryptedKey,
-    "Status":Status, "Shape":Shape, "Unit":Unit, "Range":Range}
+    "Status":Status, "Shape":Shape, "Unit":Unit, "Range":Range
+}
 
 
 ###################################################################
@@ -92,7 +94,8 @@ Timezone = Union[BaseTzInfo, str]
 DATETIME_TYPES = {
     "Datetime":Datetime, "Timestamp":Timestamp, "DateNumeric":DateNumeric,
     "DateFormat":DateFormat, "DateUnit":DateUnit, "DateQuery":DateQuery,
-    "Timedelta":Timedelta, "Timezone":Timezone}
+    "Timedelta":Timedelta, "Timezone":Timezone
+}
 
 
 ###################################################################
@@ -113,7 +116,8 @@ Records = List[Dict]
 
 SEQUENCE_TYPES = {
     "ObjectSequence":ObjectSequence, "IndexedSequence":IndexedSequence,
-    "SequenceSet":SequenceSet, "NestedSequence":NestedSequence, "Records":Records}
+    "SequenceSet":SequenceSet, "NestedSequence":NestedSequence, "Records":Records
+}
 
 
 ###################################################################
@@ -130,6 +134,7 @@ MappingData = Union[Records, DataFrame, Dict]
 
 Data = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict]
 MappedData = Dict[str,Data]
+MappedFields = Dict[str,IndexLabel]
 
 JsonData = Union[Dict, List]
 JSON_DATA = (Dict, List)
@@ -150,9 +155,11 @@ ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict,
 
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "TypeMap":TypeMap, "NestedData":NestedData,
-    "TabularData":TabularData, "MappingData":MappingData, "Data":Data, "JsonData":JsonData,
+    "TabularData":TabularData, "MappingData":MappingData, "Data":Data,
+    "MappedData":MappedData, "MappedFields":MappedFields, "JsonData":JsonData,
     "RedirectData":RedirectData, "HtmlData":HtmlData, "Account":Account, "PostData":PostData,
-    "PandasData":PandasData, "ResponseData":ResponseData}
+    "PandasData":PandasData, "ResponseData":ResponseData
+}
 
 
 ###################################################################
@@ -171,7 +178,8 @@ MatchFunction = Union[Callable[[Any],bool], Sequence[Callable[[Any],bool]]]
 
 SPECIAL_TYPES = {
     "Pagination":Pagination, "Pages":Pages, "RegexFormat":RegexFormat,
-    "ApplyFunction":ApplyFunction, "MatchFunction":MatchFunction}
+    "ApplyFunction":ApplyFunction, "MatchFunction":MatchFunction
+}
 
 
 ###################################################################
@@ -412,7 +420,7 @@ def is_records(__object, how: Literal["any","all"]="any", empty=True) -> bool:
 def is_json_object(__object) -> bool:
     return isinstance(__object, JSON_DATA)
 
-def is_dfarray(__object, how: Literal["any","all"]="any", empty=True) -> bool:
+def is_dfarray(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, DataFrame, how=how, empty=empty)
 
 def is_df(__object) -> bool:
@@ -427,8 +435,11 @@ def is_df_sequence(__object) -> bool:
 def is_df_object(__object) -> bool:
     return isinstance(__object, (DataFrame, Series))
 
-def is_tag_array(__object, how: Literal["any","all"]="any", empty=True) -> bool:
+def is_tag_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
     return is_nested_in(__object, Tag, how=how, empty=empty)
+
+def is_bytes_array(__object, how: Literal["any","all"]="any", empty=False) -> bool:
+    return is_nested_in(__object, bytes, how=how, empty=empty)
 
 
 ###################################################################

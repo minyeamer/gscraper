@@ -443,7 +443,7 @@ class RequestSession(UploadSession):
 
     def validate_data(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **params):
+        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None, **params):
             data = func(self, *args, fields=fields, returnType=returnType, **params)
             if self.mappedReturn and isinstance(data, Dict):
                 return self.filter_mapped_data(data, fields=fields, returnType=returnType)
@@ -456,7 +456,7 @@ class RequestSession(UploadSession):
         data = filter_data(data, fields=fields, default=default, if_null=if_null)
         return data
 
-    def filter_mapped_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None) -> MappedData:
+    def filter_mapped_data(self, data: Data, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None) -> MappedData:
         if isinstance(fields, Dict):
             return {__key: self.filter_data(data[__key], __fields, returnType)
                     for __key, __fields, in fields.items() if __key in data}
@@ -493,7 +493,7 @@ class RequestSession(UploadSession):
 
     def arrange_data(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
+        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None,
                     convert_dtypes=False, sortby=str(), reset_index=False, **context):
             data = func(self, *args, fields=fields, returnType=returnType, **context)
             arrange_context = dict(convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
@@ -501,14 +501,6 @@ class RequestSession(UploadSession):
                 return self.arrange_mapped_data(data, fields=fields, returnType=returnType, **arrange_context)
             else: return self.arrange_single_data(data, fields=fields, returnType=returnType, **arrange_context)
         return wrapper
-
-    def arrange_mapped_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
-                            convert_dtypes=False, sortby=str(), reset_index=False) -> MappedData:
-        context = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
-        if isinstance(fields, Dict):
-            return {__key: self.arrange_single_data(data[__key], __fields, **context)
-                    for __key, __fields, in fields.items() if __key in data}
-        else: return {__key: self.arrange_single_data(__data, fields, **context) for __key, __data, in data.items()}
 
     def arrange_single_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                             convert_dtypes=False, sortby=str(), reset_index=False) -> Data:
@@ -521,6 +513,14 @@ class RequestSession(UploadSession):
         if sortby: data = data.sort_values(sortby)
         if reset_index: data = data.reset_index(drop=True)
         return data
+
+    def arrange_mapped_data(self, data: Data, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None,
+                            convert_dtypes=False, sortby=str(), reset_index=False) -> MappedData:
+        context = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+        if isinstance(fields, Dict):
+            return {__key: self.arrange_single_data(data[__key], __fields, **context)
+                    for __key, __fields, in fields.items() if __key in data}
+        else: return {__key: self.arrange_single_data(__data, fields, **context) for __key, __data, in data.items()}
 
     ###################################################################
     ############################ With Data ############################
@@ -2102,7 +2102,7 @@ class Pipeline(EncryptedSession):
         self.checkpoint("params", where=method.__name__, msg=dict(zip(["task","configs","params"],[task[NAME],configs,params])))
         return method, worker, params
 
-    def _get_task_fields(self, task_fields: IndexLabel=list(), fields: IndexLabel=list()) -> IndexLabel:
+    def _get_task_fields(self, task_fields: Union[List,Dict,Tuple]=list(), fields: Union[List,Dict]=list()) -> IndexLabel:
         if isinstance(task_fields, Dict):
             if isinstance(fields, Dict):
                 return {__key: self._set_task_fields(task_fields[__key], __fields)
