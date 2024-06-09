@@ -615,13 +615,14 @@ class BaseSession(CustomDict):
         with open(file_name, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
-    def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1",
-                        rename: Optional[Union[Literal["name","desc"],Dict]]="desc"):
+    def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1", rename: Union[Literal["name","desc"],Dict]="desc"):
         file_name = self._validate_file(file_name)
-        rename = rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)
-        data = to_dataframe(data).rename(columns=rename)
+        data = self.rename_save_data(to_dataframe(data), rename)
         try: data.to_excel(file_name, sheet_name=sheet_name, index=False)
         except: self._write_dataframe(data, file_name)
+
+    def rename_save_data(self, data: pd.DataFrame, rename: Union[Literal["name","desc"],Dict]="desc", **context) -> pd.DataFrame:
+        return data.rename(columns=(rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)))
 
     def _write_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
         writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_context={"options":{"strings_to_urls":False}})

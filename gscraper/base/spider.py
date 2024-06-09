@@ -12,7 +12,7 @@ from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gclou
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, JsonData, RedirectData
+from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
 
 from gscraper.utils import notna
@@ -515,15 +515,15 @@ class RequestSession(UploadSession):
         if not self.localSave: return
         file_name = self.get_save_name()+'_'+self.now("%Y%m%d%H%M%S")+".xlsx"
         if self.mappedReturn and isinstance(data, Dict):
-            self.save_mapped_result(file_name, **data)
+            self.save_mapped_result(data, file_name, **context)
         else: self.save_dataframe(data, file_name, self.get_save_sheet())
 
-    def save_mapped_result(self, file_name: str, **data):
-        renameMap = self.get_rename_map(to="desc")
+    def save_mapped_result(self, data: MappedData, file_name: str, key: _PASS=None, **context):
         with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
             for __key, __data in data.items():
                 sheet_name = self.get_save_sheet(__key)
-                to_dataframe(__data).rename(columns=renameMap).to_excel(writer, sheet_name=sheet_name, index=False)
+                __data = self.rename_save_data(to_dataframe(__data), key=__key, **context)
+                __data.to_excel(writer, sheet_name=sheet_name, index=False)
 
     @BaseSession.catch_exception
     def upload_result(self, data: Data, uploadList: GoogleUploadList=list(), **context):
