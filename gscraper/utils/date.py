@@ -10,9 +10,17 @@ import datetime as dt
 import pandas as pd
 import re
 
+from holidays.countries import *
+from holidays import country_holidays
+
 from workalendar.core import Calendar
+from workalendar.europe import *
+from workalendar.usa import *
+from workalendar.america import *
+from workalendar.africa import *
+from workalendar.asia import *
+from workalendar.oceania import *
 from workalendar.registry import registry
-import holidays
 
 
 UTC = "UTC"
@@ -172,7 +180,7 @@ def get_calendar(country_code: str) -> Calendar:
 
 
 def get_holidays(country_code: str) -> Dict:
-    return holidays.country_holidays(country_code)
+    return country_holidays(country_code)
 
 
 def is_holiday(__date: dt.date, country_code: str) -> bool:
