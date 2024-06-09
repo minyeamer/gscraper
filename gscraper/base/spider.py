@@ -782,7 +782,7 @@ class Spider(RequestSession, Iterator, Parser):
         context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
         iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        data = self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
+        data = self._gather_data(iterator, message=message, progress=((len(iterator)>0) and progress), fields=fields, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
@@ -1256,7 +1256,7 @@ class AsyncSpider(Spider, AsyncSession):
         context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
         iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
+        data = await self._gather_data(iterator, message=message, progress=((len(iterator)>0) and progress), fields=fields, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
@@ -1822,7 +1822,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 login_context = SESSION_CONTEXT(**self.validate_account(auth, **context))
                 cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
                 async with aiohttp.ClientSession(**cookies) as session:
-                    data = await func(self, *args, session=session, semaphore=semaphore, **login_context)
+                    data = await func(self, *args, auth=auth, session=session, semaphore=semaphore, **login_context)
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
