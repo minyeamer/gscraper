@@ -623,13 +623,13 @@ def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["
 ############################# Groupby #############################
 ###################################################################
 
-def groupby_records(__r: Records, by: _KT, if_null: Literal["drop","pass"]="drop", hier=False) -> Dict[_KT,Records]:
+def groupby_records(__r: Records, by: _KT, if_null: Literal["drop","pass"]="drop", drop=False, hier=False) -> Dict[_KT,Records]:
     by = cast_tuple(by)
     groups = defaultdict(list)
     for __m in __r:
         values = kloc(__m, by, default=str(), if_null=if_null, values_only=True, hier=hier)
         if len(values) != len(by): continue
-        else: groups[values[0] if len(values) == 1 else tuple(values)].append(__m)
+        else: groups[values[0] if len(values) == 1 else tuple(values)].append(drop_dict(__m, by) if drop else __m)
     return dict(groups)
 
 
