@@ -1,4 +1,4 @@
-from gscraper.base.types import Arguments, TypeHint, Unit, DateFormat, Timedelta, Timezone, CastError
+from gscraper.base.types import TypeHint, Unit, DateFormat, Timedelta, Timezone, CastError
 from gscraper.base.types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from gscraper.utils.cast import cast_datetime, cast_date, get_timezone

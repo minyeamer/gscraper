@@ -12,7 +12,7 @@ from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gclou
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, MappedData, MappedFields, JsonData, RedirectData
+from gscraper.base.types import Records, Data, JsonData, RedirectData
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
 
 from gscraper.utils import notna
@@ -38,7 +38,7 @@ import random
 import requests
 import time
 
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
