@@ -407,11 +407,14 @@ class RequestSession(UploadSession):
             for count in reversed(range(self.numRetries+1)):
                 try: return func(self, *args, **context)
                 except Exception as exception:
-                    if self.is_interrupt(exception): raise exception
-                    elif self.is_error(exception) or (count == 0):
-                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
-                    else: self.sleep()
+                    self.with_exception(exception, func, args, context, count)
         return wrapper
+
+    def with_exception(self, exception: Exception, func: Callable, args=tuple(), context=dict(), count=0, delay=None):
+        if self.is_interrupt(exception): raise exception
+        elif self.is_error(exception) or (count == 0):
+            return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+        else: self.sleep(delay)
 
     def is_interrupt(self, exception: Exception) -> bool:
         return isinstance(exception, UserInterrupt) or isinstance(exception, self.interruptType)
@@ -1096,11 +1099,14 @@ class AsyncSession(RequestSession):
             for count in reversed(range(self.numRetries+1)):
                 try: return await func(self, *args, **context)
                 except Exception as exception:
-                    if isinstance(exception, self.interruptType): raise exception
-                    elif isinstance(exception, self.errorType) or (count == 0):
-                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
-                    else: await self.async_sleep()
+                    await self.with_exception(exception, func, args, context, count)
         return wrapper
+
+    async def with_exception(self, exception: Exception, func: Callable, args=tuple(), context=dict(), count=0, delay=None):
+        if self.is_interrupt(exception): raise exception
+        elif self.is_error(exception) or (count == 0):
+            return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+        else: await self.async_sleep(delay)
 
     def validate_data(func):
         @functools.wraps(func)
