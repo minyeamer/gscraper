@@ -139,7 +139,7 @@ def dumps(__object, dump=False, limit=3000, depth=3) -> Any:
 
 
 def log_encrypt(show=3, **kwargs) -> LogMessage:
-    encrypt = lambda string, show=3: str(string[:show]).ljust(len(string),'*')
+    encrypt = lambda string, show=3: str(string)[:show].ljust(len(str(string)),'*')
     return dict(**{key:encrypt(value, show=show) for key, value in kwargs.items()})
 
 
