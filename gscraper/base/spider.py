@@ -2031,7 +2031,7 @@ class Pipeline(EncryptedSession):
     def gather(self, message=str(), progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
         for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
-            data[task[DATANAME]] = self.run_task(task, fields=fields, data=data, **context)
+            data[task[DATANAME]] = self.run_task(task, fields=fields, data=data, progress=progress, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
@@ -2142,10 +2142,10 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
             if isinstance(task, Sequence):
                 response = await tqdm.gather(*[
-                    self.run_task(subtask, fields=fields, data=data, **context) for subtask in task],
+                    self.run_task(subtask, fields=fields, data=data, progress=progress, **context) for subtask in task],
                         desc=message, disable=(self.globalProgress or (not (self.asyncProgress and progress))))
                 data = dict(data, **dict(zip(vloc(task, DATANAME), response)))
-            else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, **context)
+            else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, progress=progress, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
     async def run_task(self, task: Task, fields: IndexLabel=list(), data: Dict[_KT,Data]=dict(), **context) -> Data:
