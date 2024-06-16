@@ -157,6 +157,8 @@ def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
     elif content_type == "javascript": __type = "javascript"
     elif content_type == "json": __type = "application/json"
     elif content_type == "text": __type = "text/plain"
+    elif "WebKitFormBoundary" in content_type:
+        return f"multipart/form-data; boundary={content_type}"
     else: __type = content_type if isinstance(content_type, str) else str()
     return __type+(("; charset=UTF-8") if utf8 else str())
 
