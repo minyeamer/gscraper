@@ -309,7 +309,7 @@ def is_pandas_frequency(freq: Timedelta, upper=False, flip=False) -> bool:
 
 def is_daily_frequency(freq: Timedelta) -> bool:
     if isinstance(freq, dt.timedelta): return (freq.days == 1) and (freq.seconds == 0)
-    elif isinstance(freq, str): return bool(re.match(r"^(?=.*[Dd])(?!.*[02-9]).*$", freq))
+    elif isinstance(freq, str): return to_offset(freq).freqstr == "D"
     else: return False
 
 
@@ -331,9 +331,7 @@ def validate_pandas_frequency(freq: Timedelta, upper=True, flip=True) -> Timedel
 ######################## Pandas Date Range ########################
 ###################################################################
 
-def trunc_date(__object: DateFormat, interval: Timedelta="D",
-                how: Literal["backward","forward"]="backward") -> dt.date:
-    __date = cast_date(__object)
+def trunc_date(__date: dt.date, interval: Timedelta="D", how: Literal["backward","forward"]="backward") -> dt.date:
     if is_daily_frequency(interval) or not isinstance(__date, dt.date): return __date
     offset = to_offset(interval)
     if how == "backward": return offset.rollback(__date).date()
@@ -350,12 +348,13 @@ def _pair_date_range(date_range: Sequence[dt.date], interval: Timedelta="D") -> 
 def get_date_range(startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
                     periods: Optional[int]=None, interval: Timedelta="D", upper=True, flip=True,
                     tzinfo: Optional[Timezone]=None, paired=False) -> List[Union[dt.date,Tuple[dt.date,dt.date]]]:
-    if sum(map(bool, (startDate, endDate, periods, interval))) < 3: raise ValueError(DATE_RANGE_MSG)
+    if sum(map((lambda x: x is not None), (startDate, endDate, periods, interval))) < 3:
+        raise ValueError(DATE_RANGE_MSG)
     interval = validate_pandas_frequency(interval, upper=upper, flip=flip)
-    startDate, endDate = trunc_date(startDate, interval, how="backward"), get_date(endDate, if_null=None)
+    startDate, endDate = trunc_date(get_date(startDate), interval, how="backward"), get_date(endDate, if_null=None)
     date_range = [date.date() for date in pd.date_range(startDate, endDate, periods, interval, tzinfo)]
     if (not isinstance(endDate, dt.date)) and isinstance(periods, int):
         endDate = pd.date_range(startDate, endDate, periods+1, interval, tzinfo)[-1].date() - dt.timedelta(days=1)
-    if date_range and (not is_daily_frequency(interval)) and (date_range[-1] != endDate):
+    if date_range and (not is_daily_frequency(interval)):
         date_range.append(endDate + dt.timedelta(days=int(paired)))
     return _pair_date_range(date_range, interval) if paired else date_range
