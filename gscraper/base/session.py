@@ -1172,7 +1172,7 @@ class Mapper(BaseSession):
         apply_true, apply_false = get_scala(apply, index=0, default=dict()), get_scala(apply, index=-1, default=dict())
         df_true = self._get_value(df_true, path[0], apply=apply_true, context=context, name=name, log=True, **field)
         df_false = self._get_value(df_false, path[1], apply=apply_false, context=context, name=name, log=False, **field)
-        try: return concat_df([df_true, df_false]).sort_index()
+        try: return pd.concat([df_true, df_false]).sort_index()
         except: return __MISMATCH__
 
     def _get_value_iterate(self, data: ResponseData, path: Sequence, apply: Apply=dict(), match: Match=dict(),
