@@ -779,11 +779,12 @@ class Spider(RequestSession, Iterator, Parser):
         return data
 
     def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                    pageSize=0, pageStart=1, offset=1, interval: _PASS=None, **context) -> List[Data]:
+                    pageSize=0, pageStart=1, offset=1, interval: Optional[Timedelta]=None, **context) -> List[Data]:
         context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
         iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        data = self._gather_data(iterator, message=message, progress=((len(iterator)>0) and progress), fields=fields, **context)
+        context.update(message=message, progress=((len(iterator)>0) and progress), fields=fields, interval=interval)
+        data = self._gather_data(iterator, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
@@ -1250,11 +1251,12 @@ class AsyncSpider(Spider, AsyncSession):
         return data
 
     async def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                            pageSize=0, pageStart=1, offset=1, interval: _PASS=None, **context) -> List[Data]:
+                            pageSize=0, pageStart=1, offset=1, interval: Optional[Timedelta]=None, **context) -> List[Data]:
         context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
         iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        data = await self._gather_data(iterator, message=message, progress=((len(iterator)>0) and progress), fields=fields, **context)
+        context.update(message=message, progress=((len(iterator)>0) and progress), fields=fields, interval=interval)
+        data = await self._gather_data(iterator, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
