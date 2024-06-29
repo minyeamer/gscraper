@@ -428,30 +428,31 @@ def howin(__iterable: Sequence[bool], how: Literal["any","all"]="all") -> bool:
 
 def isin(__iterable: Iterable, exact: Optional[_VT]=None, include: Optional[_VT]=None,
         exclude: Optional[_VT]=None, how: Literal["any","all"]="any", **kwargs) -> bool:
-    __match, __all = (True, (how == "all"))
-    if notna(exact): __match &= _isin(__iterable, exact, how="exact", all=__all)
-    if __match and notna(include): __match &= _isin(__iterable, include, how="include", all=__all)
+    __match = True
+    if notna(exact): __match &= _isin(__iterable, exact, how="exact", all=(how == "all"))
+    if __match and notna(include): __match &= _isin(__iterable, include, how="include", all=(how == "all"))
     if __match and notna(exclude): __match &= _isin(__iterable, exclude, how="exclude", all=True)
     return __match
 
 
-def _isin(__iterable: Iterable, __values: Optional[_VT]=None,
-            how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> bool:
+def _isin(__iterable: Iterable, values: Optional[_VT]=None,
+        how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> bool:
     if is_array(__iterable):
-        return howin([_isin(__i, __values, how, all, strict) for __i in __iterable], how=("all" if all else "any"))
-    elif is_array(__values):
-        return howin([_isin(__iterable, __v, how, all, strict) for __v in __values], how=("all" if all else "any"))
-    elif isna(__values): return exists(__iterable, strict=strict)
+        return howin([_isin(__i, values, how, all, strict) for __i in __iterable], how=("all" if all else "any"))
+    elif is_array(values):
+        if how == "exact": how, all = "include", True
+        return howin([_isin(__iterable, __v, how, all, strict) for __v in values], how=("all" if all else "any"))
+    elif isna(values): return exists(__iterable, strict=strict)
     elif not isinstance(__iterable, Iterable): return False
-    elif how == "exact": return __values == __iterable
-    elif how == "include": return __values in __iterable
-    elif how == "exclude": return __values not in __iterable
+    elif how == "exact": return values == __iterable
+    elif how == "include": return values in __iterable
+    elif how == "exclude": return values not in __iterable
     else: raise ValueError(INVALID_ISIN_MSG)
 
 
 def isin_dict(__m: Dict, keys: Optional[_KT]=None,
-                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                how: Literal["any","all"]="any", if_null=False, hier=False) -> bool:
+            exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
+            how: Literal["any","all"]="any", if_null=False, hier=False) -> bool:
     if isna(exact) and isna(include) and isna(exclude): return True
     keys = keys if keys or hier else list(__m.keys())
     __values = kloc(__m, keys, if_null="drop", values_only=True, hier=hier)
@@ -478,28 +479,35 @@ def isin_df(df: pd.DataFrame, columns: Optional[IndexLabel]=None,
             exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
             how: Literal["any","all"]="any", if_null=False, filter=True) -> PandasData:
     if isna(exact) and isna(include) and isna(exclude): return df
-    __matches, _all = pd.Series([True] * len(df), index=df.index), (how == "all")
-    for __column in (cast_tuple(columns) if columns else df.columns):
-        if __column not in df:
-            if if_null: continue
-            elif filter: return pd.DataFrame(columns=df.columns)
-            else: return  pd.Series([False] * len(df), index=df.index)
-        __match = df[__column].notna()
-        if __match.any() and notna(exact):
-            __match = __match & _isin_series(df[__match][__column], exact, how="exact", all=_all)
-        if __match.any() and notna(include):
-            __match = __match & _isin_series(df[__match][__column], include, how="include", all=_all)
-        if __match.any() and notna(exclude):
-            __match = __match & _isin_series(df[__match][__column], exclude, how="exclude", all=_all)
-        if if_null: __match = __match & df[__column].isna()
-        __matches = __matches & __match if how == "all" else __matches | __match
-        if not __matches.any(): break
+    elif not if_null and columns and diff(cast_list(columns), df.columns):
+        return pd.DataFrame(columns=df.columns) if filter else pd.Series([False] * len(df), index=df.index)
+    __matches = pd.Series([True] * len(df), index=df.index)
+    for __how, __values in zip(["exact", "include", "exclude"], [exact, include, exclude]):
+        __all = True if __how == "exclude" else (how == "all")
+        if isna(__values): continue
+        else: __match = _isin_columns(df[__matches], columns, __values, __how, __all, if_null)
+        __matches = __matches & __match
     return df[__matches] if filter else __matches
 
 
-def _isin_series(series: pd.Series, __values: Optional[IndexLabel]=None,
+def _isin_columns(df: pd.DataFrame, columns: Optional[IndexLabel]=None, values: Optional[_VT]=None,
+                how: Literal["exact","include","exclude"]="exact", all=False, if_null=False) -> pd.Series:
+    columns = inter(cast_list(columns), df.columns) if columns else df.columns.tolist()
+    if not columns:
+        return pd.Series([True] * len(df), index=df.index)
+    __matches = pd.Series([all] * len(df), index=df.index)
+    for __column in columns:
+        if __column not in df: continue
+        __match = _isin_series(df[__column], values, how=how, all=all).fillna(if_null)
+        __matches = (__matches & __match) if all else (__matches | __match)
+    return __matches
+
+
+def _isin_series(series: pd.Series, __values: Optional[_VT]=None,
                 how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> pd.Series:
-    if is_array(__values):
+    if series.empty: return series
+    elif is_array(__values):
+        if how == "exact": how, all = "include", True
         __op = arg_and if all else arg_or
         return __op(*[_isin_series(series, __v, how, all, strict) for __v in __values])
     elif isna(__values): return series.apply(lambda x: exists(x, strict=strict))
@@ -606,9 +614,10 @@ def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -
 
 
 def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","last"]="first") -> pd.DataFrame:
+    columns = inter(*[get_columns(df) for df in __object])
     if axis == 1: __object = diff_df(*__object, keep=keep)
     else: __object = [df for df in __object if df_exists(df)]
-    return pd.concat(__object, axis=axis) if __object else pd.DataFrame()
+    return pd.concat(__object, axis=axis) if __object else pd.DataFrame(columns=columns)
 
 
 def chain_exists(data: Data, data_type: Optional[TypeHint]=None, keep: Literal["fist","last"]="first") -> Data:
