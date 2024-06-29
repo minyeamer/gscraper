@@ -23,6 +23,7 @@ from google.cloud.bigquery.table import RowIterator
 from google.cloud.bigquery.job import LoadJobConfig
 
 from abc import ABCMeta
+from tqdm import tqdm
 import copy
 import functools
 import os
@@ -61,6 +62,7 @@ UPLOAD = lambda name=str(): f"upload_{name}" if name else "upload"
 ###################################################################
 
 INVALID_QUERY_MSG = "To update data, parameters for source and destination are required."
+UPLOAD_GBQ_MSG = lambda table, partitioned=False: f"Uploading data to '{table}'" + (" by partition" if partitioned else str())
 
 BIGQUERY_TYPE = "BigQueryType"
 BIGQUERY_MODE = "BigQueryMode"
@@ -503,7 +505,7 @@ class GoogleUploader(BaseSession):
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, columns: IndexLabel=list(),
                     mode: Literal["append","replace","upsert"]="append", primary_key: _KT=list(), partition=str(),
                     partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
-                    base_query=str(), name=str(), account: Account=dict(), **context) -> bool:
+                    progress=True, base_query=str(), name=str(), account: Account=dict(), **context) -> bool:
         data = self._validate_upload_columns(name, data, columns, table=table, project_id=project_id, **context)
         if base_query or (mode == "upsert"):
             data = self.from_base_query(**self.from_locals(locals()))
@@ -513,7 +515,7 @@ class GoogleUploader(BaseSession):
         data = self._validate_primary_key(data, primary_key)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, dump=self.logJson))
-        upload_gbq(table, project_id, data, if_exists=mode, partition=partition, partition_by=partition_by, account=account)
+        upload_gbq(table, project_id, data, mode, partition, partition_by, progress, account)
         return True
 
     def from_base_query(self, table: str, project_id: str, data: pd.DataFrame, mode: Literal["append","replace","upsert"]="append",
@@ -541,7 +543,7 @@ class GoogleUploader(BaseSession):
                     cell=str(), default=None, head=1, headers=None, str_cols: NumericiseIgnore=list(),
                     rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="desc", 
                     partition=str(), partition_by: Literal["auto","second","minute","hour","day","date"]="auto",
-                    name=str(), account: Account=dict(), **context) -> bool:
+                    progress=True, name=str(), account: Account=dict(), **context) -> bool:
         if from_key and from_sheet:
             data = self.read_gs_base(from_key, from_sheet, name, default, head, headers, str_cols, rename, to, account)
         elif from_query and from_pid:
@@ -552,7 +554,7 @@ class GoogleUploader(BaseSession):
                 to_key, to_sheet, data, columns, mode, primary_key, cell, name=name, account=account, **context)
         elif to_table and to_pid:
             return self.upload_gbq(
-                to_table, to_pid, data, columns, mode, primary_key, partition, partition_by, name=name, account=account, **context)
+                to_table, to_pid, data, columns, mode, primary_key, partition, partition_by, progress, name=name, account=account, **context)
         else: return False
 
 
@@ -654,12 +656,13 @@ def read_gbq(query: str, project_id: str, return_type: Literal["records","datafr
 
 def upload_gbq(table: str, project_id: str, data: pd.DataFrame, if_exists: Literal["replace","append"]="append",
             partition=str(), partition_by: Literal["auto","second","minute","hour","day","month","year","date"]="auto",
-            account: Account=dict()):
+            progress=True, account: Account=dict()):
     client = create_connection(project_id, account)
     if if_exists == "replace":
         client.query(f"DELETE FROM `{table}` WHERE TRUE;")
     job_config = LoadJobConfig(write_disposition="WRITE_APPEND")
-    for __data in _partition_by(data, partition, partition_by):
+    iterator = _partition_by(data, partition, partition_by)
+    for __data in tqdm(iterator, desc=UPLOAD_GBQ_MSG(table, partitioned=(len(iterator) > 1)), disable=(not progress)):
         client.load_table_from_dataframe(__data, f"{project_id}.{table}", job_config=job_config)
 
 
