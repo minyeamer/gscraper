@@ -752,7 +752,9 @@ class Spider(RequestSession, Iterator, Parser):
 
     def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
-        return [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        if iterator:
+            return [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        else: return self.fetch(fields=fields, **context)
 
     ###################################################################
     ########################### Gather Count ##########################
@@ -1224,7 +1226,9 @@ class AsyncSpider(Spider, AsyncSession):
     async def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
                             **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
-        return await tqdm.gather(*[self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        if iterator:
+            return await tqdm.gather(*[self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        else: return await self.fetch(fields=fields, **context)
 
     ###################################################################
     ########################### Gather Count ##########################

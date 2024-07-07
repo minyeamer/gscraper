@@ -787,6 +787,8 @@ class Iterator(CustomDict):
                     indexing=True, **context) -> Tuple[List[Context],Context]:
         arguments, periods, ranges = list(), list(), list()
         args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
+        if not (args_context or interval or iterateProduct):
+            return None, context
         if args_context:
             arguments, context = self._from_args(*args, **args_context, **context)
             iterateProduct = diff(iterateProduct, iterateArgs, PAGE_ITERATOR)
