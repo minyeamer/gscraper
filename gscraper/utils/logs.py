@@ -1,5 +1,6 @@
 from gscraper.base.types import LogLevel, LogMessage, Shape, TabularData, Data
 from gscraper.base.types import is_records, is_dfarray, is_tag_array
+from gscraper.utils.map import chain_dict, re_get
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ast import literal_eval
@@ -51,33 +52,57 @@ class CustomLogger(logging.Logger):
         self.addHandler(handler)
 
 
-def parse_message(message: str):
-    msg_part = re.search('"message":"\{.*\}",', message)
-    if msg_part:
-        dict_msg = str(literal_eval(re.search('(?<="message":")(\{.*\})(?=",)', message).group()))
-        dict_msg = dict_msg.replace('\'','\"').replace('`','\'').replace("\": ","\":")[1:-1]+','
-        message = message.replace(msg_part.group(), dict_msg)
-    return message.replace(":True",":true").replace(":False",":false").replace(":None",":null")
-
-
 def fit_json_log(log_file=str()):
     if not os.path.exists(log_file): return
-    with open(log_file, "r", encoding="utf-8") as f:
-        log = f.readlines()
-        if '}\n' in log:
-            new_index = log.index('}\n')+1
-            if len(log) == new_index: return
-            new_log = [' '*4+line for line in log[new_index:]]
-            new_log = [parse_message(line) for line in new_log]
-            new_log[-1] = re.sub(",$", "", new_log[-1])
-            log[new_index-3] = log[new_index-3].replace("\n", ",\n").replace("[,","[")
-            log = log[:new_index-2]+new_log+log[new_index-2:new_index]
-        else:
-            log = [parse_message(line) for line in log]
-            log = ["{\n", '  "log": [\n']+[' '*4+line for line in log]+["  ]\n","}\n"]
-            log[-3] = re.sub(",$", "", log[-3])
-    with open(log_file, "w", encoding="utf-8") as f:
-        f.writelines(log)
+    with open(log_file, 'r', encoding="utf-8") as __input:
+        logs = __input.read().strip().split('\n')
+        if logs:
+            with open(log_file, 'w', encoding="utf-8") as __output:
+                if logs[0] == '[': __output.write(parse_history(logs, indent=1)+'\n')
+                else: __output.write('[\n' + parse_logs(logs, indent=1) + '\n]\n')
+
+
+def parse_history(logs: List[str], indent=1) -> str:
+    symbols = [__i for __i, log in enumerate(logs) if log == ']']
+    if not symbols: history, new = logs[1:], list()
+    elif len(symbols) == 1: history, new = logs[1:symbols[0]], logs[symbols[0]+1:]
+    else: history, new = logs[1:symbols[0]], [log for log in logs[symbols[0]+1:] if log != ']']
+    history, new = re.sub(',$', '', '\n'.join(history)), parse_logs(new, indent)
+    return '[\n' + history + ((',\n' + new) if new else str()) + '\n]'
+
+
+def parse_logs(logs: List[str], indent=1) -> str:
+    return re.sub(',$', '', '\n'.join([('\t'*indent)+parse_message(re.sub(',$', '', log).strip())+',' for log in logs]))
+
+
+def parse_message(message: str) -> str:
+    msg_part = re_get(r'("message":"\{.*\}",)', message)
+    if msg_part:
+        msg = {__k: (list(__v) if isinstance(__v, Tuple) else __v) for __k, __v in load_dict(msg_part[11:-2]).items()}
+        info = chain_dict([load_dict(message.replace(msg_part, '')), msg], keep="first")
+    else: info = load_dict(message)
+    message = json.dumps(info, ensure_ascii=False, default=str)
+    return message.replace('\'','\"').replace('`','\'').replace("\": ","\":")
+
+
+def load_dict(__s: str) -> Dict:
+    __s = re.sub(r"datetime.date\((\d+), (\d+), (\d+)\)", convert_date, __s)
+    try: return literal_eval(__s)
+    except ValueError:
+        __m = dict()
+        for kv in __s[1:-1].split(', '):
+            try: __m.update(literal_eval('{' + kv + '}'))
+            except:
+                key, value = kv.split(': ', maxsplit=1)
+                __m[key[1:-1]] = value
+        return __m
+
+
+def convert_date(match: re.Match) -> str:
+    year = match.group(1)
+    month = str(match.group(2)).zfill(2)
+    day = str(match.group(3)).zfill(2)
+    return f'"{year}-{month}-{day}"'
 
 
 ###################################################################
