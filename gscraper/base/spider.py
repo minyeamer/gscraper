@@ -424,7 +424,7 @@ class RequestSession(UploadSession):
         return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
 
     def sleep(self, delay: Optional[Range]=None):
-        delay = delay if delay is not None else self.get_delay(self.delay)
+        delay = self.get_delay(delay if delay is not None else self.delay)
         if delay: time.sleep(delay)
 
     def get_delay(self, delay: Range) -> Union[float,int]:
@@ -1086,7 +1086,7 @@ class AsyncSession(RequestSession):
         return wrapper
 
     async def async_sleep(self, delay: Optional[Range]=None):
-        delay = delay if delay is not None else self.get_delay(self.delay)
+        delay = self.get_delay(delay if delay is not None else self.delay)
         if delay: await asyncio.sleep(delay)
 
     ###################################################################
