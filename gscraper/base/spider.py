@@ -423,8 +423,10 @@ class RequestSession(UploadSession):
     def is_error(self, exception: Exception) -> bool:
         return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
 
-    def sleep(self, delay: Optional[Range]=None):
+    def sleep(self, delay: Optional[Range]=None, minimum=0., maximum=None):
         delay = self.get_delay(delay if delay is not None else self.delay)
+        if isinstance(minimum, (float,int)): delay = max(delay, minimum)
+        if isinstance(maximum, (float,int)): delay = min(delay, maximum)
         if delay: time.sleep(delay)
 
     def get_delay(self, delay: Range) -> Union[float,int]:
@@ -1087,8 +1089,10 @@ class AsyncSession(RequestSession):
             return response
         return wrapper
 
-    async def async_sleep(self, delay: Optional[Range]=None):
+    async def async_sleep(self, delay: Optional[Range]=None, minimum=0., maximum=None):
         delay = self.get_delay(delay if delay is not None else self.delay)
+        if isinstance(minimum, (float,int)): delay = max(delay, minimum)
+        if isinstance(maximum, (float,int)): delay = min(delay, maximum)
         if delay: await asyncio.sleep(delay)
 
     ###################################################################
