@@ -1190,10 +1190,10 @@ def concat(*args: str, sep=',', strict=True) -> str:
 
 
 def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:
-    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
+    __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern, re.DOTALL)
     if not isinstance(index, int): return __pattern.findall(string)
     catch = __pattern.search(string)
-    return __pattern.search(string).groups()[index] if catch else default
+    return catch.groups()[index] if catch else default
 
 
 def replace_map(__string: str, **context) -> str:
