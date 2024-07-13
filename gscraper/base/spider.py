@@ -2084,7 +2084,7 @@ class Pipeline(EncryptedSession):
                     **context) -> Tuple[Callable,Spider,Context]:
         method = getattr(self, task[TASK])
         task_filter = dict(fields=self.validate_task_fields(task[FIELDS], fields), returnType=task[DATATYPE])
-        configs, params = self._get_task_params(task, **context)
+        configs, params = self._set_task_params(task, **context)
         worker = task[OPERATOR](**task_filter, **configs)
         data = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
         params = dict(params, worker=worker, taskname=task[NAME], **task_filter, **data)
@@ -2100,26 +2100,24 @@ class Pipeline(EncryptedSession):
         if isinstance(task_fields, Tuple): return task_fields
         else: return unique(*cast_list(task_fields), *fields)
 
-    def _get_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
+    def _set_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
         if PARAMS in task:
-            return self._select_task_params(task, **context)
-        else: return self._split_task_params(task, **context)
+            return self._with_task_params(task, **context)
+        else: return self._without_task_params(task, **context)
 
-    def _select_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
-        params = kloc(context, task[PARAMS], if_null="drop")
-        context = kloc(context, WORKER_UNIQUE, if_null="drop")
-        return self._update_extra_params(task, context, PROXY_CONTEXT(**params))
+    def _with_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
+        params, context = split_dict(dict(context, **task.get(CONTEXT, dict())), task[PARAMS])
+        context = kloc(context, WORKER_UNIQUE+WORKER_EXTRA, if_null="drop")
+        context["progress"] = context.get("progress", True) and self.taskProgress
+        return context, params
 
-    def _split_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
+    def _without_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
         context, params = split_dict(context, WORKER_UNIQUE)
-        return self._update_extra_params(task, context, PROXY_CONTEXT(**params))
-
-    def _update_extra_params(self, task: Task, context: Context, params: Context) -> Tuple[Context,Context]:
+        params = PROXY_CONTEXT(**params)
         if CONTEXT in task:
             context = dict(context, **kloc(task[CONTEXT], WORKER_EXTRA, if_null="drop"))
             params = dict(params, **drop_dict(task[CONTEXT], WORKER_EXTRA, inplace=False))
-        if ("progress" in context) or (not self.taskProgress):
-            context["progress"] = context.get("progress", True) and self.taskProgress
+        context["progress"] = context.get("progress", True) and self.taskProgress
         return context, params
 
 
