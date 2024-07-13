@@ -94,7 +94,7 @@ def load_dict(__s: str) -> Dict:
             try: __m.update(literal_eval('{' + kv + '}'))
             except:
                 key, value = kv.split(': ', maxsplit=1)
-                __m[key[1:-1]] = value
+                __m.update(literal_eval('{' + key + ': ' + '\''+value.replace('\'','\\\'').replace('\"','\\\'')+'\'' + '}'))
         return __m
 
 
