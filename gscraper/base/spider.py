@@ -2102,18 +2102,11 @@ class Pipeline(EncryptedSession):
 
     def _set_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
         if PARAMS in task:
-            return self._with_task_params(task, **context)
-        else: return self._without_task_params(task, **context)
-
-    def _with_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
-        params, context = split_dict(dict(context, **task.get(CONTEXT, dict())), task[PARAMS])
-        context = kloc(context, WORKER_UNIQUE+WORKER_EXTRA, if_null="drop")
-        context["progress"] = context.get("progress", True) and self.taskProgress
-        return context, params
-
-    def _without_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
-        context, params = split_dict(context, WORKER_UNIQUE)
-        params = PROXY_CONTEXT(**params)
+            params, context = split_dict(context, task[PARAMS])
+            context = kloc(context, WORKER_UNIQUE+WORKER_EXTRA, if_null="drop")
+        else:
+            context, params = split_dict(context, WORKER_UNIQUE)
+            params = PROXY_CONTEXT(**params)
         if CONTEXT in task:
             context = dict(context, **kloc(task[CONTEXT], WORKER_EXTRA, if_null="drop"))
             params = dict(params, **drop_dict(task[CONTEXT], WORKER_EXTRA, inplace=False))
