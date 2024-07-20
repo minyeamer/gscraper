@@ -18,6 +18,7 @@ NAME, TYPE, DESC, DEFAULT, ALIAS = "name", "type", "desc", "default", "alias"
 __NONE__ = "__NONE__"
 __OPTIONAL__ = "__OPTIONAL__"
 
+INVALID_MSG = lambda __name: f"'{__name}' is not valid."
 INVALID_OBJECT_MSG = lambda __object, __name: f"'{__object}' is not a valid {__name} object."
 INVALID_OBJECT_TYPE_MSG = lambda __object, __type: f"'{type(__object)}' is not a valid type for {__type} object."
 INVALID_INSTANCE_MSG = lambda __object, __instance: f"'{type(__object)}' is not a valid instance for {__instance} type."
@@ -75,9 +76,9 @@ RESPONSE_CONTEXT = lambda response=None, tzinfo=None, countryCode=None, iterateU
 
 
 GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None, table=None, query=None, project_id=None, \
-                        columns=None, mode=None, primary_key=None, base=None, base_sheet=None, base_query=None, \
+                        columns=None, mode=None, primary_key=None, base=None, read=None, upload=None, \
                         cell=None, clear=None, default=None, head=None, headers=None, str_cols=None, arr_cols=None, \
-                        rename=None, to=None, progress=None, partition=None, partition_by=None, fields=None, **context: context
+                        rename=None, to=None, progress=None, partition=None, fields=None, **context: context
 
 
 UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, **context: context

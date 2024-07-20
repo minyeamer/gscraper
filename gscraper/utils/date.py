@@ -30,7 +30,7 @@ KST = "Asia/Seoul"
 US = "US"
 KR = "KR"
 
-DATE_UNIT = ["second", "minute", "hour", "day", "month", "year"]
+DATE_UNIT = ["second", "minute", "hour", "date", "month", "year"]
 
 DATETIME_FORMAT = {
     "date": "%Y-%m-%d",
@@ -58,8 +58,7 @@ INVALID_INTERVAL_MSG = lambda interval: f"'{interval}' is not valid date interva
 ######################### Current Datetime ########################
 ###################################################################
 
-def trunc_datetime(__datetime: dt.datetime,
-                    unit: Literal["second","minute","hour","day","month","year"]=str()) -> dt.datetime:
+def trunc_datetime(__datetime: dt.datetime, unit: Literal["second","minute","hour","day","month","year"]=str()) -> dt.datetime:
     if unit not in DATE_UNIT: return __datetime
     index = DATE_UNIT.index(unit.lower())
     if index >= 0: __datetime = __datetime.replace(microsecond=0)

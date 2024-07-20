@@ -7,7 +7,7 @@ from gscraper.base.session import BaseSession, Iterator, Parser
 from gscraper.base.session import UserInterrupt, ForbiddenError, ParseError
 from gscraper.base.session import Info, Schema, Field, Flow, Process
 from gscraper.base.session import ITER_INDEX, PAGE_ITERATOR, iter_task
-from gscraper.base.gcloud import GoogleQueryReader, GoogleUploader, GoogleQueryList, GoogleUploadList
+from gscraper.base.gcloud import GoogleUploader, GoogleQueryList, GoogleUploadList
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
@@ -308,7 +308,7 @@ class RangeFilter(TypedRecords):
 ######################### Request Session #########################
 ###################################################################
 
-class UploadSession(GoogleQueryReader, GoogleUploader):
+class UploadSession(GoogleUploader):
     __metaclass__ = ABCMeta
     operation = "session"
 
@@ -487,9 +487,10 @@ class RequestSession(UploadSession):
 
     def arrange_data(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), returnType: Optional[TypeHint]=None,
-                    convert_dtypes=False, sortby=str(), reset_index=False, **context):
-            data = func(self, *args, fields=fields, returnType=returnType, **context)
+        def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), ranges: RangeFilter=list(),
+                    returnType: Optional[TypeHint]=None, convert_dtypes=False, sortby=str(), reset_index=False, **context):
+            data = func(self, *args, fields=fields, ranges=ranges, returnType=returnType, **context)
+            reset_index = reset_index or (len(ranges) > 0)
             params = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
             if self.mappedReturn:
                 return traversal_dict(data, fields, apply=self.filter_data_plus, dropna=True, **params)
@@ -691,8 +692,7 @@ class Spider(RequestSession, Iterator, Parser):
 
     def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
                         drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
-        if locals:
-            context = self.local_context(locals, **context, drop=drop)
+        context = self.local_context(locals, **context, drop=drop)
         queryMap = self.get_query_map(key="name", value=["type","iterable"])
         for __key in list(context.keys()):
             if __key not in queryMap: pass
