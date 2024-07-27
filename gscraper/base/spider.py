@@ -490,7 +490,7 @@ class RequestSession(UploadSession):
         def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), ranges: RangeFilter=list(),
                     returnType: Optional[TypeHint]=None, convert_dtypes=False, sortby=str(), reset_index=False, **context):
             data = func(self, *args, fields=fields, ranges=ranges, returnType=returnType, **context)
-            reset_index = reset_index or (len(ranges) > 0)
+            reset_index = reset_index or (len(sortby) > 0) or (len(ranges) > 0)
             params = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
             if self.mappedReturn:
                 return traversal_dict(data, fields, apply=self.filter_data_plus, dropna=True, **params)
