@@ -9,7 +9,7 @@ from gscraper.base.types import TabularData, PostData, from_literal
 from gscraper.utils.cast import cast_list, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_excel, arg_and
+from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table, arg_and
 from gscraper.utils.map import cloc, to_dataframe, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account
@@ -341,7 +341,7 @@ class GoogleQueryReader(BaseSession):
                     file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **context) -> TabularData:
         rename_map = rename if rename else self.get_rename_map(to=to, query=True)
         kwargs = dict(str_cols=str_cols, return_type=return_type, rename=rename_map, file_pattern=file_pattern, reverse=reverse)
-        data = read_excel(file_path, sheet_name, fields, default, if_null, **kwargs)
+        data = read_table(file_path, sheet_name=sheet_name, columns=fields, default=default, if_null=if_null, **kwargs)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_excel", msg={FILEPATH:file_path, SHEETNAME:sheet_name, DATA:data}, save=data)
         self.logger.info(log_table(data, name=name, file_path=file_path, sheet_name=sheet_name, dump=self.logJson))

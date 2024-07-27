@@ -1,5 +1,5 @@
 from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint
-from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence, RenameMap
+from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence, RenameMap, TypeMap
 from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat, PANDAS_DATA
 from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
@@ -1401,61 +1401,84 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
 
 
 ###################################################################
-############################## Excel ##############################
+############################## Table ##############################
 ###################################################################
 
-def read_excel(io: Union[bytes,str], sheet_name: Optional[Union[str,int,List]]=0, columns: Optional[IndexLabel]=list(),
-                default=None, if_null: Literal["drop","pass"]="pass", reorder=True, html=False, header=0,
-                str_cols: Union[bool,Sequence[Union[str,int]]]=list(), return_type: Optional[TypeHint]="dataframe",
-                rename: RenameMap=dict(), file_pattern=False, reverse=False) -> Union[Data,Dict[str,Data]]:
-    io = get_file_path(io, file_pattern, reverse)
-    if html: data = pd.read_html(io, header=header)[cast_int(sheet_name)]
-    elif isinstance(io, str) and io.endswith(".csv"): data = pd.read_csv(io, header=header, dtype=get_str_dtype(str_cols))
-    else: data = pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=get_str_dtype(str_cols))
+def read_table(io: Union[bytes,str], file_type: Literal["auto","html","xlsx","csv"]="auto",
+            sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: TypeMap=None, engine=None,
+            parse_dates: IndexLabel=None, columns: Optional[IndexLabel]=list(), default=None,
+            if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
+            rename: RenameMap=dict(), regex_path=False, reverse_path=False) -> Union[Data,Dict[str,Data]]:
+    file_type = _get_table_type(io, file_type)
+    io = BytesIO(read_bytes(io, regex_path, reverse_path))
+    table = _read_table(io, file_type, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates)
     args = (columns, default, if_null, reorder, return_type, rename)
-    if isinstance(data, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in data.items()}
-    else: return _to_data(data, *args)
+    if isinstance(table, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in table.items()}
+    else: return _to_data(table, *args)
 
 
-def get_file_path(file_path: str, file_pattern=False, reverse=False) -> str:
-    if not (isinstance(file_path, str) and file_pattern): return file_path
+def _get_table_type(io: Union[bytes,str], file_type: Literal["auto","html","xlsx","csv"]="auto") -> str:
+    if (file_type == "auto") and isinstance(io, str) and (os.path.splitext(io)[1] in (".xlsx",".html",".csv")):
+        return os.path.splitext(io)[1][1:]
+    else: return file_type
+
+
+def _read_table(io: BytesIO, file_type: Literal["auto","html","xlsx","csv"]="auto",
+                sheet_name: Optional[Union[str,int,List]]=0, dtype: TypeMap=None, engine=None, **kwargs) -> pd.DataFrame:
+    if file_type == "html": return pd.read_html(io, converters=dtype, **kwargs)[cast_int(sheet_name)]
+    elif file_type == "xlsx":
+        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, dtype=dtype, **kwargs)
+        else: return pd.read_excel(io, sheet_name=sheet_name, dtype=dtype, engine=engine, **kwargs)
+    elif file_type == "csv": return pd.read_csv(io, dtype=dtype, engine=engine, **kwargs)
+    else: return _read_table_auto(io, sheet_name=sheet_name, dtype=dtype, engine=engine, **kwargs)
+
+
+def _read_table_auto(io: BytesIO, **kwargs) -> pd.DataFrame:
+    for file_type in ["html", "xlsx", "csv"]:
+        try: return _read_table(io, file_type, **kwargs)
+        except Exception as exception:
+            if file_type == "csv": raise exception
+
+
+def _read_xlrd(io: BytesIO, **kwargs) -> pd.DataFrame:
+    from xlrd import open_workbook
+    with open_workbook(file_contents=io.getvalue(), logfile=open(os.devnull, "w")) as wb:
+        return pd.read_excel(wb, engine="xlrd", **kwargs)
+
+
+def read_bytes(__object: Union[str,MappingData], regex_path=False, reverse_path=False) -> bytes:
+    if isinstance(__object, str):
+        file_path = get_file_path(__object, regex_path, reverse_path)
+        with open(file_path, "rb") as file:
+            return file.read()
+    else: return to_bytes(__object)
+
+
+def get_file_path(file_path: str, regex_path=False, reverse_path=False) -> str:
+    if not regex_path: return file_path
     dir_name, file_name = os.path.split(file_path)
-    for file in sorted(os.listdir(dir_name if dir_name else None), reverse=reverse):
+    for file in sorted(os.listdir(dir_name if dir_name else None), reverse=reverse_path):
         if re.search(file_name, file): return os.path.join(dir_name, file)
     raise ValueError(FILE_PATTERN_MISMATCH_MSG)
 
 
-def get_str_dtype(str_cols: Union[bool,Sequence[Union[str,int]]]=list()) -> Union[Type,Dict[Union[str,int],Type]]:
-    if not str_cols: return None
-    elif isinstance(str_cols, bool): return str
-    elif isinstance(str_cols, Sequence): return {col:str for col in str_cols}
-    elif isinstance(str_cols, Dict): return str_cols
-    else: return None
-
-
 def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
-                default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
-                return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict()) -> Data:
+            default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
+            return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict()) -> Data:
     data = convert_data(df, return_type)
     data = rename_data(data, rename)
     return filter_data(data, columns, default=default, if_null=if_null, reorder=reorder)
 
 
-def read_bytes(__object: Union[str,MappingData], pandas=False,
-                sheet_name: Optional[Union[str,int,List]]=0, html=False, header=0) -> bytes:
-    if isinstance(__object, str):
-        if pandas:
-            return to_bytes(read_excel(__object, sheet_name, html=html, header=header))
-        with open(__object, "rb") as file:
-            return file.read()
-    else: return to_bytes(__object)
-
-
-def read_table(__object: bytes, html: Union[bool,Literal["auto"]]="auto", header=0, idx=0,
-                engine: Optional[Literal["xlrd","openpyxl","odf","pyxlsb"]]=None) -> pd.DataFrame:
-    io = BytesIO(__object)
-    if html == "auto":
-        try: return pd.read_html(io, header=header)[idx]
-        except: return pd.read_excel(io, engine=engine)
-    elif html: return pd.read_html(io, header=header)[idx]
-    else: return pd.read_excel(io, engine=engine)
+def read_table_bulk(dir: str, file_pattern=None, file_type: Literal["auto","html","xlsx","csv"]="auto",
+                    sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: TypeMap=None, engine=None,
+                    parse_dates: IndexLabel=None, columns: Optional[IndexLabel]=list(), default=None,
+                    if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
+                    rename: RenameMap=dict(), progress=True, start=None, size=None) -> pd.DataFrame:
+    kwargs = drop_dict(locals(), ["dir","file_pattern","progress","start","size"])
+    table = pd.DataFrame()
+    from tqdm.auto import tqdm
+    for file in tqdm(sorted(os.listdir(dir))[start:size], disable=(not progress)):
+        if (not file_pattern) or (re.search(file_pattern, file)):
+            table = pd.concat([table, read_table(os.path.join(dir, file), **kwargs)])
+    return table.reset_index(drop=True)

@@ -916,11 +916,11 @@ class Spider(RequestSession, Iterator, Parser):
                     data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                    html="auto", table_header=0, table_idx=0, engine=None, **context) -> pd.DataFrame:
+                    table_type="auto", table_idx=0, table_header=0, engine=None, **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return read_table(response.content, html=html, header=table_header, idx=table_idx, engine=engine)
+            return read_table(response.content, file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine)
 
     def encode_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
         if not params: return url, None
@@ -1374,11 +1374,11 @@ class AsyncSpider(Spider, AsyncSession):
                             data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                            html="auto", table_header=0, table_idx=0, engine=None, **context) -> pd.DataFrame:
+                            table_type="auto", table_idx=0, table_header=0, engine=None, **context) -> pd.DataFrame:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return read_table(await response.read(), html=html, header=table_header, idx=table_idx, engine=engine)
+            return read_table(await response.read(), file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
