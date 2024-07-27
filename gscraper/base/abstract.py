@@ -48,7 +48,7 @@ SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedRet
                         maxLimit=None, redirectLimit=None, **context: context
 
 
-ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, sessionCookies=None, **context: context
+ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, includeCookies=None, **context: context
 
 
 PIPELINE_CONTEXT = lambda  derivFields=None, globalProgress=None, asyncProgress=None, taskProgress=None, taskErrors=None, \

@@ -1623,8 +1623,8 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
-                login_context = TASK_CONTEXT(**self.validate_account(session, sessionCookies=False, **context))
-                data = func(self, *args, **login_context)
+                self.login(session, **context)
+                data = func(self, *args, **TASK_CONTEXT(**self.set_auto_info(session, includeCookies=True, **context)))
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1635,8 +1635,8 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with self.init_auth(**context) as session:
-                login_context = SESSION_CONTEXT(**self.validate_account(session, **context))
-                data = func(self, *args, session=session, **login_context)
+                self.login(session, **context)
+                data = func(self, *args, session=session, **SESSION_CONTEXT(**self.set_auto_info(session, **context)))
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1645,37 +1645,36 @@ class EncryptedSession(RequestSession):
     def init_auth(self, cookies=str(), **context) -> LoginSpider:
         cookies = cookies if cookies else self.cookies
         if cookies: return LoginCookie(cookies=cookies)
-        else: return self.auth(**self.get_auth_info(update=True, **context))
+        else: return self.auth(**self.get_auth_key(update=True, **context))
 
-    def get_auth_info(self, update=False, **context) -> Context:
+    def get_auth_key(self, update=False, **context) -> Dict:
         if not self.authKey: return dict()
-        auth_info = self._from_auth_key(**context)
-        if not (auth_info and isinstance(auth_info, Dict) and all(auth_info.values())):
+        authKey = self._filter_auth_key(**context)
+        if not (authKey and isinstance(authKey, Dict) and all(authKey.values())):
             raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
-        self.logger.info(log_encrypt(**auth_info, show=3))
-        return dict(context, **auth_info) if update else auth_info
+        self.logger.info(log_encrypt(**authKey, show=3))
+        return dict(context, **authKey) if update else authKey
 
-    def _from_auth_key(self, **context) -> Context:
-        auth_info = self.decryptedKey if self.decryptedKey else context
-        if isinstance(self.authKey, Sequence): return kloc(auth_info, self.authKey, if_null="pass")
-        elif isinstance(self.authKey, Callable): return self.authKey(**auth_info)
+    def _filter_auth_key(self, **context) -> Dict:
+        authKey = self.decryptedKey if self.decryptedKey else context
+        if isinstance(self.authKey, Sequence): return kloc(authKey, self.authKey, if_null="pass")
+        elif isinstance(self.authKey, Callable): return self.authKey(**authKey)
         else: raise AuthenticationError(INVALID_OBJECT_TYPE_MSG(self.authKey, AUTH_KEY))
 
-    def validate_account(self, auth: LoginSpider, sessionCookies=False, **context) -> Context:
-        try: self.login(auth, **context)
-        except: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
-        if isinstance(auth, LoginCookie) or (not self.sessionCookies):
-            context["cookies"] = self.cookies
-        return context
-
     def login(self, auth: LoginSpider, **context):
-        auth.login()
-        auth.update_cookies(self.set_cookies(**context), if_exists="replace")
-        self.checkpoint("login", where="login", msg={"cookies":auth.get_cookies(encode=False)})
-        self.update(cookies=auth.get_cookies(encode=True))
+        try: auth.login()
+        except: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
 
-    def set_cookies(self, **context) -> Dict:
-        return dict()
+    def set_auto_info(self, auth: LoginSpider, cookies=str(), includeCookies=False, **context) -> Context:
+        cookies = auth.get_cookies(encode=True)
+        includeCookies = includeCookies or isinstance(auth, LoginCookie)
+        authInfo = self.get_auth_info(auth, cookies=cookies, includeCookies=includeCookies, **context)
+        self.checkpoint("login", where="set_auto_info", msg=dict(authInfo, cookies=auth.get_cookies(encode=False)))
+        self.update(authInfo, cookies=cookies)
+        return dict(context, **authInfo)
+
+    def get_auth_info(self, auth: LoginSpider, cookies=str(), includeCookies=False, **context) -> Dict:
+        return dict(cookies=cookies) if includeCookies else dict()
 
     ###################################################################
     ########################### API Managers ##########################
@@ -1685,8 +1684,7 @@ class EncryptedSession(RequestSession):
         @functools.wraps(func)
         def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
-            api_context = TASK_CONTEXT(**self.get_auth_info(update=True, **context))
-            data = func(self, *args, **api_context)
+            data = func(self, *args, **TASK_CONTEXT(**self.get_auth_key(update=True, **context)))
             self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
@@ -1696,8 +1694,7 @@ class EncryptedSession(RequestSession):
         def wrapper(self: EncryptedSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             with requests.Session() as session:
-                api_context = SESSION_CONTEXT(**self.get_auth_info(update=True, **context))
-                data = func(self, *args, session=session, **api_context)
+                data = func(self, *args, session=session, **SESSION_CONTEXT(**self.get_auth_key(update=True, **context)))
             time.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1746,7 +1743,6 @@ class EncryptedSpider(Spider, EncryptedSession):
     auth = LoginSpider
     authKey = list()
     decryptedKey = dict()
-    sessionCookies = True
     info = Info()
     flow = Flow()
 
@@ -1786,7 +1782,6 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     auth = LoginSpider
     authKey = list()
     decryptedKey = dict()
-    sessionCookies = True
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
@@ -1812,8 +1807,9 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             with self.init_auth(**context) as auth:
-                login_context = TASK_CONTEXT(**self.validate_account(auth, sessionCookies=False, **context))
-                data = await func(self, *args, semaphore=semaphore, **login_context)
+                self.login(auth, **context)
+                authInfo = self.set_auto_info(auth, includeCookies=True, **context)
+                data = await func(self, *args, semaphore=semaphore, **TASK_CONTEXT(**authInfo))
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1825,10 +1821,11 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             with self.init_auth(**context) as auth:
-                login_context = SESSION_CONTEXT(**self.validate_account(auth, **context))
-                cookies = dict(cookies=auth.get_cookies(encode=False)) if self.sessionCookies else dict()
+                self.login(auth, **context)
+                authInfo = self.set_auto_info(auth, **context)
+                cookies = dict(cookies=auth.get_cookies(encode=False)) if "cookies" not in authInfo else dict()
                 async with aiohttp.ClientSession(**cookies) as session:
-                    data = await func(self, *args, auth=auth, session=session, semaphore=semaphore, **login_context)
+                    data = await func(self, *args, auth=auth, session=session, semaphore=semaphore, **SESSION_CONTEXT(**authInfo))
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1843,8 +1840,8 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
         async def wrapper(self: EncryptedAsyncSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            api_context = TASK_CONTEXT(**self.get_auth_info(update=True, **context))
-            data = await func(self, *args, semaphore=semaphore, **api_context)
+            authKey = TASK_CONTEXT(**self.get_auth_key(update=True, **context))
+            data = await func(self, *args, semaphore=semaphore, **authKey)
             self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
@@ -1855,8 +1852,8 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
             async with aiohttp.ClientSession() as session:
-                api_context = SESSION_CONTEXT(**self.get_auth_info(update=True, **context))
-                data = await func(self, *args, session=session, semaphore=semaphore, **api_context)
+                authKey = SESSION_CONTEXT(**self.get_auth_key(update=True, **context))
+                data = await func(self, *args, session=session, semaphore=semaphore, **authKey)
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
@@ -1907,7 +1904,6 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     auth = LoginSpider
     authKey = list()
     decryptedKey = dict()
-    sessionCookies = True
     info = Info()
     flow = Flow()
 
