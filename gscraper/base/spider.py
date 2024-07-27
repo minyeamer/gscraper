@@ -282,17 +282,17 @@ def encode_object(__object: str) -> str:
 ###################################################################
 
 class RangeContext(OptionalDict):
-    def __init__(self, field: _KT, left: Optional[Real]=None, right: Optional[Real]=None, valueType: Optional[TypeHint]=None,
+    def __init__(self, field: _KT, type: Optional[TypeHint]=None, left: Optional[Real]=None, right: Optional[Real]=None,
                 inclusive: Literal["both","neither","left","right"]="both", null=False):
-        left, right = self.validate_value(left, right, valueType)
+        left, right = self.validate_value(left, right, type)
         super().__init__(field=field,
             optional=dict(left=left, right=right, inclusive=inclusive, null=null))
 
     def validate_value(self, left: Optional[Real]=None, right: Optional[Real]=None,
-                        valueType: Optional[TypeHint]=None) -> Tuple[Real,Real]:
-        if not valueType: return left, right
-        elif is_datetime_type(valueType): return get_datetime_pair(left, right, if_null=(None, None))
-        elif is_date_type(valueType): return get_date_pair(left, right, if_null=(None, None))
+                        type: Optional[TypeHint]=None) -> Tuple[Real,Real]:
+        if not type: return left, right
+        elif is_datetime_type(type): return get_datetime_pair(left, right, if_null=(None, None))
+        elif is_date_type(type): return get_date_pair(left, right, if_null=(None, None))
         else: return left, right
 
 
