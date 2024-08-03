@@ -458,6 +458,12 @@ ENCRYPTED_QUERY = lambda: Query(
     Variable(name="decryptedKey", type="STRING", iterable=False, default=None),
 )
 
+PIPELINE_QUERY = lambda: Query(
+    Variable(name="globalProgress", type="BOOLEAN", iterable=False, default=False),
+    Variable(name="asyncProgress", type="BOOLEAN", iterable=False, default=False),
+    Variable(name="taskProgress", type="BOOLEAN", iterable=False, default=True),
+)
+
 
 def get_base_query(asyncio=False, encrypted=False, mapped=False, pipeline=False, **kwargs) -> Query:
     return Query(
@@ -470,4 +476,5 @@ def get_base_query(asyncio=False, encrypted=False, mapped=False, pipeline=False,
         *(ASYNC_QUERY() if asyncio else list()),
         *GCLOUD_QUERY(),
         *(ENCRYPTED_QUERY() if encrypted else list()),
+        *(PIPELINE_QUERY() if pipeline else list()),
     )

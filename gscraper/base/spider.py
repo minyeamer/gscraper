@@ -79,10 +79,13 @@ SPIDER_UNIQUE = ["discard", "progress", "numTasks"]
 REDIRECT_UNIQUE = ["apiRedirect", "redirectUnit", "redirectUrl", "authorization", "account"]
 
 ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
+PIPELINE_UNIQUE = ["globalProgress", "asyncProgress", "taskProgress"]
 
 PROXY_LOG = ["logLevel", "logFile", "debug", "extraSave", "interrupt"]
-PIPELINE_UNIQUE = FILTER_UNIQUE + TIME_UNIQUE + PROXY_LOG + REQUEST_UNIQUE + ENCRYPTED_UNIQUE
-WORKER_UNIQUE = PIPELINE_UNIQUE + SPIDER_UNIQUE + REDIRECT_UNIQUE
+
+WORKER_CONFIG = (
+    FILTER_UNIQUE + TIME_UNIQUE + PROXY_LOG + REQUEST_UNIQUE +
+    SPIDER_UNIQUE + REDIRECT_UNIQUE + ENCRYPTED_UNIQUE + PIPELINE_UNIQUE)
 WORKER_EXTRA = ["message", "where", "which", "by"]
 
 NAME, OPERATOR, TASK, DATANAME, DATATYPE = "name", "operator", "task", "dataName", "dataType"
@@ -2017,6 +2020,21 @@ class Pipeline(EncryptedSession):
     info = PipelineInfo()
     dags = Dag()
 
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
+                globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
+        EncryptedSession.__init__(self, **self.from_locals(locals(), drop=PIPELINE_UNIQUE))
+        self.set_progress(globalProgress, taskProgress)
+
+    def set_progress(self, globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None):
+        self.globalProgress = globalProgress if isinstance(globalProgress, bool) else self.globalProgress
+        self.taskProgress = taskProgress if isinstance(taskProgress, bool) else self.taskProgress
+
     @abstractmethod
     @EncryptedSession.init_task
     def crawl(self, **context) -> Data:
@@ -2080,7 +2098,7 @@ class Pipeline(EncryptedSession):
                     **context) -> Tuple[Callable,Spider,Context]:
         method = getattr(self, task[TASK])
         task_filter = dict(fields=self.validate_task_fields(task[FIELDS], fields), returnType=task[DATATYPE])
-        configs, params = self._set_task_params(task, **context)
+        configs, params = self.set_task_params(task, **context)
         worker = task[OPERATOR](**task_filter, **configs)
         data = kloc(data, cast_list(task[DERIV]), if_null="drop") if (DERIV in task) and data else dict()
         params = dict(params, worker=worker, taskname=task[NAME], **task_filter, **data)
@@ -2096,18 +2114,18 @@ class Pipeline(EncryptedSession):
         if isinstance(task_fields, Tuple): return task_fields
         else: return unique(*cast_list(task_fields), *fields)
 
-    def _set_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
+    def set_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
         if PARAMS in task:
-            params, context = split_dict(context, task[PARAMS])
-            context = kloc(context, WORKER_UNIQUE+WORKER_EXTRA, if_null="drop")
+            params, configs = split_dict(context, task[PARAMS])
+            configs = kloc(configs, WORKER_CONFIG+WORKER_EXTRA, if_null="drop")
         else:
-            context, params = split_dict(context, WORKER_UNIQUE)
+            configs, params = split_dict(context, WORKER_CONFIG)
             params = PROXY_CONTEXT(**params)
         if CONTEXT in task:
-            context = dict(context, **kloc(task[CONTEXT], WORKER_EXTRA, if_null="drop"))
+            configs = dict(configs, **kloc(task[CONTEXT], WORKER_EXTRA, if_null="drop"))
             params = dict(params, **drop_dict(task[CONTEXT], WORKER_EXTRA, inplace=False))
-        context["progress"] = context.get("progress", True) and self.taskProgress
-        return context, params
+        configs["progress"] = configs.get("progress", True) and self.taskProgress
+        return configs, params
 
 
 class AsyncPipeline(EncryptedAsyncSession, Pipeline):
@@ -2128,6 +2146,22 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
+
+    def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
+                tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
+                logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
+                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
+                globalProgress: Optional[bool]=None, asyncProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
+        EncryptedAsyncSession.__init__(self, **self.from_locals(locals(), drop=PIPELINE_UNIQUE))
+        self.set_progress(globalProgress, asyncProgress, taskProgress)
+
+    def set_progress(self, globalProgress: Optional[bool]=None, asyncProgress: Optional[bool]=None, taskProgress: Optional[bool]=None):
+        self.globalProgress = globalProgress if isinstance(globalProgress, bool) else self.globalProgress
+        self.asyncProgress = asyncProgress if isinstance(asyncProgress, bool) else self.asyncProgress
+        self.taskProgress = taskProgress if isinstance(taskProgress, bool) else self.taskProgress
 
     @abstractmethod
     @EncryptedAsyncSession.init_task
