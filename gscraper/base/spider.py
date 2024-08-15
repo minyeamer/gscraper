@@ -121,12 +121,11 @@ INVALID_STATUS_MSG = lambda where: f"Response from {where} is not valid."
 MISSING_CLIENT_SESSION_MSG = "Async client session does not exist."
 
 REDIRECT_MSG = lambda operation: f"{operation} operation is redirecting"
-INVALID_REDIRECT_RESPONSE_MSG = "Please verify the redirect response."
 
 INVALID_USER_INFO_MSG = lambda where=str(): f"{where} user information is not valid.".strip()
-INVALID_API_INFO_MSG = lambda where=str(): f"{re.sub(' API$','',where)} API information is not valid.".strip()
 
-DEPENDENCY_HAS_NO_NAME_MSG = "Dependency has no operation name. Please define operation name."
+PIPELINE_DEFAULT_GLOBAL_MSG = "Processing pipeline works"
+PIPELINE_DEFAULT_ASYNC_MSG = "Processing pipeline works asynchronously"
 
 ACTION, WHERE, WHICH = "Collecting", "urls", "data"
 FIRST_PAGE, NEXT_PAGE = "of first page", "of next pages"
@@ -2014,6 +2013,7 @@ class Pipeline(EncryptedSession):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    globalMessage = str()
     globalProgress = False
     taskProgress = True
     taskErrors = dict()
@@ -2027,11 +2027,12 @@ class Pipeline(EncryptedSession):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
-                globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
+                globalMessage=str(), globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
         EncryptedSession.__init__(self, **self.from_locals(locals(), drop=PIPELINE_UNIQUE))
-        self.set_progress(globalProgress, taskProgress)
+        self.set_global_progress(globalProgress, globalMessage, taskProgress)
 
-    def set_progress(self, globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None):
+    def set_global_progress(self, globalMessage=str(), globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None):
+        self.globalMessage = exists_one(globalMessage, self.globalMessage, PIPELINE_DEFAULT_GLOBAL_MSG)
         self.globalProgress = globalProgress if isinstance(globalProgress, bool) else self.globalProgress
         self.taskProgress = taskProgress if isinstance(taskProgress, bool) else self.taskProgress
 
@@ -2052,9 +2053,9 @@ class Pipeline(EncryptedSession):
     ########################### Gather Task ###########################
     ###################################################################
 
-    def gather(self, message=str(), progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def gather(self, progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
+        for task in tqdm(self.dags, desc=self.globalMessage, disable=(not (self.globalProgress and progress))):
             data[task[DATANAME]] = self.run_task(task, fields=fields, data=data, progress=progress, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 
@@ -2140,9 +2141,12 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
+    globalMessage = str()
     globalProgress = False
+    asyncMessage = str()
     asyncProgress = False
     taskProgress = True
+    message = str()
     taskErrors = dict()
     info = PipelineInfo()
     dags = Dag()
@@ -2154,27 +2158,28 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
-                globalProgress: Optional[bool]=None, asyncProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
+                globalMessage=str(), globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None,
+                asyncMessage=str(), asyncProgress: Optional[bool]=None, **context):
         EncryptedAsyncSession.__init__(self, **self.from_locals(locals(), drop=PIPELINE_UNIQUE))
-        self.set_progress(globalProgress, asyncProgress, taskProgress)
+        self.set_global_progress(globalMessage, globalProgress, taskProgress)
+        self.set_async_progress(asyncMessage, asyncProgress)
 
-    def set_progress(self, globalProgress: Optional[bool]=None, asyncProgress: Optional[bool]=None, taskProgress: Optional[bool]=None):
-        self.globalProgress = globalProgress if isinstance(globalProgress, bool) else self.globalProgress
+    def set_async_progress(self, asyncMessage=str(), asyncProgress: Optional[bool]=None):
+        self.asyncMessage = exists_one(asyncMessage, self.asyncMessage, PIPELINE_DEFAULT_ASYNC_MSG)
         self.asyncProgress = asyncProgress if isinstance(asyncProgress, bool) else self.asyncProgress
-        self.taskProgress = taskProgress if isinstance(taskProgress, bool) else self.taskProgress
 
     @abstractmethod
     @EncryptedAsyncSession.init_task
     async def crawl(self, **context) -> Data:
         return await self.gather(**context)
 
-    async def gather(self, message=str(), progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    async def gather(self, progress=True, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         data = dict()
-        for task in tqdm(self.dags, desc=message, disable=(not (self.globalProgress and progress))):
+        for task in tqdm(self.dags, desc=self.globalMessage, disable=(not (self.globalProgress and progress))):
             if isinstance(task, Sequence):
                 response = await tqdm.gather(*[
                     self.run_task(subtask, fields=fields, data=data, progress=progress, **context) for subtask in task],
-                        desc=message, disable=(self.globalProgress or (not (self.asyncProgress and progress))))
+                        desc=self.asyncMessage, disable=(self.globalProgress or (not (self.asyncProgress and progress))))
                 data = dict(data, **dict(zip(vloc(task, DATANAME), response)))
             else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, progress=progress, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))

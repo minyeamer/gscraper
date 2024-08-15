@@ -51,8 +51,8 @@ SPIDER_CONTEXT = lambda asyncio=None, host=None, field=None, ssl=None, mappedRet
 ENCRYPTED_CONTEXT = lambda decryptedKey=None, auth=None, authKey=None, includeCookies=None, **context: context
 
 
-PIPELINE_CONTEXT = lambda  derivFields=None, globalProgress=None, asyncProgress=None, taskProgress=None, taskErrors=None, \
-                            dags=None, **context: context
+PIPELINE_CONTEXT = lambda  derivFields=None, globalMessage=None, globalProgress=None, taskProgress=None, \
+                            asyncMessage=None, asyncProgress=None, taskErrors=None, dags=None, **context: context
 
 
 UNIQUE_CONTEXT = lambda **context: \
@@ -459,9 +459,11 @@ ENCRYPTED_QUERY = lambda: Query(
 )
 
 PIPELINE_QUERY = lambda: Query(
-    Variable(name="globalProgress", type="BOOLEAN", iterable=False, default=False),
-    Variable(name="asyncProgress", type="BOOLEAN", iterable=False, default=False),
-    Variable(name="taskProgress", type="BOOLEAN", iterable=False, default=True),
+    Variable(name="globalMessage", type="STRING", desc="주요진행메시지", iterable=False, default=str()),
+    Variable(name="globalProgress", type="BOOLEAN", desc="주요진행도표시", iterable=False, default=False),
+    Variable(name="asyncMessage", type="STRING", desc="동시진행메시지", iterable=False, default=str()),
+    Variable(name="asyncProgress", type="BOOLEAN", desc="동시진행도표시", iterable=False, default=False),
+    Variable(name="taskProgress", type="BOOLEAN", desc="세부진행도표시", iterable=False, default=True),
 )
 
 
