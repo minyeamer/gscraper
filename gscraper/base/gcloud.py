@@ -718,7 +718,7 @@ def groupby_partition(data: pd.DataFrame, field=str(),
         return [data]
     elif unit.lower() in DATE_UNIT:
         if unit == "day": data["_PARTITIONTIME"] = data[field].apply(get_date)
-        else: data["_PARTITIONTIME"] = data[field].apply(lambda x: get_datetime(x, datetimePart=unit))
+        else: data["_PARTITIONTIME"] = data[field].apply(lambda x: get_datetime(x, unit=unit))
         return [data[data["_PARTITIONTIME"]==part].drop(columns=["_PARTITIONTIME"]) for part in sorted(data["_PARTITIONTIME"].unique())]
     else: return [data[data[field]==part] for part in sorted(data[field].unique())]
 
