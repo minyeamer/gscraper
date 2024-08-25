@@ -761,7 +761,7 @@ class Spider(RequestSession, Iterator, Parser):
         else: return self.fetch(fields=fields, **context)
 
     ###################################################################
-    ########################### Gather Count ##########################
+    ########################### Gather Data ###########################
     ###################################################################
 
     def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
@@ -803,7 +803,7 @@ class Spider(RequestSession, Iterator, Parser):
         return iterator, context
 
     ###################################################################
-    ########################## Fetch Request ##########################
+    ########################### Request Data ##########################
     ###################################################################
 
     @abstractmethod
@@ -1237,7 +1237,7 @@ class AsyncSpider(Spider, AsyncSession):
         else: return await self.fetch(fields=fields, **context)
 
     ###################################################################
-    ########################### Gather Count ##########################
+    ########################### Async Count ###########################
     ###################################################################
 
     async def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
@@ -1271,7 +1271,7 @@ class AsyncSpider(Spider, AsyncSession):
         return data
 
     ###################################################################
-    ########################## Async Requests #########################
+    ########################## Async Request ##########################
     ###################################################################
 
     @abstractmethod
@@ -1475,7 +1475,7 @@ class LoginSpider(requests.Session, Spider):
                 self.cookies.set(__key, __value)
 
     ###################################################################
-    ########################## Fetch Request ##########################
+    ########################### Request Data ##########################
     ###################################################################
 
     def validate_request(func):
