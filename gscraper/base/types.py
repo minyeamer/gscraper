@@ -151,7 +151,7 @@ HTML_DATA = (str, Tag, List)
 Account = Dict[str,str]
 PostData = Union[Dict[str,Any], str]
 
-ResponseData = Union[Records, DataFrame, Dict, List, NestedSequence, NestedDict, str, Tag, List[str], List[Tag]]
+ResponseData = Union[bytes, str, JsonData, Records, DataFrame, Tag, List[str], List[Tag]]
 
 DATA_TYPES = {
     "NestedDict":NestedDict, "RenameMap":RenameMap, "TypeMap":TypeMap, "NestedData":NestedData,
