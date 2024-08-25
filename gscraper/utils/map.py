@@ -10,7 +10,7 @@ from gscraper.utils import isna, notna, empty, exists
 from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set, cast_int
 
 from typing import Any, Dict, List, Set
-from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Type, Union
+from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Union
 from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from io import BytesIO
@@ -1202,19 +1202,28 @@ def replace_map(__string: str, **context) -> str:
     return __string
 
 
+def search_keyword(__string: str, __keyword: Keyword) -> bool:
+    if not __keyword: return True
+    keyword = cast_list(__keyword)
+    if len(keyword) == 1: return keyword[0] in __string
+    else: return bool(re.search('|'.join(map(re.escape, keyword)), __string))
+
+
 def match_keyword(__string: str, __keyword: Keyword) -> bool:
-    pattern = re.compile('|'.join(map(re.escape, cast_list(__keyword))))
-    return bool(pattern.search(__string))
+    if not __keyword: return True
+    keyword = cast_list(__keyword)
+    if len(keyword) == 1: return keyword[0] == __string
+    else: return bool(re.match('^'+'|'.join(map(re.escape, keyword))+'$', __string))
 
 
 def startswith(__string: str, __keyword: Keyword) -> bool:
-    for __s in __keyword:
+    for __s in cast_list(__keyword):
         if __string.startswith(__s): return True
     else: return False
 
 
 def endswith(__string: str, __keyword: Keyword) -> bool:
-    for __s in __keyword:
+    for __s in cast_list(__keyword):
         if __string.endswith(__s): return True
     else: return False
 
