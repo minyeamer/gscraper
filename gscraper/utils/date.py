@@ -8,6 +8,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
 from pandas.tseries.frequencies import to_offset
 import datetime as dt
 import pandas as pd
+import random
 import re
 
 from holidays.countries import *
@@ -131,6 +132,15 @@ def get_timestamp(__object: Optional[DateFormat]=None, if_null: Optional[Union[i
     __datetime = get_datetime(**drop_dict(locals(), "tsUnit", inplace=False))
     if isinstance(__datetime, dt.datetime):
         return int(__datetime.timestamp()*(1000 if tsUnit == "ms" else 1))
+
+
+def get_random_seconds(start: Union[float,int], stop: Optional[Union[float,int]]=None, step=1) -> Union[float,int]:
+    has_millis = isinstance(start, float) or isinstance(stop, float)
+    if has_millis:
+        start = int(start * 1000)
+        stop = int(stop * 1000) if isinstance(stop, (float,int)) else None
+    secs = random.randrange(start, stop, step)
+    return secs/1000 if has_millis else secs
 
 
 def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=0,

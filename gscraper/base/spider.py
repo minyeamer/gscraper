@@ -17,7 +17,7 @@ from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int
 
 from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
-from gscraper.utils.date import get_date_pair, get_datetime_pair
+from gscraper.utils.date import get_random_seconds, get_date_pair, get_datetime_pair
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict, traversal_dict
@@ -34,7 +34,6 @@ import aiohttp
 import copy
 import functools
 import inspect
-import random
 import requests
 import time
 
@@ -426,24 +425,16 @@ class RequestSession(UploadSession):
         return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
 
     def sleep(self, delay: Optional[Range]=None, minimum=0., maximum=None):
-        delay = self.get_delay(delay if delay is not None else self.delay)
+        delay = self.get_delay(delay)
         if isinstance(minimum, (float,int)): delay = max(delay, minimum)
         if isinstance(maximum, (float,int)): delay = min(delay, maximum)
         if delay: time.sleep(delay)
 
-    def get_delay(self, delay: Range) -> Union[float,int]:
+    def get_delay(self, delay: Optional[Range]=None) -> Union[float,int]:
+        delay = delay if delay is not None else self.delay
         if isinstance(delay, (float,int)): return delay
-        else: return self.get_random_delay(delay)
-
-    def get_random_delay(self, delay: Sequence) -> Union[float,int]:
-        if not (isinstance(delay, Sequence) and delay): return 0.
-        min_ts, max_ts = delay[0], (delay[1] if len(delay) > 1 else None)
-        is_float_ts = isinstance(min_ts, float) or isinstance(max_ts, float)
-        if is_float_ts:
-            min_ts = int(min_ts * 1000)
-            max_ts = int(max_ts * 1000) if isinstance(max_ts, (float,int)) else None
-        delay = random.randrange(min_ts, max_ts)
-        return delay/1000 if is_float_ts else delay
+        elif isinstance(delay, Sequence) and delay: return get_random_seconds(*delay[:2])
+        else: return 0.
 
     ###################################################################
     ########################## Validate Data ##########################
@@ -1092,7 +1083,7 @@ class AsyncSession(RequestSession):
         return wrapper
 
     async def async_sleep(self, delay: Optional[Range]=None, minimum=0., maximum=None):
-        delay = self.get_delay(delay if delay is not None else self.delay)
+        delay = self.get_delay(delay)
         if isinstance(minimum, (float,int)): delay = max(delay, minimum)
         if isinstance(maximum, (float,int)): delay = min(delay, maximum)
         if delay: await asyncio.sleep(delay)
