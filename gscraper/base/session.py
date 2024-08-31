@@ -625,7 +625,7 @@ class BaseSession(CustomDict):
         return data.rename(columns=(rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)))
 
     def _write_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
-        writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_context={"options":{"strings_to_urls":False}})
+        writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_kwargs={"options":{"strings_to_urls":False}})
         data.to_excel(writer, sheet_name=sheet_name, index=False)
         writer.close()
 
