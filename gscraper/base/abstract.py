@@ -10,7 +10,7 @@ from abc import ABCMeta
 import copy
 import functools
 
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 import pandas as pd
 
 
@@ -346,9 +346,9 @@ def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, inde
 ###################################################################
 
 class Variable(Value):
-    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None,
-                iterable=False, default: Optional[Any]=__NONE__):
-        super().__init__(name=name, type=type, optional=dict(desc=desc, iterable=iterable))
+    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, iterable=False,
+                enum: Union[Tuple[str],RenameMap]=None, default: Optional[Any]=__NONE__):
+        super().__init__(name=name, type=type, optional=dict(desc=desc, iterable=iterable, enum=enum))
         if default != __NONE__: self.update(default=default)
 
     def copy(self) -> Variable:

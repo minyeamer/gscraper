@@ -15,7 +15,7 @@ from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, ca
 from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import isna_plus, notna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
-from gscraper.utils.map import concat, re_get, replace_map, startswith, endswith, arg_and, union, diff
+from gscraper.utils.map import concat, rename_value, re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
 from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
@@ -356,7 +356,7 @@ class Schema(ValueSet):
         schema = (self + COMMON_FIELDS) if common_fields else self
         return ValueSet.map(schema, key, value, default=default, if_null=if_null, reorder=reorder, values_only=values_only)
 
-    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc",
+    def rename(self, __s: str, to: Literal["name","desc"]="desc",
                 if_null: Union[Literal["pass"],Any]="pass", common_fields=True) -> str:
         renameMap = self.get_rename_map(to=to, common_fields=common_fields)
         if renameMap and (__s in renameMap): return renameMap[__s]
@@ -395,16 +395,13 @@ class Info(TypedDict):
             query = get_scala(list(self.get_by_dtype(Query).values()))
             if not isinstance(query, Query): return Query()
         else: query = self[QUERY]
-        query.filter(match, **match_by_key, inplace=True)
-        return query
+        return query.filter(match, **match_by_key)
 
     def get_schema(self, keys: _KT=list(), primary_key: _KT=list(), keep: Literal["fist","last",True,False]=True,
                     match: Optional[MatchFunction]=None, **match_by_key) -> Schema:
         if (not is_array(keys)) and isinstance(self.get(keys), Schema): schema = self[keys]
         else: schema = Schema(*union(*self.get_by_dtype(dtype=Schema, keys=keys).values()))
-        schema.unique(primary_key, keep=keep, inplace=True)
-        schema.filter(match, **match_by_key, inplace=True)
-        return schema
+        return schema.unique(primary_key, keep=keep).filter(match, **match_by_key)
 
     def get_by_dtype(self, dtype: Type, keys: _KT=list()) -> Dict:
         keys = cast_list(keys)
@@ -443,7 +440,7 @@ class Info(TypedDict):
         schema = self.get_schema(keys, primary_key=[key], keep=keep, match=match, **match_by_key)
         return schema.map(key, value, if_null=if_null, reorder=reorder, values_only=values_only, common_fields=common_fields)
 
-    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc", query=False, common_fields=True,
+    def rename(self, __s: str, to: Literal["name","desc"]="desc", query=False, common_fields=True,
                 if_null: Union[Literal["pass"],Any]="pass", keep: Literal["fist","last",False]="first") -> str:
         renameMap = self.get_rename_map(to=to, query=query, common_fields=common_fields, keep=keep)
         if renameMap and (__s in renameMap): return renameMap[__s]
@@ -571,9 +568,15 @@ class BaseSession(CustomDict):
         context = dict(if_null=if_null, reorder=reorder, values_only=values_only, match=match, **match_by_key)
         return self.info.map_schema(key, value, keys=keys, common_fields=common_fields, keep=keep, **context)
 
-    def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc", query=False, common_fields=True,
+    def rename(self, __s: str, to: Literal["name","desc"]="desc", query=False, common_fields=True,
                 if_null: Union[Literal["pass"],Any]="pass", keep: Literal["fist","last",False]="first") -> str:
         return self.info.rename(__s, to=to, query=query, common_fields=common_fields, if_null=if_null, keep=keep)
+
+    def rename_query(self, __s: str, key: str, to: Literal["key","value"]="value", if_null: Union[Literal["pass"],Any]="pass"):
+        query = self.info.get_query(name=key)
+        if query and ("enum" in query[0]) and isinstance(query[0]["enum"], Dict):
+            return rename_value(__s, query[0]["enum"], to=to, if_null=if_null)
+        else: return __s
 
     def get_rename_map(self, to: Literal["name","desc"]="desc", query=False, keys: _KT=list(), common_fields=True,
                         keep: Literal["fist","last",False]="first") -> RenameMap:

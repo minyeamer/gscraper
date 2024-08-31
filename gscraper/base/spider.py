@@ -37,7 +37,7 @@ import inspect
 import requests
 import time
 
-from typing import Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
 from numbers import Real
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
@@ -361,6 +361,35 @@ class RequestSession(UploadSession):
         self.cookies = cookies
 
     ###################################################################
+    ######################## Context Validator ########################
+    ###################################################################
+
+    def validate_context(self, locals: Dict=dict(), drop: _KT=list(), dropna=True, strict=False, unique=True, **context) -> Context:
+        if locals:
+            context = self.from_locals(locals, drop=drop, **context)
+        queryMap = self.get_query_map(key="name", value=["type","iterable","enum","default"])
+        for __key, __map in queryMap.items():
+            if __key in context:
+                context[__key] = self.validate_variable(context[__key], **__map, dropna=dropna, strict=strict, unique=unique)
+        return context
+
+    def validate_variable(self, __object: Any, type: Type, enum=None, default=None,
+                        iterable=False, dropna=False, strict=False, unique=False) -> Any:
+        if is_date_type(type):
+            __object = [self.get_date(__e) for __e in __object] if is_array(__object) else self.get_date(__object)
+        if isinstance(enum, Dict):
+            __object = [enum.get(__e,__e) for __e in __object] if is_array(__object) else enum.get(__object,__object)
+            enum = tuple(enum.values())
+        if isinstance(enum, Tuple):
+            if is_array(__object):
+                if dropna: __object = [__e for __e in __object if __e in enum]
+                else: __object = [(__e if __e in enum else None) for __e in __object]
+            else: __object = __object if __object in enum else default
+        if iterable and notna(__object):
+            __object = to_array(__object, dropna=dropna, strict=strict, unique=unique)
+        return __object
+
+    ###################################################################
     ######################### Request Managers ########################
     ###################################################################
 
@@ -666,36 +695,20 @@ class Spider(RequestSession, Iterator, Parser):
     ####################### Parameter Validator #######################
     ###################################################################
 
-    def validate_params(self, locals: Dict=dict(), how: Literal["min","max","first"]="min", default=None,
-                        dropna=True, strict=False, unique=True, drop: _KT=list(), rename: Dict[_KT,Dict]=dict(),
-                        **context) -> Tuple[Arguments,Context]:
+    def validate_params(self, locals: Dict=dict(), drop: _KT=list(), how: Literal["min","max","first"]="min",
+                        dropna=True, strict=False, unique=True, **context) -> Tuple[Arguments,Context]:
         args, context = self.local_params(locals, **context)
-        array_context = dict(default=default, dropna=dropna, strict=strict, unique=unique, rename=rename)
-        args = self.validate_args(*args, how=how, **array_context, **context)
-        context = self.validate_context(**array_context, drop=drop, **context)
+        args = self.validate_args(*args, how=how, dropna=dropna, strict=strict, unique=unique, **context)
+        context = self.validate_context(drop=drop, dropna=dropna, strict=strict, unique=unique, **context)
         return args, context
 
-    def validate_args(self, *args, how: Literal["min","max","first"]="min", default=None,
-                    dropna=True, strict=False, unique=True, rename: Dict[_KT,Dict]=dict(), **context) -> Arguments:
-        if not args: return args
-        elif len(args) == 1: args = (to_array(args[0], default=default, dropna=dropna, strict=strict, unique=unique),)
-        else: args = align_array(*args, how=how, default=default, dropna=dropna, strict=strict, unique=unique)
-        rename_args = lambda __s, __key: rename_data(__s, rename=rename[__key]) if __key in rename else __s
-        return tuple(rename_args(args[__i], __key) for __i, __key in enumerate(self.iterateArgs[:len(args)]))
-
-    def validate_context(self, locals: Dict=dict(), default=None, dropna=True, strict=False, unique=True,
-                        drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
-        context = self.local_context(locals, **context, drop=drop)
-        queryMap = self.get_query_map(key="name", value=["type","iterable"])
-        for __key in list(context.keys()):
-            if __key not in queryMap: pass
-            elif is_date_type(queryMap[__key]["type"]):
-                context[__key] = self.get_date(context[__key], index=int(str(__key).lower().endswith("enddate")))
-            elif queryMap[__key].get("iterable") and notna(context[__key]):
-                context[__key] = to_array(context[__key], default=default, dropna=dropna, strict=strict, unique=unique)
-            if __key in rename:
-                context[__key] = rename_data(context[__key], rename=rename[__key])
-        return context
+    def validate_args(self, *args, how: Literal["min","max","first"]="min", dropna=True, strict=False, unique=True, **context) -> Arguments:
+        if not args: return tuple()
+        queryMap = self.get_query_map(key="name", value=["type","enum","default"])
+        args = tuple((self.validate_variable(args[__i], **queryMap[__key]) if __key in queryMap else args[__i])
+                    for __i, __key in enumerate(self.iterateArgs))
+        if len(args) == 1: return (to_array(args[0], dropna=dropna, strict=strict, unique=unique),)
+        else: return align_array(*args, how=how, dropna=dropna, strict=strict, unique=unique)
 
     ###################################################################
     ########################## Gather Request #########################
@@ -2031,14 +2044,6 @@ class Pipeline(EncryptedSession):
     @EncryptedSession.init_task
     def crawl(self, **context) -> Data:
         return self.gather(**context)
-
-    def validate_context(self, locals: Dict=dict(), drop: _KT=list(), rename: Dict[_KT,Dict]=dict(), **context) -> Context:
-        if locals:
-            context = self.from_locals(locals, **context, drop=drop)
-        for __key in list(context.keys()):
-            if __key in rename:
-                context[__key] = rename_data(context[__key], rename=rename[__key])
-        return context
 
     ###################################################################
     ########################### Gather Task ###########################
