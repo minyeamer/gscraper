@@ -29,7 +29,7 @@ _BOOL = TypeVar("_BOOL", Sequence[bool], bool)
 Comparable = TypeVar("Comparable")
 ClassInstance = TypeVar("ClassInstance")
 
-Arguments = Tuple[Any]
+Arguments = Tuple[Any,...]
 ArgsMapper = Callable[[Arguments],Arguments]
 
 Context = Dict[Any,Any]
@@ -64,6 +64,7 @@ Token = Union[Sequence[str], str]
 EncryptedKey = str
 DecryptedKey = Union[Dict, str]
 
+Logic = Union[Sequence[bool], bool]
 Status = Union[Sequence[int], int]
 Shape = Union[Sequence[int], int]
 Unit = Union[Sequence[int], int]
@@ -73,7 +74,7 @@ Range = Union[Sequence[Real], Real]
 KEY_TYPES = {
     "Index":Index, "IndexLabel":IndexLabel, "Column":Column, "Keyword":Keyword,
     "Id":Id, "Url":Url, "Token":Token, "EncryptedKey":EncryptedKey, "DecryptedKey":DecryptedKey,
-    "Status":Status, "Shape":Shape, "Unit":Unit, "Range":Range
+    "Logic":Logic, "Status":Status, "Shape":Shape, "Unit":Unit, "Range":Range
 }
 
 
@@ -167,9 +168,9 @@ DATA_TYPES = {
 ###################################################################
 
 Pagination = Union[bool, str]
-Pages = Union[Tuple[int], Tuple[Tuple[int,int,int]]]
+Pages = Union[Tuple[int,...], Tuple[Tuple[int,int,int],...]]
 
-RegexFormat = str
+RegexFormat = Union[str, re.Pattern]
 
 CastError = (ValueError, TypeError)
 
@@ -230,13 +231,13 @@ _abs_idx = lambda idx: abs(idx+1) if idx < 0 else idx
 _arg_get = lambda arr, idx: arr[idx if _abs_idx(idx) < len(arr) else -1] if arr else None
 
 
-def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type]]:
+def get_type(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type,...]]:
     if isinstance(__object, Type): return __object
     elif isinstance(__object, str): return _get_type_from_str(__object, argidx)
     else: return _get_type_from_origin(__object, argidx)
 
 
-def _get_type_from_str(__object: str, argidx=0) -> Union[Type,Tuple[Type]]:
+def _get_type_from_str(__object: str, argidx=0) -> Union[Type,Tuple[Type,...]]:
     if __object.startswith("Union[") and __object.endswith("]"):
         types = [get_type(__t) for __t in re.search(r"^Union\[([^]]+)\]$", __object).groups()[0].split(',')]
         return _arg_get(types, argidx)
@@ -246,7 +247,7 @@ def _get_type_from_str(__object: str, argidx=0) -> Union[Type,Tuple[Type]]:
         if __object.lower() in __hint: return __t
 
 
-def _get_type_from_origin(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type]]:
+def _get_type_from_origin(__object: Union[Type,TypeHint,Any], argidx=0) -> Union[Type,Tuple[Type,...]]:
     __type, args = get_origin(__object), get_args(__object)
     if __type in (Tuple, tuple):
         return tuple(get_type(arg) for arg in args)
@@ -289,7 +290,7 @@ def is_int_type(__type: TypeHint) -> bool:
     return is_type(__type, INTEGER_TYPES)
 
 def is_numeric_type(__type: TypeHint) -> bool:
-    return is_type(__type, BOOLEAN_TYPES+FLOAT_TYPES+INTEGER_TYPES)
+    return is_type(__type, FLOAT_TYPES+INTEGER_TYPES)
 
 def is_datetime_type(__type: TypeHint) -> bool:
     return is_type(__type, DATETIME_TYPES)
@@ -304,7 +305,7 @@ def is_date_type(__type: TypeHint) -> bool:
     return is_type(__type, DATE_TYPES)
 
 def is_numeric_or_date_type(__type: TypeHint) -> bool:
-    return is_type(__type, BOOLEAN_TYPES+FLOAT_TYPES+INTEGER_TYPES+DATETIME_TYPES+DATE_TYPES)
+    return is_type(__type, FLOAT_TYPES+INTEGER_TYPES+DATETIME_TYPES+DATE_TYPES)
 
 def is_str_type(__type: TypeHint) -> bool:
     return is_type(__type, STRING_TYPES)

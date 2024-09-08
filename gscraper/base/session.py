@@ -3,18 +3,18 @@ from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, Optional
 from gscraper.base.abstract import REQUEST_CONTEXT, RESPONSE_CONTEXT, INVALID_INSTANCE_MSG
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
-from gscraper.base.types import IndexLabel, Keyword, Pagination, Pages, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import IndexLabel, Keyword, Logic, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, TypeMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
-from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat
+from gscraper.base.types import Pagination, Pages, ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
 from gscraper.base.types import is_numeric_or_date_type, is_dict_type, is_records_type, is_dataframe_type, is_tag_type
 from gscraper.base.types import is_array, allin_instance, is_str_array
 
-from gscraper.utils import isna, notna, exists
+from gscraper.utils import isna, isna_plus, notna, notna_plus, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
 from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
-from gscraper.utils.map import isna_plus, notna_plus, exists_one, howin, safe_apply, safe_len, get_scala, unique
+from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import concat, rename_value, re_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
@@ -60,7 +60,7 @@ APPLY, MATCH, CAST = "apply", "match", "cast"
 HOW, VALUE, TUPLE, ITERATE, CALLABLE = "how", "value", "tuple", "iterate", "callable"
 
 QUERY, INDEX, LABEL = "QUERY", "INDEX", "LABEL"
-NULLABLE, NOTNULL, NOTZERO = "NULLABLE", "NOTNULL", "NOTZERO"
+NULLABLE, NULLIFY, NOTNULL = "NULLABLE", "NULLIFY", "NOTNULL"
 REQUIRED, OPTIONAL = "REQUIRED", "OPTIONAL"
 
 MATCH_QUERY, EXACT, INCLUDE, EXCLUDE, FLIP, COUNT = "query", "exact", "include", "exclude", "flip", "count"
@@ -85,15 +85,15 @@ TASK = "task"
 ITER_INDEX = "__index"
 COUNT_INDEX = "__i"
 
-def iter_task(context: Context, method=str(), sep='_', strict=True) -> str:
-    return concat(context.get(TASK), method, context.get(ITER_INDEX), sep=sep, strict=strict)
+def iter_task(context: Context, method=str(), sep='_', drop_empty=False) -> str:
+    return concat(context.get(TASK), method, context.get(ITER_INDEX), sep=sep, drop_empty=drop_empty)
 
-def count_task(context: Context, method=str(), field: Field=dict(), name=str(), sep='_', strict=True) -> str:
+def count_task(context: Context, method=str(), field: Field=dict(), name=str(), sep='_', drop_empty=False) -> str:
     if COUNT_INDEX in context:
         count_index = f"[{context[COUNT_INDEX]}]" if isinstance(context.get(ITER_INDEX), str) else f"-{context[COUNT_INDEX]}"
     else: count_index = None
     args = (context.get(TASK), method, context.get(SCHEMA_KEY), field.get(NAME), name, context.get(ITER_INDEX), count_index)
-    return concat(*args, sep=sep, strict=strict)
+    return concat(*args, sep=sep, drop_empty=drop_empty)
 
 class UserInterrupt(Exception):
     ...
@@ -175,13 +175,13 @@ class Match(Function):
     def __init__(self, func: Optional[MatchFunction]=None, path: Optional[Union[_KT,Tuple[_KT]]]=None,
                 query: Optional[Union[_KT,Tuple[_KT]]]=None, value: Optional[Any]=None,
                 exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                flip=False, strict=False, how: Literal["any","all"]="any", if_null=False,
+                flip=False, drop_empty=True, how: Literal["any","all"]="any", if_null=False,
                 hier=True, default=False, **context):
         super().__init__(**self.validate_function(func, path, query), **context,
             optional=dict(
-                value=value, exact=exact, include=include, exclude=exclude, flip=flip, strict=strict,
+                value=value, exact=exact, include=include, exclude=exclude, flip=flip, drop_empty=drop_empty,
                 how=how, if_null=if_null, hier=hier, default=default),
-            null_if=dict(flip=False, strict=False, how="any", if_null=False, hier=True, default=False))
+            null_if=dict(flip=False, drop_empty=True, how="any", if_null=False, hier=True, default=False))
 
     def validate_function(self, func: Optional[MatchFunction]=None, path: Optional[_KT]=None, query: Optional[_KT]=None) -> Context:
         if isna(func) and isna(path) and isna(query):
@@ -192,9 +192,9 @@ class Match(Function):
 
 
 class Cast(Apply):
-    def __init__(self, type: TypeHint, default: Optional[Any]=None, strict=True, **context):
+    def __init__(self, type: TypeHint, default: Optional[Any]=None, clean=False, drop_empty=False, **context):
         Function.__init__(self, func=__CAST__, type=type, default=default, **context,
-            optional=dict(strict=strict), null_if=dict(strict=True))
+            optional=dict(clean=clean, drop_empty=drop_empty), null_if=dict(clean=False, drop_empty=False))
 
 
 class Exists(Apply):
@@ -225,24 +225,24 @@ class Rename(Apply):
 
 
 class Split(Apply):
-    def __init__(self, sep=',', maxsplit=-1, default: Optional[Any]=None,
-                strict=True, index: Optional[int]=None, type: Optional[TypeHint]=None):
+    def __init__(self, sep=',', maxsplit=-1, index: Optional[int]=None,
+                type: Optional[TypeHint]=None, default: Optional[Any]=None, drop_empty=False):
         Function.__init__(self, func=__SPLIT__, sep=sep, default=default,
-            optional=dict(maxsplit=maxsplit, strict=strict, index=index, type=type),
-            null_if=dict(maxsplit=-1, strict=True))
+            optional=dict(maxsplit=maxsplit, index=index, type=type, drop_empty=drop_empty),
+            null_if=dict(maxsplit=-1, drop_empty=False))
 
 
 class Stat(Apply):
     def __init__(self, stat: Callable, keys: _KT=list(), default: Optional[Any]=None,
-                hier=False, type: Optional[TypeHint]=None, strict=True):
+                hier=False, type: Optional[TypeHint]=None, clean=False):
         Function.__init__(self, func=__STAT__, stat=stat, keys=keys, default=default,
-            optional=dict(hier=hier, type=type, strict=strict), null_if=dict(hier=False, strict=True))
+            optional=dict(hier=hier, type=type, clean=clean), null_if=dict(hier=False, clean=False))
 
 
 class Sum(Stat):
     def __init__(self, keys: _KT=list(), default: Optional[Any]=None,
-                hier=False, type: Optional[TypeHint]=None, strict=True):
-        super().__init__(stat=sum, keys=keys, default=default, hier=hier, type=type, strict=strict)
+                hier=False, type: Optional[TypeHint]=None, clean=False):
+        super().__init__(stat=sum, keys=keys, default=default, hier=hier, type=type, clean=clean)
 
 
 class Map(Apply):
@@ -262,33 +262,34 @@ class Map(Apply):
 ###################################################################
 
 SchemaPath = Union[_KT, _VT, Tuple[_KT,_KT], Tuple[_VT,_VT], Callable]
-SchemaMode = Literal["QUERY", "INDEX", "LABEL", "NULLABLE", "NOTNULL", "NOTZERO", "REQUIRED", "OPTIONAL"]
+SchemaMode = Literal["QUERY", "INDEX", "LABEL", "NULLABLE", "NULLIFY", "NOTNULL", "REQUIRED", "OPTIONAL"]
 PathType = Literal["path", "value", "tuple", "iterate", "callable", "global"]
 
 class Field(Value):
     typeCast = True
 
     def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, mode: Optional[SchemaMode]=None,
-                path: Optional[SchemaPath]=None, default: Optional[Any]=None, cast: Optional[bool]=None, strict=True,
+                path: Optional[SchemaPath]=None, default: Optional[Any]=None, cast: Optional[Dict]=None,
                 apply: Optional[Apply]=None, match: Optional[Match]=None, **kwargs):
         super().__init__(name=name, type=type)
-        self.update_optional(
-            desc=desc, mode=mode, path=path, default=default, cast=cast, strict=strict, apply=apply, match=match, **kwargs)
+        self.update_optional(desc, mode, path, default, cast, apply, match, **kwargs)
 
-    def update_optional(self, desc: Optional[str]=None, mode: Optional[SchemaMode]=None, path: Optional[SchemaPath]=None,
-                        default: Optional[Any]=None, cast: Optional[bool]=None, strict=True,
-                        apply: Optional[Apply]=None, match: Optional[Match]=None, inplace=True, **kwargs):
+    def update_optional(self, desc: Optional[str]=None, mode: Optional[SchemaMode]=None,
+                        path: Optional[SchemaPath]=None, default: Optional[Any]=None, cast: Optional[Dict]=None,
+                        apply: Optional[Apply]=None, match: Optional[Match]=None, **kwargs):
         if mode == INDEX: path = [COUNT_INDEX]
         elif (mode is None) or (path is None):
             return self.update_notna(desc=desc, **kwargs)
         elif mode in (QUERY,LABEL): pass
-        elif mode == NOTNULL: default, cast = init_origin(self[TYPE]), True
-        elif mode == NOTZERO: cast, strict = True, False
+        elif (mode == NULLIFY) or is_bool_type(self[TYPE]):
+            cast = dict(drop_empty=True) if cast is None else cast
+        elif mode == NOTNULL:
+            cast = dict(drop_empty=False) if cast is None else cast
+            default = (init_origin(self[TYPE]) if default is None else default)
         elif is_numeric_or_date_type(self[TYPE]):
-            if cast is None: cast = True
-            if is_bool_type(self[TYPE]): strict = False
+            cast = dict(clean=False) if cast is None else cast
         self.update_notna(
-            desc=desc, mode=mode, path=path, default=default, cast=cast, strict=(None if strict is True else strict),
+            desc=desc, mode=mode, path=path, default=default, cast=cast,
             apply=_to_apply_func(apply), match=_to_match_func(match), how=_get_path_type(path), **kwargs)
 
     def copy(self) -> Field:
@@ -522,8 +523,8 @@ class BaseSession(CustomDict):
         return get_date(date, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate, country_code=self.countryCode)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[dt.date,dt.date]:
-        return get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate, country_code=self.countryCode)
+                        if_null: Optional[Unit]=None, busdate: Logic=False) -> Tuple[dt.date,dt.date]:
+        return get_date_pair(startDate, endDate, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate, country_code=self.countryCode)
 
     def set_date(self, date: Optional[DateFormat]=None, __format="%Y-%m-%d",
                 if_null: Optional[Union[int,str]]=None, busdate=False) -> str:
@@ -531,7 +532,7 @@ class BaseSession(CustomDict):
         return set_date(date, __format)
 
     def set_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None, __format="%Y-%m-%d",
-                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[str,str]:
+                        if_null: Optional[Unit]=None, busdate: Logic=False) -> Tuple[str,str]:
         startDate, endDate = self.get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
         return set_date(startDate, __format), set_date(endDate, __format)
 
@@ -758,7 +759,7 @@ class Iterator(CustomDict):
     offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
-    interval = str()
+    interval = None
 
     def __init__(self, iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None):
         self.set_iterator_unit(iterateUnit, interval)
@@ -786,7 +787,7 @@ class Iterator(CustomDict):
 
     @BaseSession.catch_exception
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
-                    iterateUnit: Optional[int]=None, pagination: Pagination=False, interval: Timedelta=str(),
+                    iterateUnit: Optional[int]=None, pagination: Pagination=False, interval: Optional[Timedelta]=None,
                     indexing=True, **context) -> Tuple[List[Context],Context]:
         arguments, periods, ranges = list(), list(), list()
         args_context = self._check_args(*args, iterateArgs=iterateArgs, pagination=pagination)
@@ -1039,7 +1040,7 @@ class Mapper(BaseSession):
         return data, dict(context, flow=flow, responseType=responseType, discard=discard)
 
     def _set_update_time_by_interval(self, __data: Data, date: Optional[dt.date]=None, datetime: Optional[dt.datetime]=None,
-                                    interval: Timedelta=str(), **context) -> Data:
+                                    interval: Optional[Timedelta]=None, **context) -> Data:
         updateDate = date if isinstance(date, dt.date) and is_daily_frequency(interval) else self.today()
         return self.set_update_time(__data, date=updateDate, datetime=datetime)
 
@@ -1136,9 +1137,9 @@ class Mapper(BaseSession):
         self.checkpoint(count_task(context, "field", field), where="map_field", msg={"value":__value, "field":field})
         return self._set_value(__base, __value, field, **context)
 
-    def _get_value(self, data: ResponseData, path=list(), type: Optional[TypeHint]=None, default=None,
-                    apply: Apply=dict(), match: Match=dict(), cast=False, strict=True, sep=str(), strip=True,
-                    context: Context=dict(), name=str(), log=False, **field) -> _VT:
+    def _get_value(self, data: ResponseData, path: Any=list(), type: Optional[TypeHint]=None, default=None,
+                    apply: Apply=dict(), match: Match=dict(), sep=str(), strip=True, context: Context=dict(),
+                    name=str(), log=False, **field) -> _VT:
         if isinstance(data, pd.DataFrame):
             if match:
                 data = data[self._match_data(data, match, context=context, field=field, name=name, log=log)]
@@ -1146,9 +1147,9 @@ class Mapper(BaseSession):
         elif not self._match_data(data, match, context=context, name=name, log=log): return __MISMATCH__
         default = self._get_value_by_path(data, default, None, sep, strip, context) if notna(default) else None
         __value = self._get_value_by_path(data, path, default, sep, strip, context)
-        return self._apply_value(__value, apply, type, default, cast, strict, context, name, log, **field)
+        return self._apply_value(__value, apply, type, default, context=context, name=name, log=log, **field)
 
-    def _get_value_by_path(self, data: ResponseData, path=list(), default=None, sep=str(), strip=True,
+    def _get_value_by_path(self, data: ResponseData, path: Any=list(), default=None, sep=str(), strip=True,
                             context: Context=dict()) -> _VT:
         if is_array(path):
             return get_value(data, path, default=default, sep=sep, strip=strip) if path else data
@@ -1158,19 +1159,19 @@ class Mapper(BaseSession):
         else: return to_series(path, data.index) if isinstance(data, PANDAS_DATA) else path
 
     def _apply_value(self, __value: _VT, apply: Apply=dict(), type: Optional[TypeHint]=None, default=None,
-                    cast=False, strict=True, context: Context=dict(), name=str(), log=False, **field) -> _VT:
-        __apply = cast_list(apply, strict=False)
-        if cast: __apply += [Cast(type, default, strict)]
-        field = dict(field, type=type, default=default, strict=strict)
+                    cast: Optional[Dict]=None, context: Context=dict(), name=str(), log=False, **field) -> _VT:
+        __apply = cast_list(apply, drop_empty=True)
+        if isinstance(cast, Dict): __apply += [Cast(**dict(type=type, default=default, **cast))]
+        field = dict(field, type=type, default=default, cast=cast)
         return self._apply_data(__value, __apply, context=context, field=field, name=name, log=log)
 
-    def _get_value_tuple(self, data: ResponseData, path: Tuple, apply: Apply=dict(), match: Match=dict(),
+    def _get_value_tuple(self, data: ResponseData, path: Tuple[Any,...], apply: Apply=dict(), match: Match=dict(),
                         context: Context=dict(), name=str(), **field) -> _VT:
         __match = int(self._match_data(data, match, context=context, name=name, log=True))-1
         __apply = get_scala(apply, index=__match, default=dict())
         return self._get_value(data, path[__match], apply=__apply, context=context, name=name, log=True, **field)
 
-    def _get_value_tuple_df(self, data: pd.DataFrame, path: Tuple, apply: Apply=dict(), match: Match=dict(),
+    def _get_value_tuple_df(self, data: pd.DataFrame, path: Tuple[Any,...], apply: Apply=dict(), match: Match=dict(),
                             context: Context=dict(), name=str(), **field) -> pd.Series:
         __match = self._match_data(data, match, context=context, name=name, log=True)
         df_true, df_false = data[__match], data[~__match]
@@ -1237,13 +1238,13 @@ class Mapper(BaseSession):
         elif func == __STAT__: return self.__stat__(__object, **kwargs)
         elif func == __SUM__: return self.__stat__(__object, **kwargs)
         elif func == __MAP__:
-            field = dict(type=field[TYPE], name=name)
-            return self.__map__(__object, **dict(field, **kwargs), context=context)
+            kwargs["type"] = field[TYPE]
+            return self.__map__(__object, context=context, name=name, **kwargs)
         else: raise ForbiddenError(INVALID_APPLY_SPECIAL_MSG(func, context, field, name))
 
-    def __cast__(self, __object, type: TypeHint, default=None, strict=True,
+    def __cast__(self, __object, type: TypeHint, default=None, clean=False, drop_empty=False,
                 context: Context=dict(), **kwargs) -> _VT:
-        context = dict(context, default=default, strict=strict)
+        context = dict(context, default=default, clean=clean, drop_empty=drop_empty)
         if isinstance(__object, List):
             return [cast_object(__e, type, **context) for __e in __object]
         else: return cast_object(__object, type, **context)
@@ -1257,12 +1258,12 @@ class Mapper(BaseSession):
         if keys: __object = filter_data(__object, keys, if_null="drop", values_only=True, hier=hier)
         if split: __object = cast_str(__object).split(split)
         if not is_array(__object): return default
-        __object = [__s for __s in [cast_str(__e, strict=True, strip=strip) for __e in __object] if __s]
+        __object = [__s for __s in [cast_str(__e, strip=strip) for __e in __object] if __s]
         return sep.join(__object) if __object else default
 
     def __regex__(self, __object, pattern: RegexFormat, default=None, index: Optional[int]=0,
                     repl: Optional[str]=None, strip=False, **kwargs) -> str:
-        __object = cast_str(__object, strict=True)
+        __object = cast_str(__object)
         __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
         if isinstance(repl, str): __object = __pattern.sub(repl, __object)
         else: return re_get(pattern, __object, default=default, index=index)
@@ -1276,19 +1277,19 @@ class Mapper(BaseSession):
         else: value = rename.get(__object, if_null)
         return hier_get(value, path) if path else value
 
-    def __split__(self, __object, sep=',', maxsplit=-1, default=None, strict=True, index: Optional[int]=None,
-                    type: Optional[TypeHint]=None, **kwargs) -> Union[List,_VT]:
-        __object = cast_str(__object, strict=True).split(sep, maxsplit)
-        if type: __object = [self.__cast__(__e, type, default, strict) for __e in __object]
+    def __split__(self, __object, sep=',', maxsplit=-1, index: Optional[int]=None,
+                    type: Optional[TypeHint]=None, default=None, drop_empty=False, **kwargs) -> Union[List,_VT]:
+        __object = cast_str(__object).split(sep, maxsplit)
+        if type: __object = [self.__cast__(__e, type, default, drop_empty) for __e in __object]
         return get_scala(__object, index) if isinstance(index, int) else __object
 
     def __stat__(self, __object, stat: Callable, keys: _KT=list(), default=None, hier=False,
-                type: Optional[TypeHint]=None, strict=True, **kwargs) -> Union[Any,int,float]:
+                type: Optional[TypeHint]=None, clean=False, **kwargs) -> Union[Any,int,float]:
         if keys: __object = filter_data(__object, keys, if_null="drop", values_only=True, hier=hier)
         if not is_array(__object): return default
         elif is_numeric_type(type):
             __cast = cast_float if is_float_type(type) else cast_int
-            __object = [__cast(__e, strict=strict) for __e in __object]
+            __object = [__cast(__e, clean=clean) for __e in __object]
         else: __object = [__n for __n in __object if isinstance(__n, (float,int))]
         return stat(__object) if __object else default
 
@@ -1345,21 +1346,21 @@ class Mapper(BaseSession):
         __apply = safe_apply_df if isinstance(data, PANDAS_DATA) else safe_apply
         return _toggle(__apply(data, func, default, **context), flip=flip)
 
-    def _match_value(self, data: ResponseData, path: _KT, value: Optional[Any]=None, flip=False, strict=False,
+    def _match_value(self, data: ResponseData, path: _KT, value: Optional[Any]=None, flip=False, drop_empty=True,
                     how: Literal["any","all"]="any", if_null=False, hier=True, context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs) -> Union[bool,pd.Series]:
         if not _is_single_path_by_data(data, path, hier=hier):
-            args = (value, flip, strict, how, if_null, hier)
-            return howin([self._match_value(data, __k, args, log=log, **kwargs) for __k in path], how=how)
+            args = (value, flip, drop_empty, how, if_null, hier)
+            return howin([self._match_value(data, __k, *args, log=log, **kwargs) for __k in path], how=how)
         __value = get_value(data, path)
         if log:
-            match = dict(path=path, flip=flip, strict=strict, how=how, if_null=if_null, hier=hier)
+            match = dict(path=path, flip=flip, drop_empty=drop_empty, how=how, if_null=if_null, hier=hier)
             self._log_origin(__value, match, point="match", where="match_value", context=context, field=field, name=name, log=True)
         if isna(__value): return _toggle(if_null, flip=flip)
         elif notna(value): return _toggle((__value == value), flip=flip)
         elif isinstance(data, pd.DataFrame):
-            return _toggle(match_df(data, match=(lambda x: exists(x, strict=strict)), all_cols=True), flip=flip)
-        else: return _toggle(exists(__value, strict=strict), flip=flip)
+            return _toggle(match_df(data, match=(exists if drop_empty else notna), all_cols=True), flip=flip)
+        else: return _toggle((exists(__value) if drop_empty else notna(__value)), flip=flip)
 
     def _log_origin(self, __value: _VT, __object: Any, point: str, where: str, msg=dict(), context: Context=dict(),
                     field: Optional[Field]=dict(), name: Optional[str]=str(), log=False, **kwargs):

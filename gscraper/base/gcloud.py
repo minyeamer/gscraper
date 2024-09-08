@@ -209,7 +209,7 @@ class GspreadReadContext(OptionalDict):
 
 class GspreadQueryContext(GspreadReadContext):
     def __init__(self, key: str, sheet: str, fields: Optional[IndexLabel]=None, default: Optional[Any]=None,
-                if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, strict=True, unique=False,
+                if_null: Literal["drop","pass"]="drop", axis=0, dropna=True, drop_empty=False, unique=False,
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
@@ -218,9 +218,9 @@ class GspreadQueryContext(GspreadReadContext):
         super().__init__(
             key, sheet, fields, default, if_null, head, headers, str_cols, return_type, rename, to, size, name)
         self.update_notna(
-                axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+                axis=axis, dropna=dropna, drop_empty=drop_empty, unique=unique, arr_cols=arr_cols,
                 as_records=as_records, as_frame=as_frame, **kwargs,
-            null_if=dict(axis=0, dropna=True, strict=True, unique=False, as_records=False, as_frame=False))
+            null_if=dict(axis=0, dropna=True, drop_empty=False, unique=False, as_records=False, as_frame=False))
 
 
 class BigQueryReadContext(OptionalDict):
@@ -232,15 +232,15 @@ class BigQueryReadContext(OptionalDict):
 
 
 class BigQueryContext(BigQueryReadContext):
-    def __init__(self, query: str, project_id: str, axis=0, dropna=True, strict=True, unique=False,
+    def __init__(self, query: str, project_id: str, axis=0, dropna=True, drop_empty=False, unique=False,
                 arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
                 size: Optional[int]=None, name=str(), **kwargs):
         return_type = "records" if as_records else "dataframe"
         super().__init__(query, project_id, return_type, size, name)
         self.update_notna(
-                axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+                axis=axis, dropna=dropna, drop_empty=drop_empty, unique=unique, arr_cols=arr_cols,
                 as_records=as_records, as_frame=as_frame, **kwargs,
-            null_if=dict(axis=0, dropna=True, strict=True, unique=False, as_records=False, as_frame=False))
+            null_if=dict(axis=0, dropna=True, drop_empty=False, unique=False, as_records=False, as_frame=False))
 
 
 class ExcelReadContext(OptionalDict):
@@ -259,7 +259,7 @@ class ExcelReadContext(OptionalDict):
 class ExcelQueryContext(ExcelReadContext):
     def __init__(self, file_path: str, sheet_name: Union[str,int]=0, fields: Optional[IndexLabel]=None,
                 default: Optional[Any]=None, if_null: Literal["drop","pass"]="pass", axis=0,
-                dropna=True, strict=True, unique=False, str_cols: Optional[NumericiseIgnore]=None,
+                dropna=True, drop_empty=False, unique=False, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
                 file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **kwargs):
@@ -267,9 +267,9 @@ class ExcelQueryContext(ExcelReadContext):
         super().__init__(
             file_path, sheet_name, fields, default, if_null, str_cols, return_type, rename, to, file_pattern, reverse, size, name)
         self.update_notna(
-                axis=axis, dropna=dropna, strict=strict, unique=unique, arr_cols=arr_cols,
+                axis=axis, dropna=dropna, drop_empty=drop_empty, unique=unique, arr_cols=arr_cols,
                 as_records=as_records, as_frame=as_frame, **kwargs,
-            null_if=dict(axis=0, dropna=True, strict=True, unique=False, as_records=False, as_frame=False))
+            null_if=dict(axis=0, dropna=True, drop_empty=False, unique=False, as_records=False, as_frame=False))
 
 
 class GoogleReadContext(GspreadReadContext, BigQueryReadContext, ExcelReadContext):
@@ -352,14 +352,14 @@ class GoogleQueryReader(BaseSession):
             data = self.read_data(queryContext, account)
             self.update(self.map_query_data(data, **queryContext), inplace=True)
 
-    def map_query_data(self, data: pd.DataFrame, axis=0, dropna=True, strict=True, unique=False,
+    def map_query_data(self, data: pd.DataFrame, axis=0, dropna=True, drop_empty=False, unique=False,
                         arr_cols: IndexLabel=list(), as_records=False, as_frame=False,
                         name=str(), **context) -> Dict[_KT,Union[List,Any]]:
         if as_records or as_frame: return {name: data}
         arr_cols = cast_list(arr_cols)
         __m = to_dict((data.T if axis == 1 else data), "list", depth=2)
         for __key, __values in __m.copy().items():
-            values = to_array(__values, dropna=dropna, strict=strict, unique=unique)
+            values = to_array(__values, dropna=dropna, drop_empty=drop_empty, unique=unique)
             if (len(values) < 2) and (__key not in arr_cols):
                 __m[__key] = values[0] if len(values) == 1 else None
             else: __m[__key] = values

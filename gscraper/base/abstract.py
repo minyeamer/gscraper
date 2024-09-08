@@ -12,6 +12,7 @@ import functools
 
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 import pandas as pd
+import re
 
 
 NAME, TYPE, DESC, DEFAULT, ALIAS = "name", "type", "desc", "default", "alias"
@@ -60,8 +61,8 @@ UNIQUE_CONTEXT = lambda **context: \
 
 
 PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=None, which=None, where=None, by=None, verb=None, \
-                        how=None, default=None, dropna=None, strict=None, unique=None, drop=None, index=None, log=None, \
-                        depth=None, hier=None, to=None, countPath=None, hasSize=None, primary=None, **context: context
+                        default=None, clean=None, how=None, alignment=None, dropna=None, drop_empty=None, unique=None, drop=None, \
+                        index=None, log=None, depth=None, hier=None, to=None, countPath=None, hasSize=None, primary=None, **context: context
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
@@ -346,10 +347,31 @@ def pretty_print(*args, path: Optional[_KT]=None, drop: Optional[_KT]=None, inde
 ###################################################################
 
 class Variable(Value):
-    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, iterable=False,
-                enum: Union[Tuple[str],RenameMap]=None, default: Optional[Any]=__NONE__):
-        super().__init__(name=name, type=type, optional=dict(desc=desc, iterable=iterable, enum=enum))
-        if default != __NONE__: self.update(default=default)
+    def __init__(self, name: _KT, type: TypeHint, desc: Optional[str]=None, default: Optional[Any]=__NONE__,
+                iterable=False, arr_options: Optional[Dict]=None, enum: Union[Tuple[str,...],RenameMap]=None):
+        type, iterable = self.validate_iterable(type, iterable)
+        super().__init__(name=name, type=type)
+        self.update_optional(desc, default, iterable, arr_options, enum)
+
+    def validate_iterable(self, type: TypeHint, iterable=False) -> Union[TypeHint,bool]:
+        if isinstance(type, str) and bool(re.match(r"\[[^]]*\]", type)):
+            type = re.sub(r"^\[([^]]*)\]$", "\g<1>", type)
+            iterable = True
+        return type, iterable
+
+    def update_optional(self, desc: Optional[str]=None, default: Optional[Any]=__NONE__, iterable=False,
+                        arr_options: Optional[Dict]=None, enum: Union[Tuple[str,...],RenameMap]=None):
+        enum = enum if isinstance(enum, (Dict,Tuple)) else None
+        if isinstance(arr_options, Dict):
+            iterable = True
+            if (arr_options.get("default") is not None) and (not arr_options.get("drop_empty")):
+                arr_options["dropna"] = True
+        elif iterable:
+            if enum: arr_options = dict(dropna=True, unique=True)
+            else: arr_options = dict(drop_empty=True, unique=True)
+        self.update_notna(
+            dict(desc=desc, default=default, iterable=iterable, arr_options=arr_options, enum=enum),
+            null_if=dict(default=__NONE__))
 
     def copy(self) -> Variable:
         return copy.deepcopy(self)
@@ -386,36 +408,36 @@ class Query(ValueSet):
 
 FILTER_QUERY = lambda mapped=False: Query(
     Variable(name="fields", type="STRING", iterable=(not mapped), default=(dict() if mapped else list())),
-    Variable(name="ranges", type="STRING", iterable=True, default=list()),
-    Variable(name="returnType", type="STRING", iterable=False, default=None),
+    Variable(name="ranges", type="[STRING]", default=list()),
+    Variable(name="returnType", type="STRING", default=None),
 )
 
 TIME_QUERY = lambda: Query(
-    Variable(name="tzinfo", type="STRING", iterable=False, default=None),
-    Variable(name="countryCode", type="STRING", iterable=False, default=None),
-    Variable(name="datetimeUnit", type="STRING", iterable=False, default=None),
+    Variable(name="tzinfo", type="STRING", default=None),
+    Variable(name="countryCode", type="STRING", default=None),
+    Variable(name="datetimeUnit", type="STRING", default=None),
 )
 
 LOG_QUERY = lambda: Query(
-    Variable(name="logName", type="STRING", iterable=False, default=None),
-    Variable(name="logLevel", type="STRING", iterable=False, default="WARN"),
-    Variable(name="logFile", type="STRING", iterable=False, default=None),
-    Variable(name="localSave", type="BOOLEAN", iterable=False, default=None),
-    Variable(name="debug", type="STRING", iterable=True, default=None),
-    Variable(name="extraSave", type="STRING", iterable=True, default=None),
-    Variable(name="interrupt", type="STRING", iterable=True, default=None),
+    Variable(name="logName", type="STRING", default=None),
+    Variable(name="logLevel", type="STRING", default="WARN"),
+    Variable(name="logFile", type="STRING", default=None),
+    Variable(name="localSave", type="BOOLEAN", default=None),
+    Variable(name="debug", type="[STRING]", default=None),
+    Variable(name="extraSave", type="[STRING]", default=None),
+    Variable(name="interrupt", type="[STRING]", default=None),
 )
 
 REQUEST_QUERY = lambda: Query(
-    Variable(name="numRetries", type="INTEGER", iterable=False, default=0),
-    Variable(name="delay", type="FLOAT", iterable=True, default=1.),
-    Variable(name="cookies", type="STRING", iterable=False, default=None),
+    Variable(name="numRetries", type="INTEGER", default=0),
+    Variable(name="delay", type="[FLOAT]", default=1.),
+    Variable(name="cookies", type="STRING", default=None),
 )
 
 GCLOUD_QUERY = lambda: Query(
-    Variable(name="queryList", type="DICT", iterable=True, default=list()),
-    Variable(name="uploadList", type="DICT", iterable=True, default=list()),
-    Variable(name="account", type="STRING", iterable=False, default=None),
+    Variable(name="queryList", type="[DICT]", default=list()),
+    Variable(name="uploadList", type="[DICT]", default=list()),
+    Variable(name="account", type="STRING", default=None),
 )
 
 
@@ -424,22 +446,22 @@ GCLOUD_QUERY = lambda: Query(
 ###################################################################
 
 ITERATOR_QUERY = lambda: Query(
-    Variable(name="iterateUnit", type="INTEGER", iterable=False, default=None),
-    Variable(name="interval", type="STRING", iterable=False, default=None),
+    Variable(name="iterateUnit", type="INTEGER", default=None),
+    Variable(name="interval", type="STRING", default=None),
 )
 
 TASK_QUERY = lambda: Query(
-    Variable(name="fromNow", type="INTEGER", iterable=True, default=None),
-    Variable(name="discard", type="BOOLEAN", iterable=False, default=True),
-    Variable(name="progress", type="BOOLEAN", iterable=False, default=True),
+    Variable(name="fromNow", type="[INTEGER]", default=None),
+    Variable(name="discard", type="BOOLEAN", default=True),
+    Variable(name="progress", type="BOOLEAN", default=True),
 )
 
 GATHER_QUERY = lambda: Query(
-    Variable(name="where", type="STRING", iterable=False, default=str()),
-    Variable(name="which", type="STRING", iterable=False, default=str()),
-    Variable(name="verb", type="STRING", iterable=False, default=str()),
-    Variable(name="by", type="STRING", iterable=False, default=str()),
-    Variable(name="message", type="STRING", iterable=False, default=str()),
+    Variable(name="where", type="STRING", default=str()),
+    Variable(name="which", type="STRING", default=str()),
+    Variable(name="verb", type="STRING", default=str()),
+    Variable(name="by", type="STRING", default=str()),
+    Variable(name="message", type="STRING", default=str()),
 )
 
 
@@ -448,22 +470,22 @@ GATHER_QUERY = lambda: Query(
 ###################################################################
 
 ASYNC_QUERY = lambda: Query(
-    Variable(name="numTasks", type="INTEGER", iterable=False, default=100),
-    Variable(name="apiRedirect", type="BOOLEAN", iterable=False, default=False),
-    Variable(name="redirectUnit", type="INTEGER", iterable=False, default=None),
+    Variable(name="numTasks", type="INTEGER", default=100),
+    Variable(name="apiRedirect", type="BOOLEAN", default=False),
+    Variable(name="redirectUnit", type="INTEGER", default=None),
 )
 
 ENCRYPTED_QUERY = lambda: Query(
-    Variable(name="encryptedKey", type="STRING", iterable=False, default=None),
-    Variable(name="decryptedKey", type="STRING", iterable=False, default=None),
+    Variable(name="encryptedKey", type="STRING", default=None),
+    Variable(name="decryptedKey", type="STRING", default=None),
 )
 
 PIPELINE_QUERY = lambda: Query(
-    Variable(name="globalMessage", type="STRING", desc="주요진행메시지", iterable=False, default=str()),
-    Variable(name="globalProgress", type="BOOLEAN", desc="주요진행도표시", iterable=False, default=False),
-    Variable(name="asyncMessage", type="STRING", desc="동시진행메시지", iterable=False, default=str()),
-    Variable(name="asyncProgress", type="BOOLEAN", desc="동시진행도표시", iterable=False, default=False),
-    Variable(name="taskProgress", type="BOOLEAN", desc="세부진행도표시", iterable=False, default=True),
+    Variable(name="globalMessage", type="STRING", default=str()),
+    Variable(name="globalProgress", type="BOOLEAN", default=False),
+    Variable(name="asyncMessage", type="STRING", default=str()),
+    Variable(name="asyncProgress", type="BOOLEAN", default=False),
+    Variable(name="taskProgress", type="BOOLEAN", default=True),
 )
 
 
@@ -480,3 +502,41 @@ def get_base_query(asyncio=False, encrypted=False, mapped=False, pipeline=False,
         *(ENCRYPTED_QUERY() if encrypted else list()),
         *(PIPELINE_QUERY() if pipeline else list()),
     )
+
+
+###################################################################
+########################### Extra Query ###########################
+###################################################################
+
+class OptionalQuery(Query):
+    dtype = Variable
+    typeCheck = True
+
+    def __init__(self, *variables: Variable):
+        super().__init__(*[
+            variable for variable in variables if isinstance(variable, Dict) and (variable.get(DEFAULT) != __OPTIONAL__)])
+
+
+DATE_RANGE_QUERY = lambda startDate=__NONE__, endDate=__NONE__, interval=__OPTIONAL__: OptionalQuery(
+    Variable(name="startDate", type="DATE", default=startDate),
+    Variable(name="endDate", type="DATE", default=endDate),
+    Variable(name="interval", type="STRING", default=interval),
+)
+
+PAGE_RANGE_QUERY = lambda size=__OPTIONAL__, pageSize=__OPTIONAL__, pageStart=__OPTIONAL__, offset=__OPTIONAL__: OptionalQuery(
+    Variable(name="size", type="INTEGER", default=size),
+    Variable(name="pageSize", type="INTEGER", default=pageSize),
+    Variable(name="pageStart", type="INTEGER", default=pageStart),
+    Variable(name="offset", type="INTEGER", default=offset),
+)
+
+ISIN_KEYWORD_QUERY = lambda exact=__OPTIONAL__, include=__OPTIONAL__, exclude=__OPTIONAL__: OptionalQuery(
+    Variable(name="exact", type="[STRING]", default=exact),
+    Variable(name="include", type="[STRING]", default=include),
+    Variable(name="exclude", type="[STRING]", default=exclude),
+)
+
+LOGIN_QUERY = lambda userid=__NONE__, passwd=__NONE__: Query(
+    Variable(name="userid", type="STRING", default=userid),
+    Variable(name="passwd", type="STRING", default=passwd),
+)

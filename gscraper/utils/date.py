@@ -1,4 +1,4 @@
-from gscraper.base.types import TypeHint, Unit, DateFormat, Timedelta, Timezone, CastError
+from gscraper.base.types import TypeHint, Logic, Unit, DateFormat, Timedelta, Timezone, CastError
 from gscraper.base.types import is_type, is_str_type, is_timestamp_type, INTEGER_TYPES
 
 from gscraper.utils.cast import cast_datetime, cast_date, get_timezone
@@ -156,9 +156,10 @@ def get_date(__object: Optional[DateFormat]=None, if_null: Optional[Union[int,st
 
 
 def get_date_pair(startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                if_null: Optional[Unit]=None, busdate: Optional[Unit]=False, country_code=str()) -> Tuple[dt.date,dt.date]:
-    startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=get_scala(busdate, 0), country_code=country_code)
-    endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=get_scala(busdate, 1), country_code=country_code)
+                if_null: Optional[Unit]=None, tzinfo=None, busdate: Optional[Logic]=False, country_code=str()) -> Tuple[dt.date,dt.date]:
+    context = dict(tzinfo=tzinfo, country_code=country_code)
+    startDate = get_date(startDate, if_null=get_scala(if_null, 0), busdate=get_scala(busdate, 0), **context)
+    endDate = get_date(endDate, if_null=get_scala(if_null, 1), busdate=get_scala(busdate, 1), **context)
     __min = min(startDate, endDate) if startDate and endDate else startDate
     __max = max(startDate, endDate) if startDate and endDate else endDate
     return __min, __max

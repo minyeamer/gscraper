@@ -6,7 +6,8 @@ from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darra
 from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type, is_bytes_type
 from gscraper.base.types import is_comparable, is_kwargs_allowed
 
-from gscraper.utils import isna, notna, empty, exists
+from gscraper.utils import isna, notna, is_empty, exists
+from gscraper.utils import isna_plus, notna_plus, is_empty_plus, exists_plus
 from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set, cast_int
 
 from typing import Any, Dict, List, Set
@@ -34,16 +35,16 @@ LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are misma
 FILE_PATTERN_MISMATCH_MSG = "No files matching the filename pattern exist."
 
 
-def arg_or(*args: bool) -> bool:
+def arg_or(*args: Union[bool,int,Set]) -> bool:
     if not args: return False
     else: return functools.reduce(lambda x,y: x|y, args)
 
-def arg_and(*args: bool) -> bool:
+def arg_and(*args: Union[bool,int,Set]) -> bool:
     if not args: return False
     else: return functools.reduce(lambda x,y: x&y, args)
 
-def union(*arrays) -> Any:
-    if not arrays: return None
+def union(*arrays) -> List:
+    if not arrays: return list()
     else: return functools.reduce(lambda x,y: x+y, arrays)
 
 def inter(*arrays: Sequence) -> List:
@@ -55,63 +56,84 @@ def diff(*arrays: Sequence) -> List:
     else: return functools.reduce(lambda x,y: [e for e in x if e not in y], arrays)
 
 
-def isna_plus(__object, strict=True) -> bool:
-    if is_array(__object):
-        if not __object: return True
-        elif strict: return all(pd.isna(__object))
-        else: return empty(__object)
-    if isinstance(__object, pd.Series):
-        if __object.empty: return True
-        elif strict: return __object.isna().all()
-        else: return __object.apply(empty).all()
-    if isinstance(__object, pd.DataFrame):
-        if __object.empty: return True
-        elif strict: return __object.isna().all().all()
-        else: return apply_df(__object, empty, all_cols=True).all().all()
-    else: return isna(__object, strict=strict)
+###################################################################
+############################## Exists #############################
+###################################################################
+
+def notna_one(*args) -> Any:
+    for arg in args:
+        if notna(arg): return arg
+    if args: return args[-1]
 
 
-def notna_plus(__object, strict=True) -> bool:
-    if is_array(__object):
-        if not __object: return False
-        elif strict: return any(pd.notna(__object))
-        else: return exists(__object)
-    if isinstance(__object, pd.Series):
-        if __object.empty: return False
-        elif strict: return __object.notna().any()
-        else: return __object.apply(exists).any()
-    if isinstance(__object, pd.DataFrame):
-        if __object.empty: return False
-        elif strict: return __object.notna().any().any()
-        else: return apply_df(__object, exists, all_cols=True).any().any()
-    else: return notna(__object, strict=strict)
+def exists_one(*args) -> Any:
+    for arg in args:
+        if exists(arg): return arg
+    if args: return args[-1]
+
+
+def dropna(array: Sequence, default=None) -> List:
+    if default is None: return [__e for __e in array if notna(__e)]
+    else: return [__e if notna(__e) else default for __e in array]
+
+
+def drop_empty(array: Sequence, default=None) -> List:
+    if default is None: return [__e for __e in array if exists(__e)]
+    else: return [__e if exists(__e) else default for __e in array]
+
+
+def notna_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), **context) -> Dict:
+    if not null_if:
+        return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v)}
+    else: return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v) and (__v != null_if.get(__k))}
+
+
+def exists_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), **context) -> Dict:
+    if not null_if:
+        return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v)}
+    else: return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v) and (__v != null_if.get(__k))}
+
+
+def df_empty(df: pd.DataFrame, dropna=False, how: Literal["any","all"]="all") -> bool:
+    return isinstance(df, pd.DataFrame) and (df.dropna(axis=0, how=how) if dropna else df).empty
+
+
+def df_exists(df: pd.DataFrame, dropna=False, how: Literal["any","all"]="all") -> bool:
+    return isinstance(df, pd.DataFrame) and not (df.dropna(axis=0, how=how) if dropna else df).empty
 
 
 ###################################################################
 ############################# Convert #############################
 ###################################################################
 
-def to_array(__object, default=None, dropna=False, strict=False, unique=False) -> List:
-    __s = cast_list(__object)
-    if unique: return _unique(*__s, strict=strict)
-    elif dropna: return [__e for __e in __s if exists(__e, strict=strict)]
-    elif notna(default):
-        return [__e if exists(__e, strict=strict) else default for __e in __s]
-    else: return __s
+def to_array(__object, default=None, dropna=False, drop_empty=False, unique=False) -> List:
+    if unique: return _unique(__object, dropna=dropna, drop_empty=drop_empty)
+    elif drop_empty: return _drop_empty(__object, default)
+    elif dropna: return _dropna(__object, default)
+    else: return cast_list(__object)
+
+def _dropna(__object, default=None) -> List:
+    return dropna(cast_list(__object), default=default)
+
+def _drop_empty(__object, default=None) -> List:
+    return drop_empty(cast_list(__object), default=default)
+
+def _unique(__object, dropna=False, drop_empty=False, unroll=False) -> List:
+    return unique(*cast_list(__object), dropna=dropna, drop_empty=drop_empty, unroll=unroll)
 
 
 def to_dict(__object: MappingData, orient: Optional[Literal["dict","list","index"]]="dict", depth=1) -> Dict:
     if isinstance(__object, Dict): return __object
     elif is_records(__object, empty=True): return chain_dict(__object, keep="first")
     elif isinstance(__object, pd.DataFrame):
-        return fillna_dict(__object.to_dict(orient), value=None, strict=True, depth=depth)
+        return fillna_dict(__object.to_dict(orient), value=None, fill_empty=True, depth=depth)
     else: return dict()
 
 
 def to_records(__object: MappingData, depth=1) -> Records:
     if is_records(__object, empty=True): return __object
     elif isinstance(__object, pd.DataFrame):
-        return fillna_records(__object.to_dict("records"), value=None, strict=True, depth=depth)
+        return fillna_records(__object.to_dict("records"), value=None, fill_empty=True, depth=depth)
     elif isinstance(__object, Dict): return [__object]
     else: return list()
 
@@ -369,52 +391,6 @@ def hier_set(__m: Dict, __path: _KT, value: _VT, inplace=True) -> Dict:
 
 
 ###################################################################
-############################## Exists #############################
-###################################################################
-
-def notna_one(*args, strict=True) -> Any:
-    for arg in args:
-        if notna(arg, strict=strict): return arg
-    if args: return args[-1]
-
-
-def exists_one(*args, strict=False) -> Any:
-    for arg in args:
-        if exists(arg, strict=strict): return arg
-    if args: return args[-1]
-
-
-def notna_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), strict=True, **context) -> Dict:
-    if not null_if:
-        return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict)}
-    else: return {__k: __v for __k, __v in dict(__m, **context).items() if notna(__v, strict=strict) and (__v != null_if.get(__k))}
-
-
-def exists_dict(__m: Optional[Dict]=dict(), null_if: Dict=dict(), strict=False, **context) -> Dict:
-    if not null_if:
-        return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict)}
-    else: return {__k: __v for __k, __v in dict(__m, **context).items() if exists(__v, strict=strict) and (__v != null_if.get(__k))}
-
-
-def df_empty(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") -> bool:
-    return isinstance(df, pd.DataFrame) and (df.dropna(axis=0, how=how) if drop_na else df).empty
-
-
-def df_exists(df: pd.DataFrame, drop_na=False, how: Literal["any","all"]="all") -> bool:
-    return isinstance(df, pd.DataFrame) and not (df.dropna(axis=0, how=how) if drop_na else df).empty
-
-
-def data_exists(data: Data, strict=False) -> bool:
-    if isinstance(data, (pd.DataFrame, pd.Series)): return not data.empty
-    else: return exists(data, strict=strict)
-
-
-def data_empty(data: Data, strict=False) -> bool:
-    if isinstance(data, (pd.DataFrame, pd.Series)): return data.empty
-    else: return empty(data, strict=strict)
-
-
-###################################################################
 ############################### Isin ##############################
 ###################################################################
 
@@ -426,47 +402,50 @@ def howin(__iterable: Sequence[bool], how: Literal["any","all"]="all") -> bool:
     return allin(__iterable) if how == "all" else any(__iterable)
 
 
-def isin(__iterable: Iterable, exact: Optional[_VT]=None, include: Optional[_VT]=None,
-        exclude: Optional[_VT]=None, how: Literal["any","all"]="any", **kwargs) -> bool:
+def isin(__iterable: Iterable, exact: Optional[Keyword]=None, include: Optional[Keyword]=None,
+        exclude: Optional[Keyword]=None, how: Literal["any","all"]="any", join=False, **kwargs) -> bool:
     __match = True
-    if notna(exact): __match &= _isin(__iterable, exact, how="exact", all=(how == "all"))
-    if __match and notna(include): __match &= _isin(__iterable, include, how="include", all=(how == "all"))
-    if __match and notna(exclude): __match &= _isin(__iterable, exclude, how="exclude", all=True)
+    if notna(exact): __match &= _isin(__iterable, exact, "exact", (how == "all"), join)
+    if __match and notna(include): __match &= _isin(__iterable, include, "include", (how == "all"), join)
+    if __match and notna(exclude): __match &= _isin(__iterable, exclude, "exclude", True, join)
     return __match
 
 
-def _isin(__iterable: Iterable, values: Optional[_VT]=None,
-        how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> bool:
-    if is_array(__iterable):
-        return howin([_isin(__i, values, how, all, strict) for __i in __iterable], how=("all" if all else "any"))
-    elif is_array(values):
-        if how == "exact": how, all = "include", True
-        return howin([_isin(__iterable, __v, how, all, strict) for __v in values], how=("all" if all else "any"))
-    elif isna(values): return exists(__iterable, strict=strict)
-    elif not isinstance(__iterable, Iterable): return False
-    elif how == "exact": return values == __iterable
-    elif how == "include": return values in __iterable
-    elif how == "exclude": return values not in __iterable
+def _isin(__iterable: Iterable, values: Keyword, how: Literal["exact","include","exclude"]="exact", all=False, join=False) -> bool:
+    if is_array(values):
+        if how == "exact":
+            how, all = "include", True
+        return howin([_isin(__iterable, __v, how, all, join) for __v in values], how=("all" if all else "any"))
+    elif is_array(__iterable):
+        if isinstance(join, str): return _isin_value(concat(*__iterable, sep=join), values, how)
+        elif join: return _isin_value(concat(*__iterable, sep=' '), values, how)
+        else: return howin([_isin_value(__i, values, how) for __i in __iterable], how=("all" if all else "any"))
+    else: return _isin_value(__iterable, values, how)
+
+
+def _isin_value(__object: Any, __value: Any, how: Literal["exact","include","exclude"]="exact") -> bool:
+    if how == "exact": return __value == __object
+    elif how == "include": return __value in __object
+    elif how == "exclude": return __value not in __object
     else: raise ValueError(INVALID_ISIN_MSG)
 
 
-def isin_dict(__m: Dict, keys: Optional[_KT]=None,
-            exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-            how: Literal["any","all"]="any", if_null=False, hier=False) -> bool:
+def isin_dict(__m: Dict, keys: Optional[_KT]=None, exact: Optional[Keyword]=None, include: Optional[Keyword]=None,
+            exclude: Optional[Keyword]=None, how: Literal["any","all"]="any", join=False, if_null=False, hier=False) -> bool:
     if isna(exact) and isna(include) and isna(exclude): return True
     keys = keys if keys or hier else list(__m.keys())
     __values = kloc(__m, keys, if_null="drop", values_only=True, hier=hier)
     if isna(__values): return if_null
     elif is_single_path(keys, hier=hier): pass
     elif (how == "all") and (not if_null) and (len(keys) != len(__values)): return False
-    return isin(__values, exact, include, exclude, how=how)
+    return isin(__values, exact, include, exclude, how, join)
 
 
-def isin_records(__r: Records, keys: Optional[_KT]=None,
-                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                how: Literal["any","all"]="any", if_null=False, hier=False, filter=True) -> Union[Records,List[bool]]:
+def isin_records(__r: Records, keys: Optional[_KT]=None, exact: Optional[Keyword]=None, include: Optional[Keyword]=None,
+                exclude: Optional[Keyword]=None, how: Literal["any","all"]="any", join=False, if_null=False,
+                hier=False, filter=True) -> Union[Records,List[bool]]:
     if isna(exact) and isna(include) and isna(exclude): return __r
-    __matches = [isin_dict(__m, keys, exact, include, exclude, how, if_null, hier) for __m in __r]
+    __matches = [isin_dict(__m, keys, exact, include, exclude, how, join, if_null, hier) for __m in __r]
     return [__m for __match, __m in zip(__matches, __r) if __match] if filter else __matches
 
 
@@ -475,81 +454,83 @@ def keyin_records(__r: Records, keys: _KT) -> Union[bool,Dict[_KT,bool]]:
     return {__key: (__key in all_keys) for __key in keys} if is_array(keys) else keys in all_keys
 
 
-def isin_df(df: pd.DataFrame, columns: Optional[IndexLabel]=None,
-            exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-            how: Literal["any","all"]="any", if_null=False, filter=True) -> PandasData:
-    if isna(exact) and isna(include) and isna(exclude): return df
-    elif not if_null and columns and diff(cast_list(columns), df.columns):
+def isin_df(df: pd.DataFrame, columns: Optional[IndexLabel]=None, exact: Optional[Keyword]=None,
+        include: Optional[Keyword]=None, exclude: Optional[Keyword]=None, how: Literal["any","all"]="any",
+        join=False, if_null=False, filter=True) -> PandasData:
+    if isna(exact) and isna(include) and isna(exclude):
+        return df if filter else pd.Series([True] * len(df), index=df.index)
+    __columns = inter(cast_list(columns), df.columns) if columns or (not if_null) else df.columns.tolist()
+    if df.empty or (not __columns):
         return pd.DataFrame(columns=df.columns) if filter else pd.Series([False] * len(df), index=df.index)
     __matches = pd.Series([True] * len(df), index=df.index)
     for __how, __values in zip(["exact", "include", "exclude"], [exact, include, exclude]):
         __all = True if __how == "exclude" else (how == "all")
         if isna(__values): continue
+        elif join: __match = _isin_joined_columns(df[__matches], columns, __values, __how, __all, if_null)
         else: __match = _isin_columns(df[__matches], columns, __values, __how, __all, if_null)
         __matches = __matches & __match
     return df[__matches] if filter else __matches
 
 
-def _isin_columns(df: pd.DataFrame, columns: Optional[IndexLabel]=None, values: Optional[_VT]=None,
+def _isin_columns(df: pd.DataFrame, columns: IndexLabel, values: Keyword,
                 how: Literal["exact","include","exclude"]="exact", all=False, if_null=False) -> pd.Series:
-    columns = inter(cast_list(columns), df.columns) if columns else df.columns.tolist()
-    if not columns:
-        return pd.Series([True] * len(df), index=df.index)
     __matches = pd.Series([all] * len(df), index=df.index)
     for __column in columns:
         if __column not in df: continue
-        __match = _isin_series(df[__column], values, how=how, all=all).fillna(if_null)
+        __match = _isin_series(df[__column], values, how, all).fillna(if_null)
         __matches = (__matches & __match) if all else (__matches | __match)
     return __matches
 
 
-def _isin_series(series: pd.Series, __values: Optional[_VT]=None,
-                how: Literal["exact","include","exclude"]="exact", all=False, strict=False) -> pd.Series:
-    if series.empty: return series
-    elif is_array(__values):
+def _isin_joined_columns(df: pd.DataFrame, columns: IndexLabel, values: Keyword,
+                        how: Literal["exact","include","exclude"]="exact", all=False, if_null=False) -> pd.Series:
+    series = df[columns].apply(lambda row: concat(*row), axis=1)
+    return _isin_series(series, values, how, all).fillna(if_null)
+
+
+def _isin_series(series: pd.Series, values: Keyword, how: Literal["exact","include","exclude"]="exact", all=False) -> pd.Series:
+    if is_array(values):
         if how == "exact": how, all = "include", True
         __op = arg_and if all else arg_or
-        return __op(*[_isin_series(series, __v, how, all, strict) for __v in __values])
-    elif isna(__values): return series.apply(lambda x: exists(x, strict=strict))
-    elif how == "exact": return series == __values
-    elif how == "include":
-        return series.astype(str).str.contains(__values)
-    elif how == "exclude": return ~series.astype(str).str.contains(__values)
+        return __op(*[_isin_series(series, __v, how, all) for __v in values])
+    else: return _isin_str_series(series.astype(str), str(values), how)
+
+
+def _isin_str_series(series: pd.Series, value: str, how: Literal["exact","include","exclude"]="exact") -> pd.Series:
+    if how == "exact": return series == value
+    elif how == "include": return series.str.contains(value)
+    elif how == "exclude": return ~series.str.contains(value)
     else: raise ValueError(INVALID_ISIN_MSG)
 
 
-def isin_source(source: Union[Tag,Sequence[Tag]], selectors: _KT, exact: Optional[_VT]=None,
-                include: Optional[_VT]=None, exclude: Optional[_VT]=None, how: Literal["any","all"]="any",
-                if_null=False, hier=False, index: Optional[Unit]=None, key=str(), text=True, sep=' ', strip=True,
-                filter=True, **kwargs) -> Union[bool,List[Tag],List[bool]]:
-    if is_array(source):
-        context = locals()
-        __matches = [isin_source(dict(context, source=__s)) for __s in source]
-        return [__s for __match, __s in zip(__matches, source) if __match] if filter else __matches
+def isin_source(source: Union[Tag,Sequence[Tag]], selectors: _KT, exact: Optional[Keyword]=None,
+                include: Optional[Keyword]=None, exclude: Optional[Keyword]=None, how: Literal["any","all"]="any",
+                join=False, if_null=False, hier=False, filter=True, **kwargs) -> Union[bool,List[Tag],List[bool]]:
     if isna(exact) and isna(include) and isna(exclude):
-        name = exists_one(*map(_get_class_name, (selectors if hier else cast_tuple(selectors))))
-        if not name: return True
-        else: exact = name
-    context = dict(index=index, key=key, text=text, sep=sep, strip=strip)
-    __values = sloc(source, selectors, if_null="drop", values_only=True, hier=hier, **context)
+        return source if filter else ([True] * len(source) if is_array(source) else True)
+    args = (selectors, exact, include, exclude, how, join, if_null, hier)
+    if is_array(source):
+        __matches = [_isin_source_text(__s, *args, **kwargs) for __s in source]
+        return [__s for __match, __s in zip(__matches, source) if __match] if filter else __matches
+    else: return _isin_source_text(source, *args, **kwargs)
+
+
+def _isin_source_text(source: Tag, selectors: _KT, exact: Optional[Keyword]=None, include: Optional[Keyword]=None,
+                    exclude: Optional[Keyword]=None, how: Literal["any","all"]="any",
+                    join=False, if_null=False, hier=False, **kwargs) -> bool:
+    __values = sloc(source, selectors, if_null="drop", values_only=True, hier=hier, **kwargs)
     if not __values: return if_null
-    elif is_single_selector(selectors, hier=hier, index=index): pass
+    elif is_single_selector(selectors, hier=hier, index=kwargs.get("index")): pass
     elif (how == "all") and (not if_null) and (len(selectors) != len(__values)): return False
-    return isin(__values, exact, include, exclude, how=how)
+    return isin(__values, exact, include, exclude, how, join)
 
 
-def _get_class_name(selector: _KT) -> str:
-    tag = str(get_scala(selector, -1))
-    return tag[1:] if tag.startswith('.') or tag.startswith('#') else str()
-
-
-def isin_data(data: ResponseData, path: Optional[Union[_KT,IndexLabel]]=None,
-                exact: Optional[_VT]=None, include: Optional[_VT]=None, exclude: Optional[_VT]=None,
-                how: Literal["any","all"]="any", if_null=False, hier=False, filter=False,
-                **kwargs) -> Union[bool,List[bool],pd.Series]:
-    context = dict(exact=exact, include=include, exclude=exclude, how=how, if_null=if_null)
+def isin_data(data: ResponseData, path: Optional[Union[_KT,IndexLabel]]=None, exact: Optional[Keyword]=None,
+            include: Optional[Keyword]=None, exclude: Optional[Keyword]=None, how: Literal["any","all"]="any",
+            join=False, if_null=False, hier=False, filter=False, **kwargs) -> Union[bool,List[bool],pd.Series]:
+    context = dict(exact=exact, include=include, exclude=exclude, how=how, join=join, if_null=if_null)
     if isinstance(data, Dict): return isin_dict(data, path, hier=hier, **context)
-    elif is_records(data): return isin_records(data, path, filter=filter, **context)
+    elif is_records(data): return isin_records(data, path, hier=hier, filter=filter, **context)
     elif isinstance(data, pd.DataFrame): return isin_df(data, path, filter=filter, **context)
     elif isinstance(data, Tag): return isin_source(data, hier=hier, **context, **kwargs)
     else: return isin(data, **context)
@@ -559,16 +540,14 @@ def isin_data(data: ResponseData, path: Optional[Union[_KT,IndexLabel]]=None,
 ############################## Chain ##############################
 ###################################################################
 
-def unique(*elements, strict=True, unroll=False) -> List:
+def unique(*elements, dropna=False, drop_empty=False, unroll=False) -> List:
     array = list()
     for __e in (flatten(*elements) if unroll else elements):
-        if isna(__e, strict=strict): continue
-        if __e not in array: array.append(__e)
+        if drop_empty and is_empty(__e): continue
+        elif dropna and isna(__e): continue
+        elif __e in array: continue
+        else: array.append(__e)
     return array
-
-
-def _unique(*elements, strict=True, unroll=False) -> List:
-    return unique(*elements, strict=strict, unroll=unroll)
 
 
 def unique_keys(__r: Records, forward=True) -> _KT:
@@ -586,16 +565,17 @@ def unique_keys(__r: Records, forward=True) -> _KT:
     return keys
 
 
-def filter_exists(__object, strict=False) -> Any:
+def filter_exists(__object, drop_empty=True) -> Any:
     if isinstance(__object, List):
-        return [__value for __value in __object if exists(__value, strict=strict)]
+        return [__value for __value in __object if (exists(__value) if drop_empty else notna(__value))]
     if isinstance(__object, Tuple):
-        return tuple(__value for __value in __object if exists(__value, strict=strict))
+        return tuple(__value for __value in __object if (exists(__value) if drop_empty else notna(__value)))
     elif isinstance(__object, Dict):
-        return {key: __value for key, __value in __object.items() if exists(__value, strict=strict)}
+        return {key: __value for key, __value in __object.items() if (exists(__value) if drop_empty else notna(__value))}
     elif isinstance(__object, pd.DataFrame):
-        return __object.dropna(axis=1, how=("all" if strict else "any"))
-    elif exists(__object, strict=strict): return __object
+        return __object.dropna(axis=1)
+    elif (exists(__object) if drop_empty else notna(__object)): return __object
+    else: return None
 
 
 def concat_array(left: Sequence, right: Sequence, left_index: Sequence[int]) -> List:
@@ -918,6 +898,11 @@ def _get_selector_name(__path: _KT, key=str(), hier=False) -> str:
     return selector + (f"[{index}]" if notna(index) else str()) + (f"[@{key}]" if key else str())
 
 
+def _get_class_name(selector: _KT) -> str:
+    tag = str(get_scala(selector, -1))
+    return tag[1:] if tag.startswith('.') or tag.startswith('#') else str()
+
+
 def select_path(source: Tag, __path: _KT, default=None, index: Optional[Unit]=None, key=str(),
                 text=False, sep=str(), strip=True, **kwargs) -> HtmlData:
     selector, key, by = _from_selector_path(__path, key, text)
@@ -943,43 +928,42 @@ def hier_select(source: Tag, __path: _KT, default=None, index: Optional[Unit]=No
 ############################## Align ##############################
 ###################################################################
 
-def get_exists_index(__s: Sequence, strict=False) -> List[int]:
-    return [__i for __i, __e in enumerate(__s) if exists(__e, strict=strict)]
+def align_array(*args: Sequence, alignment: Literal["min","max","first"]="min", default=None,
+                dropna=False, drop_empty=False, unique=False) -> Tuple[List,...]:
+    if not args: return tuple()
+    arrays = _fill_arrays(args, alignment, default)
+    indices = set(range(0, len(arrays[0])))
+    if unique: indices = _get_unique_index(((arrays[0],) if alignment == "first" else arrays), dropna, drop_empty)
+    elif drop_empty: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if exists(__e)} for __s in arrays]))
+    elif dropna: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if notna(__e)} for __s in arrays]))
+    else: return arrays
+    return tuple([__s[__i] for __i in indices] for __s in arrays)
 
 
-def get_unique_index(__s: Sequence) -> List[int]:
-    indices, __mem = list(), set()
-    for __i, __e in enumerate(__s):
-        if __e not in __mem:
-            __mem.add(__e)
+def _fill_arrays(arrays: Tuple[Sequence,...], alignment: Literal["min","max","first"]="min", default=None) -> Tuple[List,...]:
+    arrays = tuple(cast_list(__s) for __s in arrays)
+    count = len(arrays[0]) if alignment == "first" else (max(map(len, arrays)) if alignment == "max" else min(map(len, arrays)))
+    default = fill_array(default, count=len(arrays), value=None) if isinstance(default, Tuple) else [default]*len(arrays)
+    return tuple(fill_array(cast_list(__s), count, __default) for __s, __default in zip(arrays, default))
+
+
+def _get_unique_index(arrays: Tuple[Sequence,...], dropna=False, drop_empty=False) -> List[int]:
+    indices, memory = list(), set()
+    for __i, __e in enumerate(zip(*arrays)):
+        if drop_empty and any(map(is_empty, __e)): continue
+        elif dropna and any(map(isna, __e)): continue
+        elif __e not in memory:
+            memory.add(__e)
             indices.append(__i)
     return indices
 
 
-def align_index(*args: Sequence, how: Literal["min","max","first"]="min",
-                dropna=False, strict=False, unique=False) -> List[int]:
-    args = (args[0],) if how == "first" else args
-    count = max(map(len, args)) if how == "max" else min(map(len, args))
-    indices = set(range(0, count))
-    if dropna: indices = arg_and(indices, *map(set, map(lambda __s: get_exists_index(__s, strict=strict), args)))
-    if unique: indices = arg_and(indices, *map(set, map(get_unique_index, args)))
-    return sorted(indices)
-
-
-def align_array(*args: Sequence, how: Literal["min","max","first"]="min", default=None,
-                dropna=False, strict=False, unique=False) -> Tuple[List]:
-    args = [cast_list(__s) for __s in args]
-    indices = align_index(*args, how=how, dropna=dropna, strict=strict, unique=unique)
-    return tuple([__s[__i] if __i < len(__s) else default for __i in indices] for __s in args)
-
-
-def align_dict(__m: Dict[_KT,Sequence], how: Literal["min","max"]="min", default=None,
-                strict=False, dropna=False, unique=False) -> Dict[_KT,List]:
+def align_dict(__m: Dict[_KT,Sequence], alignment: Literal["min","max"]="min", default=None,
+                dropna=False, drop_empty=False, unique=False) -> Dict[_KT,List]:
     if not __m: return dict()
-    indices = align_index(*map(list, __m.values()), how=how, strict=strict, dropna=dropna, unique=False)
-    if dropna or unique:
-        return {__key: iloc(__value, indices, if_null="drop") for __key, __value in __m.items()}
-    else: return {__key: iloc(__value, indices, default=default, if_null="pass") for __key, __value in __m.items()}
+    keys = list(__m.keys())
+    values = align_array(*[__m[__key] for __key in keys], alignment, default, dropna, drop_empty, unique)
+    return dict(zip(keys, values))
 
 
 def align_records(__r: Records, default=None, forward=True) -> Records:
@@ -1059,14 +1043,14 @@ def drop_data(data: MappingData, __keys: Optional[_KT]=list()) -> Data:
 ############################ Duplicated ###########################
 ###################################################################
 
-def diff_dict(*args: Dict, skip: IndexLabel=list(), keep: Literal["fist","last"]="fist") -> Tuple[Dict]:
+def diff_dict(*args: Dict, skip: IndexLabel=list(), keep: Literal["fist","last"]="fist") -> Tuple[Dict,...]:
     duplicates = arg_and(*map(lambda x: set(x.keys), args)) - cast_set(skip)
     keep = len(args)-1 if keep == "last" else 0
     return tuple((__m if __i == keep else drop_dict(__m, duplicates, inplace=False)) for __i, __m in enumerate(args))
 
 
 def diff_df(*args: pd.DataFrame, skip: IndexLabel=list(),
-            keep: Literal["fist","last"]="first") -> Tuple[pd.DataFrame]:
+            keep: Literal["fist","last"]="first") -> Tuple[pd.DataFrame,...]:
     duplicates = arg_and(*map(lambda x: set(x.columns), args)) - cast_set(skip)
     keep = len(args)-1 if keep == "last" else 0
     return tuple((df if __i == keep else df.drop(columns=duplicates)) for __i, df in enumerate(args))
@@ -1101,21 +1085,21 @@ def fill_array(__s: Sequence, count: int, value=None) -> List:
     return [(__s[__i] if __i < len(__s) else value) for __i in range(count)]
 
 
-def fillna_array(__s: Sequence, value=None, strict=True, depth=1) -> List:
+def fillna_array(__s: Sequence, value=None, fill_empty=False, depth=1) -> List:
     if depth < 1: return __s
-    fillna = lambda __value: fillna_data(__value, value, strict=strict, depth=depth-1) if depth > 1 else __value
-    return [(fillna(__e) if notna(__e, strict=strict) else value) for __e in __s]
+    fillna = lambda __value: fillna_data(__value, value, fill_empty=fill_empty, depth=depth-1) if depth > 1 else __value
+    return [(fillna(__e) if (notna(__e) if fill_empty else exists(__e)) else value) for __e in __s]
 
 
-def fillna_dict(__m: Dict, value=None, strict=True, depth=1) -> Dict:
+def fillna_dict(__m: Dict, value=None, fill_empty=False, depth=1) -> Dict:
     if depth < 1: return __m
-    fillna = lambda __value: fillna_data(__value, value, strict=strict, depth=depth-1) if depth > 1 else __value
-    return {__key: (fillna(__value) if notna(__value, strict=strict) else value) for __key, __value in __m.items()}
+    fillna = lambda __value: fillna_data(__value, value, fill_empty=fill_empty, depth=depth-1) if depth > 1 else __value
+    return {__key: (fillna(__value) if (notna(__value) if fill_empty else exists(__value)) else value) for __key, __value in __m.items()}
 
 
-def fillna_records(__r: Records, value=None, strict=True, depth=1) -> Records:
+def fillna_records(__r: Records, value=None, fill_empty=False, depth=1) -> Records:
     if depth < 1: return __r
-    return [fillna_dict(__m, value, strict=strict, depth=depth) for __m in __r]
+    return [fillna_dict(__m, value, fill_empty=fill_empty, depth=depth) for __m in __r]
 
 
 def fillna_df(__object: pd.DataFrame, value: Union[PandasData,Sequence,Any]=None) -> pd.DataFrame:
@@ -1143,13 +1127,13 @@ def fillna_series(__object: pd.Series, value: Union[pd.Series,Sequence,Any]=None
 
 
 def fillna_data(__object: Union[PandasData,Records], value: Union[PandasData,Sequence,Any]=None,
-                strict=True, depth=1) -> Union[PandasData,Records]:
+                fill_empty=False, depth=1) -> Union[PandasData,Records]:
     if isna_plus(value) and isinstance(__object, PANDAS_DATA): return __object
     elif isinstance(__object, pd.DataFrame): return fillna_df(__object, value)
     elif isinstance(__object, pd.Series): return fillna_series(__object, value)
-    elif is_records(__object): return fillna_records(__object, value, strict=strict, depth=depth)
-    elif isinstance(__object, Dict): return fillna_dict(__object, value, strict=strict, depth=depth)
-    elif is_array(__object): return fillna_array(__object, strict=strict, depth=depth)
+    elif is_records(__object): return fillna_records(__object, value, fill_empty=fill_empty, depth=depth)
+    elif isinstance(__object, Dict): return fillna_dict(__object, value, fill_empty=fill_empty, depth=depth)
+    elif is_array(__object): return fillna_array(__object, fill_empty=fill_empty, depth=depth)
     else: return __object
 
 
@@ -1185,8 +1169,8 @@ def sort_values(data: TabularData, by: _KT, ascending: _BOOL=True) -> Data:
 ############################## String #############################
 ###################################################################
 
-def concat(*args: str, sep=',', strict=True) -> str:
-    return sep.join([str(__s) for __s in args if notna(__s, strict=strict)])
+def concat(*args: str, sep=',', drop_empty=False) -> str:
+    return sep.join([str(__s) for __s in args if (exists(__s) if drop_empty else notna(__s))])
 
 
 def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:

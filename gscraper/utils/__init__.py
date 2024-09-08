@@ -1,28 +1,68 @@
-from typing import Iterable
-from pandas import isna as is_na
-from pandas import notna as not_na
+from typing import List, Tuple
+import pandas as pd
 import re
 
+OBJECT_SEQUENCE = (List, Tuple)
 
-def isna(__object, strict=True) -> bool:
-    if not strict:
-        try: return not __object
-        except: return is_na(__object)
-    _isna = is_na(__object)
-    return False if isinstance(_isna, Iterable) else _isna
 
-def notna(__object, strict=True) -> bool:
-    if not strict:
-        try: return bool(__object)
-        except: return not_na(__object)
-    _notna = not_na(__object)
-    return True if isinstance(_notna, Iterable) else _notna
+def isna(__object) -> bool:
+    _isna = pd.isna(__object)
+    return _isna if isinstance(_isna, bool) else False
 
-def empty(__object, strict=False) -> bool:
-    return isna(__object, strict=strict)
+def isna_plus(__object) -> bool:
+    if isinstance(__object, OBJECT_SEQUENCE):
+        return (not __object) or all(pd.isna(__object))
+    elif isinstance(__object, pd.Series):
+        return __object.empty or __object.isna().all()
+    elif isinstance(__object, pd.DataFrame):
+        return __object.empty or __object.isna().all().all()
+    else: return isna(__object)
 
-def exists(__object, strict=False) -> bool:
-    return notna(__object, strict=strict)
+
+def notna(__object) -> bool:
+    _notna = pd.notna(__object)
+    return _notna if isinstance(_notna, bool) else True
+
+def notna_plus(__object) -> bool:
+    if isinstance(__object, OBJECT_SEQUENCE):
+        return __object and any(pd.notna(__object))
+    elif isinstance(__object, pd.Series):
+        return (not __object.empty) and __object.notna().any()
+    elif isinstance(__object, pd.DataFrame):
+        return (not __object.empty) and __object.notna().any().any()
+    else: return isna(__object)
+
+
+def is_empty(__object) -> bool:
+    if isinstance(__object, float): # np.NaN
+        return pd.isna(__object)
+    try: return (not __object)
+    except: return isna(__object)
+
+def is_empty_plus(__object) -> bool:
+    if isinstance(__object, OBJECT_SEQUENCE):
+        return all([is_empty(__e) for __e in __object])
+    elif isinstance(__object, pd.Series):
+        return __object.empty or __object.apply(is_empty).all()
+    elif isinstance(__object, pd.DataFrame):
+        return __object.empty or __object.apply({__column: is_empty for __column in __object.columns}).all().all()
+    else: return is_empty(__object)
+
+
+def exists(__object) -> bool:
+    if isinstance(__object, float): # np.NaN
+        return pd.notna(__object) and bool(__object)
+    try: return bool(__object)
+    except: return notna(__object)
+
+def exists_plus(__object) -> bool:
+    if isinstance(__object, OBJECT_SEQUENCE):
+        return any([exists(__e) for __e in __object])
+    elif isinstance(__object, pd.Series):
+        return (not __object.empty) and __object.apply(exists).any()
+    elif isinstance(__object, pd.DataFrame):
+        return (not __object.empty) and __object.apply({__column: exists for __column in __object.columns}).any().any()
+    else: return exists(__object)
 
 
 def to_snake_case(__s: str) -> str:

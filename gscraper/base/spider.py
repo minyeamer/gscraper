@@ -11,17 +11,16 @@ from gscraper.base.gcloud import GoogleUploader, GoogleQueryList, GoogleUploadLi
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
 from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
-from gscraper.base.types import IndexLabel, Keyword, Pagination, Status, Unit, Range, DateFormat, Timedelta, Timezone
-from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData
+from gscraper.base.types import IndexLabel, Keyword, Logic, Status, Unit, Range, DateFormat, Timedelta, Timezone
+from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Pagination
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
 
-from gscraper.utils import notna
 from gscraper.utils.cast import cast_list, cast_tuple, cast_int, cast_datetime_format
 from gscraper.utils.date import get_random_seconds, get_date_pair, get_datetime_pair
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
-from gscraper.utils.map import kloc, notna_dict, drop_dict, split_dict, traversal_dict
-from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, rename_data, filter_data
+from gscraper.utils.map import kloc, hier_get, notna_dict, drop_dict, split_dict, traversal_dict
+from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, filter_data
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get, read_table
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
@@ -284,16 +283,16 @@ def encode_object(__object: str) -> str:
 
 class RangeContext(OptionalDict):
     def __init__(self, field: _KT, type: Optional[TypeHint]=None, left: Optional[Real]=None, right: Optional[Real]=None,
-                inclusive: Literal["both","neither","left","right"]="both", null=False):
-        left, right = self.validate_value(left, right, type)
+                inclusive: Literal["both","neither","left","right"]="both", null=False, tzinfo=None):
+        left, right = self.validate_value(left, right, type, tzinfo)
         super().__init__(field=field,
             optional=dict(left=left, right=right, inclusive=inclusive, null=null))
 
     def validate_value(self, left: Optional[Real]=None, right: Optional[Real]=None,
-                        type: Optional[TypeHint]=None) -> Tuple[Real,Real]:
+                        type: Optional[TypeHint]=None, tzinfo=None) -> Tuple[Real,Real]:
         if not type: return left, right
-        elif is_datetime_type(type): return get_datetime_pair(left, right, if_null=(None, None))
-        elif is_date_type(type): return get_date_pair(left, right, if_null=(None, None))
+        elif is_datetime_type(type): return get_datetime_pair(left, right, if_null=(None, None), tzinfo=tzinfo)
+        elif is_date_type(type): return get_date_pair(left, right, if_null=(None, None), tzinfo=tzinfo)
         else: return left, right
 
 
@@ -301,8 +300,15 @@ class RangeFilter(TypedRecords):
     dtype = RangeContext
     typeCheck = True
 
-    def __init__(self, *args: RangeContext):
-        super().__init__(*args)
+    def __init__(self, *args: RangeContext, tzinfo=None):
+        list.__init__(self, [self.validate_dtype(__i, tzinfo) for __i in args])
+
+    def validate_dtype(self, __object, tzinfo=None) -> Dict:
+        if (not self.dtype) or isinstance(__object, self.dtype): return __object
+        elif isinstance(__object, Dict):
+            if tzinfo is not None: __object["tzinfo"] = tzinfo
+            return self.dtype(**__object)
+        else: self.raise_dtype_error(__object)
 
 
 ###################################################################
@@ -351,7 +357,7 @@ class RequestSession(UploadSession):
     def set_filter_variables(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None,
                             returnType: Optional[TypeHint]=None):
         self.fields = fields if fields else self.fields
-        self.ranges = RangeFilter(*ranges) if isinstance(ranges, Sequence) and ranges else RangeFilter()
+        self.ranges = RangeFilter(*ranges, tzinfo=self.tzinfo) if isinstance(ranges, Sequence) and ranges else RangeFilter()
         self.returnType = returnType if returnType else self.returnType
 
     def set_request_variables(self, numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None):
@@ -364,29 +370,28 @@ class RequestSession(UploadSession):
     ######################## Context Validator ########################
     ###################################################################
 
-    def validate_context(self, locals: Dict=dict(), drop: _KT=list(), dropna=True, strict=False, unique=True, **context) -> Context:
+    def validate_context(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         if locals:
             context = self.from_locals(locals, drop=drop, **context)
-        queryMap = self.get_query_map(key="name", value=["type","iterable","enum","default"])
+        queryMap = self.get_query_map(key="name", value=[], if_null="pass")
         for __key, __map in queryMap.items():
             if __key in context:
-                context[__key] = self.validate_variable(context[__key], **__map, dropna=dropna, strict=strict, unique=unique)
+                context[__key] = self.validate_variable(context[__key], **__map)
         return context
 
-    def validate_variable(self, __object: Any, type: Type, enum=None, default=None,
-                        iterable=False, dropna=False, strict=False, unique=False) -> Any:
+    def validate_variable(self, __object: Any, type: Optional[Type]=None, default=None,
+                        iterable=False, arr_options=dict(), enum=None, **context) -> Any:
         if is_date_type(type):
             __object = [self.get_date(__e) for __e in __object] if is_array(__object) else self.get_date(__object)
         if isinstance(enum, Dict):
             __object = [enum.get(__e,__e) for __e in __object] if is_array(__object) else enum.get(__object,__object)
             enum = tuple(enum.values())
         if isinstance(enum, Tuple):
-            if is_array(__object):
-                if dropna: __object = [__e for __e in __object if __e in enum]
-                else: __object = [(__e if __e in enum else None) for __e in __object]
+            if is_array(__object): __object = [(__e if __e in enum else None) for __e in __object]
             else: __object = __object if __object in enum else default
-        if iterable and notna(__object):
-            __object = to_array(__object, dropna=dropna, strict=strict, unique=unique)
+        if iterable:
+            __object = to_array(__object, **arr_options)
+            if not __object: __object = default
         return __object
 
     ###################################################################
@@ -594,7 +599,7 @@ class Spider(RequestSession, Iterator, Parser):
     offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
-    interval = str()
+    interval = None
     fromNow = None
     ssl = None
     numRetries = 0
@@ -671,7 +676,7 @@ class Spider(RequestSession, Iterator, Parser):
         return super().get_date(date, if_null=get_scala(if_null, index), busdate=busdate)
 
     def get_date_pair(self, startDate: Optional[DateFormat]=None, endDate: Optional[DateFormat]=None,
-                        if_null: Optional[Unit]=None, busdate: Union[bool,Tuple[bool]]=False) -> Tuple[dt.date,dt.date]:
+                        if_null: Optional[Unit]=None, busdate: Logic=False) -> Tuple[dt.date,dt.date]:
         if_null = if_null if if_null is not None else self.fromNow
         return super().get_date_pair(startDate, endDate, if_null=if_null, busdate=busdate)
 
@@ -689,29 +694,40 @@ class Spider(RequestSession, Iterator, Parser):
 
     def local_params(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Tuple[Arguments,Context]:
         context = self.from_locals(locals, drop, **context)
-        return self.local_args(**context), self.local_context(**context)
+        args = kloc(context, self.iterateArgs, if_null="drop", values_only=True)
+        context = drop_dict(context, self.iterateArgs, inplace=False)
+        return args, context
 
     ###################################################################
     ####################### Parameter Validator #######################
     ###################################################################
 
-    def validate_params(self, locals: Dict=dict(), drop: _KT=list(), how: Literal["min","max","first"]="min",
-                        dropna=True, strict=False, unique=True, **context) -> Tuple[Arguments,Context]:
-        args, context = self.local_params(locals, **context)
-        args = self.validate_args(*args, how=how, dropna=dropna, strict=strict, unique=unique, **context)
-        context = self.validate_context(drop=drop, dropna=dropna, strict=strict, unique=unique, **context)
+    def validate_params(self, locals: Dict=dict(), drop: _KT=list(), args_options=dict(), **context) -> Tuple[Arguments,Context]:
+        args, context = self.local_params(locals, drop=drop, **context)
+        args = self.validate_args(*args, args_options=args_options, **context)
+        context = self.validate_context(**context)
         return args, context
 
-    def validate_args(self, *args, how: Literal["min","max","first"]="min", dropna=True, strict=False, unique=True, **context) -> Arguments:
+    def validate_args(self, *args, args_options=dict(), **context) -> Arguments:
         if not args: return tuple()
-        queryMap = self.get_query_map(key="name", value=["type","enum","default"])
-        args = tuple((self.validate_variable(args[__i], **queryMap[__key]) if __key in queryMap else args[__i])
-                    for __i, __key in enumerate(self.iterateArgs))
-        if len(args) == 1: return (to_array(args[0], dropna=dropna, strict=strict, unique=unique),)
-        else: return align_array(*args, how=how, dropna=dropna, strict=strict, unique=unique)
+        elif len(self.iterateArgs) == 1:
+            queryMap = self.get_query_map(key="name", value=[], if_null="pass")
+            return (self.validate_variable(args[0], **queryMap.get(self.iterateArgs[0], dict(iterable=True))),)
+        else: return self.align_args(args, self.iterateArgs, **args_options)
+
+    def align_args(self, args: Arguments, keys: _KT, alignment: Literal["min","max","first"]="min", default=None,
+                    dropna=False, drop_empty=False, unique=False) -> Arguments:
+        arrays, arrayDefault = list(), list()
+        queryMap = self.get_query_map(key="name", value=[], if_null="pass")
+        for __i, __key in enumerate(cast_list(keys)):
+            __map = queryMap[__key] if __key in queryMap else dict(iterable=True)
+            arrays.append(self.validate_variable(args[__i], **__map))
+            arrayDefault.append(hier_get(__map, ["arr_options","default"]))
+        default = default if isinstance(default, Tuple) else tuple(arrayDefault)
+        return align_array(*arrays, alignment=alignment, default=default, dropna=dropna, drop_empty=drop_empty, unique=unique)
 
     ###################################################################
-    ########################## Gather Request #########################
+    ########################### Gather Data ###########################
     ###################################################################
 
     @abstractmethod
@@ -765,7 +781,7 @@ class Spider(RequestSession, Iterator, Parser):
         else: return self.fetch(fields=fields, **context)
 
     ###################################################################
-    ########################### Gather Data ###########################
+    ########################### Gather Count ##########################
     ###################################################################
 
     def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
@@ -1166,7 +1182,7 @@ class AsyncSpider(Spider, AsyncSession):
     offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
-    interval = str()
+    interval = None
     fromNow = None
     ssl = None
     numRetries = 0
@@ -1594,7 +1610,6 @@ class EncryptedSession(RequestSession):
     auth = LoginSpider
     authKey = list()
     decryptedKey = dict()
-    sessionCookies = True
     info = Info()
 
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
@@ -1732,7 +1747,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
-    interval = str()
+    interval = None
     fromNow = None
     ssl = None
     numRetries = 0
@@ -1893,7 +1908,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     offsetFrom = 1
     pageUnit = 0
     pageLimit = 0
-    interval = str()
+    interval = None
     fromNow = None
     ssl = None
     numRetries = 0
