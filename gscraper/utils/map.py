@@ -20,6 +20,7 @@ import pandas as pd
 
 from collections import defaultdict
 from itertools import chain
+import base64
 import functools
 import os
 import random as rand
@@ -1211,6 +1212,14 @@ def endswith(__string: str, __keyword: Keyword) -> bool:
     for __s in cast_list(__keyword):
         if __string.endswith(__s): return True
     else: return False
+
+
+def encrypt(s: str, count=1) -> str:
+    return encrypt(base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
+
+
+def decrypt(s: str, count=1) -> str:
+    return decrypt(base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
 
 
 ###################################################################

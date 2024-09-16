@@ -21,13 +21,14 @@ from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_cli
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, hier_get, notna_dict, drop_dict, split_dict, traversal_dict
 from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, filter_data
-from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, re_get, read_table
+from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, encrypt, decrypt, read_table
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
+from gscraper.utils.request import get_cookies, decode_cookies, encode_params
 
 from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
-from urllib.parse import quote, urlencode, urlparse
+from tqdm.auto import tqdm
 import asyncio
 import aiohttp
 import copy
@@ -38,17 +39,11 @@ import time
 
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
 from numbers import Real
-from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
 import datetime as dt
 import json
 import pandas as pd
-
-from tqdm.auto import tqdm
-import base64
-import inspect
-import re
 
 
 GET = "GET"
@@ -130,151 +125,6 @@ FIRST_PAGE, NEXT_PAGE = "of first page", "of next pages"
 
 AUTH_KEY = "Auth Key"
 SAVE_SHEET = "Data"
-
-
-###################################################################
-############################# Headers #############################
-###################################################################
-
-HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-    "sec-ch-ua": '"Google Chrome";v="127", "Chromium";v="127", "Not:A-Brand";v="99"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-}
-
-
-def get_content_type(content_type=str(), urlencoded=False, utf8=False) -> str:
-    if urlencoded or (content_type == "urlencoded"):
-        __type = "application/x-www-form-urlencoded"
-    elif content_type == "javascript": __type = "javascript"
-    elif content_type == "json": __type = "application/json"
-    elif content_type == "text": __type = "text/plain"
-    elif "WebKitFormBoundary" in content_type:
-        return f"multipart/form-data; boundary={content_type}"
-    else: __type = content_type if isinstance(content_type, str) else str()
-    return __type+(("; charset=UTF-8") if utf8 else str())
-
-
-def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
-                origin: Union[bool,str]=False, secure=False,
-                content_type=str(), urlencoded=False, utf8=False, xml=False, **kwargs) -> Dict[str,str]:
-    headers = HEADERS.copy()
-    if authority: headers["Authority"] = urlparse(authority).hostname
-    if referer: headers["referer"] = referer
-    if host: headers["Host"] = urlparse(host).hostname
-    if origin: headers["Origin"] = parse_origin(origin if isinstance(origin, str) else (authority if authority else host))
-    if cookies: headers["Cookie"] = cookies
-    if secure: headers["Upgrade-Insecure-Requests"] = "1"
-    if content_type or urlencoded:
-        headers["Content-Type"] = get_content_type(content_type, urlencoded, utf8)
-    if xml: headers["X-Requested-With"] = "XMLHttpRequest"
-    return dict(headers, **kwargs)
-
-
-###################################################################
-############################### Json ##############################
-###################################################################
-
-class LazyDecoder(json.JSONDecoder):
-    def decode(s, **kwargs):
-        regex_replacements = [
-            (re.compile(r'([^\\])\\([^\\])'), r'\1\\\\\2'),
-            (re.compile(r',(\s*])'), r'\1'),
-        ]
-        for regex, replacement in regex_replacements:
-            s = regex.sub(replacement, s)
-        return super().decode(s, **kwargs)
-
-
-def validate_json(data: JsonData, __path: IndexLabel, default=dict()) -> JsonData:
-    __m = data.copy()
-    try:
-        for key in __path:
-            __m = __m[key]
-            if isinstance(__m, str):
-                try: __m = json.loads(__m)
-                except json.JSONDecodeError: return json.loads(__m, cls=LazyDecoder)
-        return __m
-    except: return default
-
-
-def parse_invalid_json(raw_json: str, key: str, value_type: Literal["any","dict"]="dict") -> JsonData:
-    rep_bool = lambda s: str(s).replace("null","None").replace("true","True").replace("false","False")
-    try:
-        if value_type == "dict" and re.search("\""+key+"\":\{[^\}]*\}+",raw_json):
-            return literal_eval(rep_bool("{"+re.search("\""+key+"\":\{[^\}]*\}+",raw_json).group()+"}"))
-        elif value_type == "any" and re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json):
-            return literal_eval(rep_bool(re.search(f"(?<=\"{key}\":)"+"([^,}])+(?=[,}])",raw_json).group()))
-        else: return
-    except: return dict() if value_type == "dict" else None
-
-
-###################################################################
-############################## Urllib #############################
-###################################################################
-
-def encrypt(s: str, count=1) -> str:
-    return encrypt(base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
-
-
-def decrypt(s: str, count=1) -> str:
-    return decrypt(base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
-
-
-def get_cookies(session, encode=True, raw=False, url=None) -> Union[str,Dict,RequestsCookieJar,SimpleCookie]:
-    if isinstance(session, aiohttp.ClientSession):
-        cookies = session.cookie_jar.filter_cookies(url)
-    elif isinstance(session, requests.Session):
-        cookies = session.cookies
-    else: return str() if encode else dict()
-    if raw: return cookies
-    elif encode: return parse_cookies(cookies)
-    else: return {str(key): str(value) for key, value in cookies.items()}
-
-
-def parse_parth(url: str) -> str:
-    return re.sub(urlparse(url).path+'$','',url)
-
-
-def parse_origin(url: str) -> str:
-    return re_get(f"(.*)(?={urlparse(url).path})", url) if urlparse(url).path else url
-
-
-def parse_cookies(cookies: Union[RequestsCookieJar,SimpleCookie]) -> str:
-    if isinstance(cookies, str): return cookies
-    else: return '; '.join([str(key)+"="+str(value) for key, value in cookies.items()])
-
-
-def encode_cookies(cookies: Union[str,Dict], *args, **kwargs) -> str:
-    cookies = parse_cookies(cookies)
-    if args: cookies = '; '.join([cookies]+[parse_cookies(arg) for arg in args])
-    if kwargs: cookies = '; '.join([cookies, parse_cookies(kwargs)])
-    return cookies
-
-
-def decode_cookies(cookies: Union[str,Dict], **kwargs) -> Dict:
-    if not cookies: return kwargs
-    elif isinstance(cookies, str):
-        cookies = dict(map(lambda x: re_get("([^=]*)=(.*)", x, index=None)[0], cookies.split('; ')))
-    return dict(cookies, **kwargs)
-
-
-def encode_params(url=str(), params: Dict=dict(), encode=True) -> str:
-    if encode: params = urlencode(params)
-    else: params = '&'.join([f"{key}={value}" for key, value in params.items()])
-    return url+'?'+params if url else params
-
-
-def encode_object(__object: str) -> str:
-    return quote(str(__object).replace('\'','\"'))
 
 
 ###################################################################
