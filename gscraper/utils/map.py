@@ -1360,8 +1360,12 @@ def merge_first(left: pd.DataFrame, right: pd.DataFrame, first: Literal["left","
         return df
     for column in columns:
         FIRST, SECOND = ("_y", "_x") if first == "right" else ("_x", "_y")
-        try: df[column] = df.pop(column+FIRST).combine_first(df.pop(column+SECOND))
-        except: df[column] = df.pop(column)
+        if ((column+FIRST) in df) and ((column+SECOND) in df):
+            __first, __second = df.pop(column+FIRST), df.pop(column+SECOND)
+            if __second.isna().all(): df[column] = __first
+            elif __first.isna().all(): df[column] = __second
+            else: df[column] = __first.combine_first(__second)
+        else: df[column] = df.pop(column)
     return df
 
 
