@@ -793,6 +793,7 @@ class Spider(RequestSession, Iterator, Parser):
         if not (hasSize or iterator):
             iterator = [{ITER_INDEX:0}]
         data = self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
+        iterator, context = self._init_count_iterator(iterator, context)
         if iterator and (not hasSize):
             data += self._gather_next(iterator, progress=progress, fields=fields, **context)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
@@ -804,23 +805,24 @@ class Spider(RequestSession, Iterator, Parser):
         self.checkpoint("gather", where="gather_first", msg={"data":data}, save=data)
         return data
 
-    def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                    pageSize=0, pageStart=1, offset=1, interval: Optional[Timedelta]=None, **context) -> List[Data]:
-        context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
+    def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
-        iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        context.update(message=message, progress=((len(iterator)>0) and progress), fields=fields, interval=interval)
-        data = self._gather_data(iterator, **context)
+        data = self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
-    def _init_count_iterator(self, iterator: List[Context], context: Context, pageSize=0, indexing=True) -> Tuple[List[Context],Context]:
+    def _init_count_iterator(self, iterator: List[Context], context: Context, indexing=True) -> Tuple[List[Context],Context]:
         iterateArgs = list(drop_dict(iterator[0], [ITER_INDEX]+PAGE_ITERATOR, inplace=False).keys())
         args = transpose_array([kloc(__i, iterateArgs, values_only=True) for __i in iterator])
-        context["size"] = [max(self.iterateCount.get(__i[ITER_INDEX], 0)-pageSize, 0) for __i in iterator]
+        context = self._init_count_size(iterator, **context)
         iterator, context = self.set_iterator(*args, iterateArgs=iterateArgs, pagination=True, indexing=indexing, **context)
         self.checkpoint("iterator_count", where="init_count_iterator", msg={"iterator":iterator})
         return iterator, context
+
+    def _init_count_size(self, iterator: List[Context], pageSize=0, pageStart=1, offset=1, **context) -> Context:
+        context["size"] = [max(self.iterateCount.get(__i[ITER_INDEX], 0)-pageSize, 0) for __i in iterator]
+        context.update(pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize, interval=None)
+        return context
 
     ###################################################################
     ########################### Request Data ##########################
@@ -1269,6 +1271,7 @@ class AsyncSpider(Spider, AsyncSession):
         if not (hasSize or iterator):
             iterator = [{ITER_INDEX:0}]
         data = await self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
+        iterator, context = self._init_count_iterator(iterator, context)
         if iterator and (not hasSize):
             data += await self._gather_next(iterator, progress=progress, fields=fields, **context)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
@@ -1280,13 +1283,9 @@ class AsyncSpider(Spider, AsyncSession):
         self.checkpoint("gather", where="gather_first", msg={"data":data}, save=data)
         return data
 
-    async def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                            pageSize=0, pageStart=1, offset=1, interval: Optional[Timedelta]=None, **context) -> List[Data]:
-        context = dict(context, pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize)
+    async def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
-        iterator, context = self._init_count_iterator(iterator, context, pageSize)
-        context.update(message=message, progress=((len(iterator)>0) and progress), fields=fields, interval=interval)
-        data = await self._gather_data(iterator, **context)
+        data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
         return data
 
