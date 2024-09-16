@@ -933,9 +933,10 @@ def align_array(*args: Sequence, alignment: Literal["min","max","first"]="min", 
     if not args: return tuple()
     arrays = _fill_arrays(args, alignment, default)
     indices = set(range(0, len(arrays[0])))
-    if unique: indices = _get_unique_index(((arrays[0],) if alignment == "first" else arrays), dropna, drop_empty)
-    elif drop_empty: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if exists(__e)} for __s in arrays]))
-    elif dropna: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if notna(__e)} for __s in arrays]))
+    targets = (arrays[0],) if alignment == "first" else arrays
+    if unique: indices = _get_unique_index(targets, dropna, drop_empty)
+    elif drop_empty: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if exists(__e)} for __s in targets]))
+    elif dropna: indices = sorted(arg_and(indices, *[{__i for __i, __e in enumerate(__s) if notna(__e)} for __s in targets]))
     else: return arrays
     return tuple([__s[__i] for __i in indices] for __s in arrays)
 
