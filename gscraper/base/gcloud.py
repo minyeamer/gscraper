@@ -6,7 +6,7 @@ from gscraper.base.session import BaseSession
 from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap
 from gscraper.base.types import TabularData, PostData, from_literal
 
-from gscraper.utils.cast import cast_list, cast_datetime_format
+from gscraper.utils.cast import cast_list, cast_date, cast_datetime, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
 from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table, arg_and
@@ -385,8 +385,9 @@ class BigQueryPartition(OptionalDict):
     def __init__(self, field: str, type: Literal["date","datetime","number"]="date",
                 unit: Literal["auto","hour","day","month","year","date","none"]="auto",
                 left=None, right=None, value=None, limited=True):
+        has_value = (left is not None) or (right is not None) or (value is not None)
         super().__init__(field=field, type=type, unit=unit,
-            optional=dict(left=left, right=right, value=value, limited=limited))
+            optional=dict(left=left, right=right, value=value, limited=limited, has_value=has_value))
 
 
 class BigQueryUploadContext(OptionalDict):
@@ -494,10 +495,10 @@ class GoogleUploader(GoogleQueryReader):
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, columns: IndexLabel=list(),
                     mode: Literal["append","replace","ignore","upsert"]="append", primary_key: List[str]=list(),
                     partition=None, read=None, progress=True, name=str(), account: Account=dict(), **context) -> bool:
-        params = dict(table=table, project_id=project_id, mode=mode, primary_key=primary_key, name=name, account=account)
         partition = self.validate_partition(partition, **context)
+        params = dict(table=table, project_id=project_id, mode=mode, primary_key=primary_key, partition=partition, name=name, account=account)
         if mode in ("ignore","upsert"):
-            read = self.set_base_query(read=read, partition=partition, **params, **context)
+            read = self.set_base_query(read=read, **params, **context)
             mode = {"ignore":"append", "upsert":"replace"}.get(mode)
         data = self.from_base_data(data, read, **params, **context)
         data = self.map_upload_data(data, columns=columns, **params, **context)
@@ -507,7 +508,8 @@ class GoogleUploader(GoogleQueryReader):
         return True
 
     def validate_partition(self, partition=None, startDate=None, endDate=None, busdate=False, **context) -> BigQueryPartition:
-        if not isinstance(partition, Dict): return dict()
+        if not (isinstance(partition, Dict) and partition.get("field")):
+            return dict()
         elif partition.get("type") == "date":
             if ("value" not in partition):
                 left, right = self.get_date_pair(partition.get("left", startDate), partition.get("right", endDate), busdate=busdate)
@@ -525,7 +527,7 @@ class GoogleUploader(GoogleQueryReader):
 
     def set_partition_query(self, read: Dict, table: str, partition=dict(), **context) -> Dict:
         if QUERY in read: return read
-        else: read[QUERY] = make_select_query(table, **partition) if partition else table
+        else: read[QUERY] = make_select_query(table, **partition)
         return read
 
     ###################################################################
@@ -560,16 +562,27 @@ class GoogleUploader(GoogleQueryReader):
     ###################################################################
 
     def map_upload_data(self, data: pd.DataFrame, columns: IndexLabel=list(),
-                        primary_key: List[str]=list(), name=str(), **context) -> pd.DataFrame:
+                        primary_key: List[str]=list(), partition=dict(), name=str(), **context) -> pd.DataFrame:
         columns = columns if columns else self.get_upload_columns(name=name, **context)
         if columns:
             data = cloc(data, columns, if_null="pass", reorder=True)
         if primary_key:
             data = data.dropna(subset=primary_key, how="any").drop_duplicates(primary_key)
+        if isinstance(partition, Dict) and partition.get("field") and partition.get("has_value"):
+            data = self.filter_by_partition(data, **partition)
         return data
 
     def get_upload_columns(self, name=str(), **context) -> IndexLabel:
         return list()
+
+    def filter_by_partition(self, data: pd.DataFrame, field: str, type="date", left=None, right=None, value=None, **kwargs) -> pd.DataFrame:
+        if type == "date": values = data[field].apply(cast_date)
+        elif type == "datetime": values = data[field].apply(cast_datetime)
+        else: values = data[field]
+        match_left = (values>=left) if left is not None else values.notna()
+        match_right = (values<=right) if right is not None else values.notna()
+        match_value = (values==value) if value is not None else values.notna()
+        return data[match_left&match_right&match_value]
 
 
 ###################################################################
@@ -661,21 +674,25 @@ def execute_query(query: str, project_id=str(), account: Account=dict()) -> RowI
 
 
 def make_select_query(table: str, columns: IndexLabel=list(), field=str(), type: Literal["date","datetime","number"]="date",
-                    left=None, right=None, value=None, limited=True, **kwargs):
+                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs):
     query = f"SELECT {', '.join(columns) if columns else '*'} FROM `{table}`"
-    if field: return query + ' ' + get_partition_filter(field, type, left, right, value, limited) + ';'
-    else: return query + ';'
+    if not field: return query + ';'
+    elif (not limited) or has_value:
+        return query + ' ' + get_partition_filter(field, type, left, right, value) + ';'
+    else: raise ValueError(INVALID_MSG(PARTITION_FILTER))
 
 
 def make_delete_query(table: str, field=str(), type: Literal["date","datetime","number"]="date",
-                    left=None, right=None, value=None, limited=True, **kwargs):
+                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs):
     query = f"DELETE FROM `{table}`"
-    if field: return query + ' ' + get_partition_filter(field, type, left, right, value, limited) + ';'
-    else: return query + ' ' + "WHERE TRUE" + ';'
+    if not field: return query + ' ' + "WHERE TRUE" + ';'
+    elif (not limited) or has_value:
+        return query + ' ' + get_partition_filter(field, type, left, right, value) + ';'
+    else: raise ValueError(INVALID_MSG(PARTITION_FILTER))
 
 
 def get_partition_filter(field=str(), type: Literal["date","datetime","number"]="date",
-                        left=None, right=None, value=None, limited=True, **kwargs):
+                        left=None, right=None, value=None, **kwargs):
     if any(map(lambda x: isinstance(x, dt.date), [left,right,value])):
         if type == "datetime": field = f"DATE({field})"
         left, right, value = map(lambda x: f"'{x}'" if isinstance(x, dt.date) else None, [left,right,value])
@@ -684,8 +701,6 @@ def get_partition_filter(field=str(), type: Literal["date","datetime","number"]=
     elif (left is not None) and (right is not None):
         if left == right: return f"WHERE {field} = {left}"
         else: return f"WHERE {field} BETWEEN {left} AND {right}"
-    elif limited:
-        raise ValueError(INVALID_MSG(PARTITION_FILTER))
     elif left is not None:
         return f"WHERE {field} >= {left}"
     elif right is not None:

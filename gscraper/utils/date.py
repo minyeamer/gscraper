@@ -31,7 +31,7 @@ KST = "Asia/Seoul"
 US = "US"
 KR = "KR"
 
-DATE_UNIT = ["second", "minute", "hour", "date", "month", "year"]
+DATE_UNIT = ["second", "minute", "hour", "day", "month", "year"]
 
 DATETIME_FORMAT = {
     "date": "%Y-%m-%d",
