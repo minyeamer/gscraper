@@ -1175,11 +1175,16 @@ def concat(*args: str, sep=',', drop_empty=False) -> str:
     return sep.join([str(__s) for __s in args if (exists(__s) if drop_empty else notna(__s))])
 
 
-def re_get(pattern: RegexFormat, string: str, default=str(), index: Optional[int]=0) -> Union[str,List[str]]:
+def regex_get(pattern: RegexFormat, string: str, indices: Index=None, groups: Index=None, default=str(),
+            if_null: Literal["drop","pass"]="pass") -> Union[str,List[str]]:
     __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern, re.DOTALL)
-    if not isinstance(index, int): return __pattern.findall(string)
-    catch = __pattern.search(string)
-    return catch.groups()[index] if catch else default
+    if indices is not None:
+        return iloc(__pattern.findall(string), indices, default=default, if_null=if_null)
+    elif groups is not None:
+        __match = __pattern.search(string)
+        __group = __match.groups() if __match else list()
+        return iloc(__group, groups, default=default, if_null=if_null)
+    else: return default
 
 
 def replace_map(__string: str, **context) -> str:

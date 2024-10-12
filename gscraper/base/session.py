@@ -3,7 +3,7 @@ from gscraper.base.abstract import CustomDict, TypedDict, TypedRecords, Optional
 from gscraper.base.abstract import REQUEST_CONTEXT, RESPONSE_CONTEXT, INVALID_INSTANCE_MSG
 
 from gscraper.base.types import _KT, _VT, _PASS, Context, LogLevel, TypeHint, TypeList
-from gscraper.base.types import IndexLabel, Keyword, Logic, Unit, DateFormat, DateQuery, Timedelta, Timezone
+from gscraper.base.types import Index, IndexLabel, Keyword, Logic, Unit, DateFormat, DateQuery, Timedelta, Timezone
 from gscraper.base.types import RenameMap, TypeMap, Records, NestedDict, Data, ResponseData, PandasData, PANDAS_DATA
 from gscraper.base.types import Pagination, Pages, ApplyFunction, MatchFunction, RegexFormat
 from gscraper.base.types import get_type, init_origin, is_type, is_bool_type, is_float_type, is_numeric_type
@@ -15,7 +15,7 @@ from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, ca
 from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scala, unique
-from gscraper.utils.map import concat, rename_value, re_get, replace_map, startswith, endswith, arg_and, union, diff
+from gscraper.utils.map import concat, rename_value, regex_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
 from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
@@ -211,10 +211,10 @@ class Join(Apply):
 
 
 class Regex(Apply):
-    def __init__(self, pattern: RegexFormat, default=None, index: Optional[int]=0,
-                repl: Optional[str]=None, strip=False):
-        Function.__init__(self, func=__REGEX__, pattern=pattern, default=default,
-            optional=dict(index=index, repl=repl, strip=strip), null_if=dict(index=0, strip=False))
+    def __init__(self, pattern: RegexFormat, indices: Optional[Index]=None, groups: Optional[Index]=None,
+                default=None, repl: Optional[str]=None, strip=False):
+        Function.__init__(self, func=__REGEX__, pattern=pattern,
+            optional=dict(indices=indices, groups=groups, repl=repl, default=default, strip=strip), null_if=dict(strip=False))
 
 
 class Rename(Apply):
@@ -715,7 +715,7 @@ class BaseSession(CustomDict):
         self.print(log_object, path=path, drop=drop, indent=indent, step=step, sep=sep)
 
     def _eval_log(self, log_string: str, func="checkpoint") -> Records:
-        log_string = re_get(f"(?<={func} - )"+r"({[^|]*?})(?= | \d{4}-\d{2}-\d{2})", log_string, index=None)
+        log_string = regex_get(f"(?<={func} - )"+r"({[^|]*?})(?= | \d{4}-\d{2}-\d{2})", log_string, indices=[])
         log_string = self._eval_function(f"[{','.join(log_string)}]")
         log_string = self._eval_datetime(log_string, "datetime")
         log_string = self._eval_datetime(log_string, "date")
@@ -724,13 +724,13 @@ class BaseSession(CustomDict):
         except: return list()
 
     def _eval_function(self, log_string: str) -> str:
-        func_objects = re_get(r"\<[^>]+\>", log_string, index=None)
+        func_objects = regex_get(r"\<[^>]+\>", log_string, indices=[])
         if func_objects:
             return replace_map(log_string, **{__o: f"\"{__o}\"" for __o in func_objects})
         else: return log_string
 
     def _eval_datetime(self, log_string: str, __type: Literal["datetime","date"]="datetime") -> str:
-        datetime_objects = re_get(r"datetime.{}\([^)]+\)".format(__type), log_string, index=None)
+        datetime_objects = regex_get(r"datetime.{}\([^)]+\)".format(__type), log_string, indices=[])
         if datetime_objects:
             __init = dt.datetime if __type == "datetime" else dt.date
             __format = "%Y-%m-%d" + (" %H:%M:%S" if __type == "datetime" else str())
@@ -740,7 +740,7 @@ class BaseSession(CustomDict):
         else: return log_string
 
     def _eval_exception(self, log_string: str) -> str:
-        exception = re_get(re.compile(r"'(Traceback.*)'}]$", re.DOTALL | re.MULTILINE), log_string)
+        exception = regex_get(re.compile(r"'(Traceback.*)'}]$", re.DOTALL | re.MULTILINE), log_string, groups=0)
         if exception:
             return log_string.replace(f"'{exception}'", f"\"\"\"{exception}\"\"\"")
         else: return log_string
@@ -1261,16 +1261,17 @@ class Mapper(BaseSession):
         __object = [__s for __s in [cast_str(__e, strip=strip) for __e in __object] if __s]
         return sep.join(__object) if __object else default
 
-    def __regex__(self, __object, pattern: RegexFormat, default=None, index: Optional[int]=0,
-                    repl: Optional[str]=None, strip=False, **kwargs) -> str:
+    def __regex__(self, __object, pattern: RegexFormat, indices: Optional[Index]=None, groups: Optional[Index]=None,
+                default=None, repl: Optional[str]=None, strip=False, **kwargs) -> str:
         __object = cast_str(__object)
         __pattern = pattern if isinstance(pattern, re.Pattern) else re.compile(pattern)
-        if isinstance(repl, str): __object = __pattern.sub(repl, __object)
-        else: return re_get(pattern, __object, default=default, index=index)
-        return __object.strip() if strip else __object
+        if isinstance(repl, str):
+            __object = __pattern.sub(repl, __object)
+            return __object.strip() if strip else __object
+        else: return regex_get(pattern, __object, indices=indices, groups=groups, default=default)
 
     def __rename__(self, __object, rename: RenameMap, path: _KT=list(),
-                    if_null: Union[Literal["null","pass","error"],Any]="null", **kwargs) -> str:
+                if_null: Union[Literal["null","pass","error"],Any]="null", **kwargs) -> str:
         if if_null == "null": value = rename.get(__object)
         elif if_null == "pass": value = rename.get(__object, __object)
         elif if_null == "error": value = rename[__object]
@@ -1278,7 +1279,7 @@ class Mapper(BaseSession):
         return hier_get(value, path) if path else value
 
     def __split__(self, __object, sep=',', maxsplit=-1, index: Optional[int]=None,
-                    type: Optional[TypeHint]=None, default=None, drop_empty=False, **kwargs) -> Union[List,_VT]:
+                type: Optional[TypeHint]=None, default=None, drop_empty=False, **kwargs) -> Union[List,_VT]:
         __object = cast_str(__object).split(sep, maxsplit)
         if type: __object = [self.__cast__(__e, type, default, drop_empty) for __e in __object]
         return get_scala(__object, index) if isinstance(index, int) else __object

@@ -1,6 +1,6 @@
 from gscraper.base.abstract import CustomDict, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.types import _KT, _VT, TypeHint, IndexLabel, JsonData
-from gscraper.utils.map import re_get, replace_map
+from gscraper.utils.map import regex_get, replace_map
 
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
@@ -301,7 +301,7 @@ def parse_parth(url: str) -> str:
 
 
 def parse_origin(url: str) -> str:
-    return re_get(f"(.*)(?={urlparse(url).path})", url) if urlparse(url).path else url
+    return regex_get(f"(.*)(?={urlparse(url).path})", url, groups=0) if urlparse(url).path else url
 
 
 def parse_cookies(cookies: Union[RequestsCookieJar,SimpleCookie]) -> str:
@@ -319,7 +319,7 @@ def encode_cookies(cookies: Union[str,Dict], *args, **kwargs) -> str:
 def decode_cookies(cookies: Union[str,Dict], **kwargs) -> Dict:
     if not cookies: return kwargs
     elif isinstance(cookies, str):
-        cookies = dict(map(lambda x: re_get("([^=]*)=(.*)", x, index=None)[0], cookies.split('; ')))
+        cookies = dict(map(lambda x: regex_get("([^=]*)=(.*)", x, indices=0), cookies.split('; ')))
     return dict(cookies, **kwargs)
 
 

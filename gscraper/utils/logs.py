@@ -1,6 +1,6 @@
 from gscraper.base.types import LogLevel, LogMessage, Shape, TabularData, Data
 from gscraper.base.types import is_records, is_dfarray, is_tag_array
-from gscraper.utils.map import chain_dict, re_get
+from gscraper.utils.map import chain_dict, regex_get
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ast import literal_eval
@@ -76,7 +76,7 @@ def parse_logs(logs: List[str], indent=1) -> str:
 
 
 def parse_message(message: str) -> str:
-    msg_part = re_get(r'("message":"\{.*\}",)', message)
+    msg_part = regex_get(r'"message":"\{.*\}",', message, indices=0)
     if msg_part:
         msg = {__k: (list(__v) if isinstance(__v, Tuple) else __v) for __k, __v in load_dict(msg_part[11:-2]).items()}
         info = chain_dict([load_dict(message.replace(msg_part, '')), msg], keep="first")
