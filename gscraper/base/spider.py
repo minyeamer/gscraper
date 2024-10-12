@@ -10,7 +10,7 @@ from gscraper.base.session import ITER_INDEX, PAGE_ITERATOR, iter_task
 from gscraper.base.gcloud import GoogleUploader, GoogleQueryList, GoogleUploadList
 from gscraper.base.gcloud import Account, fetch_gcloud_authorization, read_gcloud
 
-from gscraper.base.types import _KT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
+from gscraper.base.types import _KT, _VT, _PASS, Arguments, Context, LogLevel, TypeHint, EncryptedKey, DecryptedKey
 from gscraper.base.types import IndexLabel, Keyword, Logic, Status, Unit, Range, DateFormat, Timedelta, Timezone
 from gscraper.base.types import Records, Data, MappedData, JsonData, RedirectData, Pagination
 from gscraper.base.types import is_datetime_type, is_date_type, is_array, is_int_array
@@ -20,9 +20,14 @@ from gscraper.utils.date import get_random_seconds, get_date_pair, get_datetime_
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, hier_get, notna_dict, drop_dict, split_dict, traversal_dict
-from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, filter_data
+from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, filter_data, regex_get
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, encrypt, decrypt, read_table
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
+
+from gscraper.utils.alert import AlertInfo, NaverBot, format_map
+from gscraper.utils.alert import format_date as format_alert_date
+from gscraper.utils.alert import format_date_range as format_alert_date_range
+from gscraper.utils.alert import format_value as format_alert_value
 from gscraper.utils.request import get_cookies, decode_cookies, encode_params
 
 from abc import ABCMeta, abstractmethod
@@ -44,6 +49,7 @@ from json import JSONDecodeError
 import datetime as dt
 import json
 import pandas as pd
+import re
 
 
 GET = "GET"
@@ -63,7 +69,7 @@ TIME_UNIQUE = ["tzinfo", "countryCode", "datetimeUnit"]
 LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debug", "extraSave", "interrupt"]
 
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
-GCLOUD_UNIQUE = ["queryList", "uploadList", "account"]
+GCLOUD_UNIQUE = ["queryList", "uploadList", "alertInfo", "account"]
 
 FILTER_UNIQUE = ["fields", "ranges", "returnType"]
 REQUEST_UNIQUE = ["numRetries", "delay", "cookies"]
@@ -162,21 +168,97 @@ class RangeFilter(TypedRecords):
 
 
 ###################################################################
-######################### Request Session #########################
+########################## Upload Session #########################
 ###################################################################
 
 class UploadSession(GoogleUploader):
     __metaclass__ = ABCMeta
     operation = "session"
+    alertStatus = None
 
-    def __init__(self, queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
+    def __init__(self, queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
+                account: Optional[Account]=None, **context):
         CustomDict.__init__(self, UNIQUE_CONTEXT(**context))
         self.set_query(queryList, account)
-        self.set_upload_info(uploadList, account)
+        self.set_upload_info(uploadList, alertInfo, account)
 
-    def set_upload_info(self, uploadList: GoogleUploadList=list(), account: Optional[Account]=None):
-        self.update_exists(uploadList=uploadList, account=account)
+    def set_upload_info(self, uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), account: Optional[Account]=None):
+        self.update_exists(uploadList=uploadList, alertInfo=alertInfo, account=account)
 
+    ###################################################################
+    ############################ Alert Text ###########################
+    ###################################################################
+
+    def send_alert_text(self, text: str, alertInfo: AlertInfo):
+        self.checkpoint("alert", where="alert_message", msg={"text":text})
+        with NaverBot(**alertInfo["authInfo"]) as bot:
+            self.alertStatus = bot.send_text(text, **alertInfo["botInfo"])
+        self.log_alert(self.alertStatus, text)
+
+    def map_alert_data(self, data: Data, **context) -> Data:
+        return data
+
+    def format_alert_text(self, data: Data, textFormat: str, textHeader=str(), textFooter=str(),
+                        dateFormat=str(), rangeFormat=str(), name=str(), **context) -> str:
+        textInfo = dict(dateFormat=dateFormat, rangeFormat=rangeFormat, name=name)
+        if "{header}" in textFormat:
+            header = self.format_alert_header(data, textHeader=textHeader, **textInfo, **context)
+            textFormat = textFormat.replace("{header}", header)
+        if "{footer}" in textFormat:
+            footer = self.format_alert_footer(data, textFooter=textFooter, **textInfo, **context)
+            textFormat = textFormat.replace("{footer}", footer)
+        mapping = dict(filter(None,
+            [self.format_alert_value(data, __key, **textInfo, **context)
+                for __key in set(regex_get(r"\{([^}]+)\}", textFormat, indices=[]))]))
+        return format_map(textFormat, mapping)
+
+    def format_alert_header(self, data: Data, textHeader=str(), **context) -> str:
+        return textHeader if textHeader else str()
+
+    def format_alert_footer(self, data: Data, textFooter=str(), **context) -> str:
+        if textFooter: return textFooter
+        elif self.uploadStatus: return '\n\n'+self.format_upload_status(**context)
+        else: return str()
+
+    @BaseSession.catch_exception
+    def format_alert_value(self, data: Data, __key: str, name=str(), **context) -> Tuple[_KT,_VT]:
+        if __key == "name":
+            return __key, (name if name else self.operation)
+        elif re.match(r"^(date|datetime)\(.+\)$", __key):
+            dateFunc, path = regex_get(r"^(\w+)\((.+)\)$", __key, groups=[0,1])
+            return __key, self.format_alert_date(context.get(path), dateFunc, **context)
+        elif re.match(r"^(daterange|timerange)\([^,]+,[^,]+\)$", __key):
+            dateFunc, start, end = regex_get(r"^(\w+)\(([^,]+),([^,]+)\)$", __key, groups=[0,1,2])
+            return __key, self.format_alert_date_range(context.get(start), context.get(end), dateFunc, **context)
+        else: return __key.rsplit(':', maxsplit=1)[0], format_alert_value(data, __key, **context)
+
+    def format_alert_date(self, __object, __func: str, dateFormat: str, busdate=False, **context) -> str:
+        if not dateFormat: return str()
+        elif isinstance(__object, (dt.date,dt.datetime)): __datetime = __object
+        elif __func == "date": __datetime = self.get_date(__object, if_null=None, busdate=busdate)
+        elif __func == "datetime": __datetime = self.get_datetime(__object, if_null=None)
+        else: __datetime = None
+        return format_alert_date(__datetime, dateFormat, tzinfo=self.tzinfo)
+
+    def format_alert_date_range(self, __start, __end, __func: str, dateFormat: str, rangeFormat: str, busdate=False, **context) -> str:
+        if not (dateFormat or rangeFormat): return str()
+        elif isinstance(__start, (dt.date,dt.datetime)) and (type(__start) == type(__end)): pass
+        elif __func == "daterange": __start, __end = self.get_date_pair(__start, __end, if_null=None, busdate=busdate)
+        elif __func == "timerange": __start, __end = self.get_datetime_pair(__start, __end, if_null=None)
+        else: __start, __end = None, None
+        return format_alert_date_range(__start, __end, dateFormat, rangeFormat, tzinfo=self.tzinfo)
+
+    def log_alert(self, status: Status, text: str, limit=100):
+        if isinstance(status, List):
+            status = ', '.join([f"({__i}) {__s}" for __i, __s in enumerate(status, start=1)])
+        else: status = str(status)
+        preview = text[:limit]+"..." if len(text) > limit else text
+        self.logger.info({"status":status, "text":preview})
+
+
+###################################################################
+######################### Request Session #########################
+###################################################################
 
 class RequestSession(UploadSession):
     __metaclass__ = ABCMeta
@@ -197,12 +279,12 @@ class RequestSession(UploadSession):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_request_variables(numRetries, delay, cookies)
-        UploadSession.__init__(self, queryList, uploadList, account, **context)
+        UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
 
     def set_filter_variables(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None,
                             returnType: Optional[TypeHint]=None):
@@ -336,7 +418,7 @@ class RequestSession(UploadSession):
     def filter_data(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
                     default=None, if_null: Literal["drop","pass"]="pass") -> Data:
         data = convert_data(data, return_type=returnType)
-        data = filter_data(data, fields=fields, default=default, if_null=if_null)
+        data = filter_data(data, fields=cast_list(fields), default=default, if_null=if_null)
         return data
 
     ###################################################################
@@ -387,10 +469,11 @@ class RequestSession(UploadSession):
     ############################ With Data ############################
     ###################################################################
 
-    def with_data(self, data: Data, uploadList: GoogleUploadList=list(), func=str(), **context):
+    def with_data(self, data: Data, uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), func=str(), **context):
         self.checkpoint("crawl", where=func, msg={"data":data}, save=data)
         self.save_result(data, **context)
         self.upload_result(data, uploadList, **context)
+        self.alert_result(data, alertInfo, **context)
 
     @BaseSession.catch_exception
     def save_result(self, data: Data, **context):
@@ -416,6 +499,15 @@ class RequestSession(UploadSession):
                 elif uploadContext.get(NAME) not in data: continue
                 else: self.upload_data(data[uploadContext[NAME]], [uploadContext], **context)
         else: self.upload_data(data, uploadList, **context)
+
+    @BaseSession.catch_exception
+    def alert_result(self, data: Data, alertInfo: AlertInfo=dict(), **context) -> Status:
+        if not alertInfo: return
+        elif not isinstance(alertInfo, AlertInfo): alertInfo = AlertInfo(**alertInfo)
+        context.update(initTime=self.initTime, curTime=self.now(unit="second"), curDate=self.today(), **alertInfo["textInfo"])
+        data = self.map_alert_data(data, **context)
+        text = self.format_alert_text(data, **context)
+        return self.send_alert_text(text, alertInfo)
 
     def get_save_name(self, prefix=str()) -> str:
         return prefix if prefix else self.operation
@@ -473,7 +565,7 @@ class Spider(RequestSession, Iterator, Parser):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -482,7 +574,7 @@ class Spider(RequestSession, Iterator, Parser):
         self.set_gather_message(where, which, by, message)
         self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
-        UploadSession.__init__(self, queryList, uploadList, account, **context)
+        UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
         self._disable_warnings()
 
     def set_spider_variables(self, fromNow: Optional[Unit]=None, discard=True, progress=True):
@@ -911,12 +1003,12 @@ class AsyncSession(RequestSession):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
-        UploadSession.__init__(self, queryList, uploadList, account, **context)
+        UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
 
     def set_async_variables(self, numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100):
         self.set_request_variables(numRetries, delay, cookies)
@@ -1058,7 +1150,7 @@ class AsyncSpider(Spider, AsyncSession):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None, **context):
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
         self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
@@ -1068,7 +1160,7 @@ class AsyncSpider(Spider, AsyncSession):
         self.set_gather_message(where, which, by, message)
         self.set_iterator_unit(iterateUnit, interval)
         self.set_redirect_variables(apiRedirect, redirectUnit)
-        UploadSession.__init__(self, queryList, uploadList, account, **context)
+        UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
         self._disable_warnings()
 
     def set_max_limit(self, apiRedirect=False):
@@ -1466,7 +1558,7 @@ class EncryptedSession(RequestSession):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         RequestSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1623,7 +1715,7 @@ class EncryptedSpider(Spider, EncryptedSession):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1659,7 +1751,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1784,7 +1876,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
@@ -1893,7 +1985,7 @@ class Pipeline(EncryptedSession):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
                 globalMessage=str(), globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None, **context):
         EncryptedSession.__init__(self, **self.from_locals(locals(), drop=PIPELINE_UNIQUE))
@@ -2016,7 +2108,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
                 debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
-                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), account: Optional[Account]=None,
+                queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
                 globalMessage=str(), globalProgress: Optional[bool]=None, taskProgress: Optional[bool]=None,
                 asyncMessage=str(), asyncProgress: Optional[bool]=None, **context):

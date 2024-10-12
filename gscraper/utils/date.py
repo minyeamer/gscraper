@@ -165,6 +165,13 @@ def get_date_pair(startDate: Optional[DateFormat]=None, endDate: Optional[DateFo
     return __min, __max
 
 
+def get_weekday(__date: Union[dt.date,dt.datetime], format: Literal["short","long"]="short", tzinfo=None) -> str:
+    if tzinfo == KST:
+        weekday = ["월", "화", "수", "목", "금", "토", "일"][__date.weekday()]
+        return weekday + ("요일" if format == "long" else str())
+    else: return __date.strftime("%A" if format == "long" else "%a")
+
+
 def set_datetime(__datetime: dt.datetime, __format="%Y-%m-%d %H:%M:%S",
                 __type: TypeHint=str, tsUnit: Literal["ms","s"]="ms") -> Union[str,int]:
     if not isinstance(__datetime, dt.datetime): return str()
@@ -180,6 +187,7 @@ def set_date(__date: dt.date, __format="%Y-%m-%d", __type: TypeHint=str) -> Unio
     elif is_str_type(__type): return str(__date)
     elif is_type(__type, INTEGER_TYPES+["ordinal"]): return __date.toordinal()
     else: return
+
 
 ###################################################################
 ############################# Holidays ############################

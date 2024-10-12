@@ -82,7 +82,7 @@ GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None
                         rename=None, to=None, progress=None, partition=None, fields=None, **context: context
 
 
-UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, **context: context
+UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, alertInfo=None, **context: context
 
 
 TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))

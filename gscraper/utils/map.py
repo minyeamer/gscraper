@@ -16,6 +16,7 @@ from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from io import BytesIO
 from pandas.core.indexes.base import Index as PandasIndex
+import numpy as np
 import pandas as pd
 
 from collections import defaultdict
@@ -266,17 +267,25 @@ def vloc(__r: Records, keys: _KT, default=None, if_null: Literal["drop","pass"]=
 def cloc(df: PandasData, columns: IndexLabel, default=None, if_null: Literal["drop","pass"]="drop",
         reorder=True, values_only=False) -> Union[PandasData,_VT]:
     columns = cast_columns(columns)
-    __inter = inter(columns, get_columns(df)) if reorder else inter(get_columns(df), columns)
-    if not __inter:
-        return init_df(df, columns=list()) if if_null == "drop" else df
-    elif not is_array(columns): df = df[columns]
-    elif (if_null == "pass") and (len(columns) != len(__inter)):
-        columns = columns if reorder else unique(*__inter, *columns)
-        df = pd.concat([init_df(df, columns=columns), df[__inter]])
-    else: df = df[__inter]
+    if isinstance(columns, str):
+        if columns in df: df = df[columns]
+        else: return init_df(df, columns=list()) if if_null == "drop" else default
+    elif isinstance(df, pd.DataFrame):
+        df = filter_columns(df, columns, if_null, reorder)
     df = fillna_data(df, default)
     if isinstance(df, pd.Series): return df.tolist() if values_only else df
     else: return list(df.to_dict("list").values()) if values_only else df
+
+
+def filter_columns(df: pd.DataFrame, columns: List[str], if_null: Literal["drop","pass"]="drop", reorder=True) -> pd.DataFrame:
+    __inter = inter(columns, get_columns(df)) if reorder else inter(get_columns(df), columns)
+    if not __inter:
+        return init_df(df, columns=list()) if if_null == "drop" else df
+    elif not is_array(columns): return df[columns]
+    elif (if_null == "pass") and (len(columns) != len(__inter)):
+        columns = columns if reorder else unique(*__inter, *columns)
+        return pd.concat([init_df(df, columns=columns), df[__inter]])
+    else: return df[__inter]
 
 
 def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["drop","pass"]="drop",
@@ -926,6 +935,36 @@ def hier_select(source: Tag, __path: _KT, default=None, index: Optional[Unit]=No
 
 
 ###################################################################
+############################ Aggregate ############################
+###################################################################
+
+def aggregate_array(__s: Iterable[Real], func: Union[Callable,str], if_null: Optional[Real]=None) -> Real:
+    if if_null is not None:
+        __s = fillna_array(__s, if_null, fill_empty=False)
+    __s = [__e for __e in __s if isinstance(__e, Real)]
+    if func == "count": return len(__s)
+    elif func == "first": return __s[0]
+    elif func == "last": return __s[-1]
+    try: return func(__s) if isinstance(func, Callable) else getattr(np, func)(__s)
+    except: return None
+
+
+def aggregate_series(series: pd.Series, func: Union[Callable,str], if_null: Optional[Real]=None) -> Real:
+    series = (series if if_null is None else series.fillna(if_null)).dropna()
+    if func == "count": return len(series)
+    elif func == "first": return series.iloc[0]
+    elif func == "last": return series.iloc[-1]
+    try: return func(series) if isinstance(func, Callable) else series.agg(func)
+    except: return None
+
+
+def aggregate_data(data: Union[Iterable[Real],pd.Series], func: Union[Callable,str], if_null: Optional[Real]=None) -> Real:
+    if isinstance(data, pd.Series): return aggregate_series(data, func, if_null)
+    elif isinstance(data, Iterable): return aggregate_array(data, func, if_null)
+    else: return None
+
+
+###################################################################
 ############################## Align ##############################
 ###################################################################
 
@@ -1090,13 +1129,13 @@ def fill_array(__s: Sequence, count: int, value=None) -> List:
 def fillna_array(__s: Sequence, value=None, fill_empty=False, depth=1) -> List:
     if depth < 1: return __s
     fillna = lambda __value: fillna_data(__value, value, fill_empty=fill_empty, depth=depth-1) if depth > 1 else __value
-    return [(fillna(__e) if (notna(__e) if fill_empty else exists(__e)) else value) for __e in __s]
+    return [(fillna(__e) if (exists(__e) if fill_empty else notna(__e)) else value) for __e in __s]
 
 
 def fillna_dict(__m: Dict, value=None, fill_empty=False, depth=1) -> Dict:
     if depth < 1: return __m
     fillna = lambda __value: fillna_data(__value, value, fill_empty=fill_empty, depth=depth-1) if depth > 1 else __value
-    return {__key: (fillna(__value) if (notna(__value) if fill_empty else exists(__value)) else value) for __key, __value in __m.items()}
+    return {__key: (fillna(__value) if (exists(__value) if fill_empty else notna(__value)) else value) for __key, __value in __m.items()}
 
 
 def fillna_records(__r: Records, value=None, fill_empty=False, depth=1) -> Records:
@@ -1333,7 +1372,8 @@ def init_df(df: Optional[PandasData]=None, columns: Optional[IndexLabel]=None) -
     if isinstance(df, pd.DataFrame):
         return pd.DataFrame(columns=(columns if is_columns(columns) else df.columns))
     elif isinstance(df, pd.Series):
-        return pd.Series(index=(columns if columns else df.index), dtype=df.dtypes)
+        return pd.Series(index=df.index, dtype=df.dtypes, name=get_scala(columns))
+    elif isinstance(columns, str): return pd.Series(name=columns)
     else: return pd.DataFrame(columns=cast_columns(columns))
 
 
@@ -1344,7 +1384,7 @@ def is_columns(columns: IndexLabel) -> bool:
 def cast_columns(__object, unique=False) -> IndexLabel:
     if isinstance(__object, PandasIndex):
         return (__object.unique() if unique else __object).tolist()
-    else: return cast_list(__object)
+    else: return __object if isinstance(__object, str) else cast_list(__object)
 
 
 def get_columns(df: PandasData) -> PandasIndex:

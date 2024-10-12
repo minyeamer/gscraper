@@ -12,7 +12,8 @@ from gscraper.base.types import is_array, allin_instance, is_str_array
 
 from gscraper.utils import isna, isna_plus, notna, notna_plus, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
-from gscraper.utils.date import now, today, get_date, get_date_pair, set_date, is_daily_frequency, get_date_range
+from gscraper.utils.date import now, today, get_datetime, get_datetime_pair, get_date, get_date_pair, set_date
+from gscraper.utils.date import is_daily_frequency, get_date_range
 from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
 from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import concat, rename_value, regex_get, replace_map, startswith, endswith, arg_and, union, diff
@@ -519,6 +520,14 @@ class BaseSession(CustomDict):
     def today(self, __format=str(), days=0, weeks=0, droptime=True) -> Union[dt.datetime,dt.date,str]:
         return today(__format, days, weeks, tzinfo=self.tzinfo, droptime=droptime)
 
+    def get_datetime(self, datetime: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=None,
+                    droptz=True, unit="second") -> dt.datetime:
+        return get_datetime(datetime, if_null=if_null, tzinfo=self.tzinfo, droptz=droptz, unit=unit)
+
+    def get_datetime_pair(self, startTime: Optional[DateFormat]=None, endTime: Optional[DateFormat]=None,
+                        if_null: Optional[Unit]=None, droptz=True, unit="second") -> Tuple[dt.datetime,dt.datetime]:
+        return get_datetime_pair(startTime, endTime, if_null=if_null, tzinfo=self.tzinfo, droptz=droptz, unit=unit)
+
     def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Union[int,str]]=None, busdate=False) -> dt.date:
         return get_date(date, if_null=if_null, tzinfo=self.tzinfo, busdate=busdate, country_code=self.countryCode)
 
@@ -1019,7 +1028,7 @@ class Mapper(BaseSession):
         data, context = self._init_flow(data, flow, responseType, root, discard, **context)
         data = self._map_response(data, **context)
         if updateTime: data = self._set_update_time_by_interval(data, **context)
-        return filter_data(data, fields=fields, if_null="pass")
+        return filter_data(data, fields=cast_list(fields), if_null="pass")
 
     def get_root(self, root: Optional[_KT]=None, **context) -> _KT:
         return root if notna(root) else self.root
@@ -1433,7 +1442,7 @@ class SequenceMapper(Mapper):
             data = self._map_sequence(data, **context)
         else: data = self._map_response(data, **context)
         if updateTime: data = self._set_update_time_by_interval(data, **context)
-        return filter_data(data, fields=fields, if_null="pass")
+        return filter_data(data, fields=cast_list(fields), if_null="pass")
 
     def get_groupby(self, groupby: Optional[Union[Dict[_KT,_KT],_KT]]=None, **context) -> Union[Dict[_KT,_KT],_KT]:
         return groupby if notna(groupby) else self.groupby

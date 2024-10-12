@@ -65,6 +65,11 @@ UPLOAD = lambda name=str(): f"upload_{name}" if name else "upload"
 INVALID_QUERY_MSG = "To update data, parameters for source and destination are required."
 UPLOAD_GBQ_MSG = lambda table, partitioned=False: f"Uploading data to '{table}'" + (" by partition" if partitioned else str())
 
+UPLOAD_STATUS_TITLE = "▷ Upload Status"
+UPLOAD_STATUS_MSG = lambda idx, name, type, status=True: f'({idx}) "{name}" {type} {"✅" if status else "❌"}'
+GOOGL_SHEETS = "sheets"
+BIGQUERY_TABLE = "table"
+
 GOOGLE_READ_CONTEXT = "Google cloud read context"
 GOOGLE_QUERY_CONTEXT = "Google cloud query context"
 GOOGLE_UPLOAD_CONTEXT = "Google cloud upload context"
@@ -444,14 +449,20 @@ class GoogleUploader(GoogleQueryReader):
         data = to_dataframe(data)
         context = GCLOUD_CONTEXT(**context)
         for uploadContext in GoogleUploadList(*uploadList):
+            target = self._get_upload_target(uploadContext)
             if (not data.empty) and isinstance(uploadContext, GspreadUpdateContext):
-                status = self.upload_gspread(data=data.copy(), **uploadContext, account=account, **context)
+                self.uploadStatus[target] = self.upload_gspread(data=data.copy(), **uploadContext, account=account, **context)
             elif (not data.empty) and isinstance(uploadContext, BigQueryUploadContext):
-                status = self.upload_gbq(data=data.copy(), **uploadContext, account=account, **context)
+                self.uploadStatus[target] = self.upload_gbq(data=data.copy(), **uploadContext, account=account, **context)
             elif isinstance(uploadContext, GoogleCopyContext):
-                status = self.copy_data(**uploadContext, account=account, **context)
-            else: status = False
-            self.uploadStatus[uploadContext.get(NAME, str())] = status
+                self.uploadStatus[target] = self.copy_data(**uploadContext, account=account, **context)
+            else: self.uploadStatus[target] = False
+
+    def _get_upload_target(self, uploadContext) -> str:
+        if isinstance(uploadContext, GspreadUpdateContext): return uploadContext["sheet"]
+        elif isinstance(uploadContext, BigQueryUploadContext): return uploadContext["table"]
+        elif isinstance(uploadContext, GoogleCopyContext): return self._get_upload_target(uploadContext["upload"])
+        else: return uploadContext.get(NAME, "unnamed") if isinstance(uploadContext, Dict) else "unnamed"
 
     @BaseSession.catch_exception
     def copy_data(self, read: Dict, upload: Dict, account: Account=dict(), **context) -> bool:
@@ -459,6 +470,13 @@ class GoogleUploader(GoogleQueryReader):
         data = self.read_data(read, account)
         self.upload_data(data, [upload], account, **context)
         return True
+
+    def format_upload_status(self, **context) -> str:
+        formatted = list()
+        for __idx, (__name, __status) in enumerate(self.uploadStatus.items(), start=1):
+            __type = BIGQUERY_TABLE if re.match(r"^[\w\d]+\.[\w\d]+$", __name) else GOOGL_SHEETS
+            formatted.append(UPLOAD_STATUS_MSG(__idx, __name, __type, __status))
+        return '\n'.join([UPLOAD_STATUS_TITLE]+formatted) if formatted else str()
 
     ###################################################################
     ###################### Google Spread Sheets #######################
@@ -563,7 +581,7 @@ class GoogleUploader(GoogleQueryReader):
 
     def map_upload_data(self, data: pd.DataFrame, columns: IndexLabel=list(),
                         primary_key: List[str]=list(), partition=dict(), name=str(), **context) -> pd.DataFrame:
-        columns = columns if columns else self.get_upload_columns(name=name, **context)
+        columns = cast_list(columns) if columns else self.get_upload_columns(name=name, **context)
         if columns:
             data = cloc(data, columns, if_null="pass", reorder=True)
         if primary_key:
@@ -629,7 +647,7 @@ def read_gspread(key: str, sheet: str, fields: Optional[IndexLabel]=list(), defa
     data = gs.get_all_records(head=head, default_blank=default, numericise_ignore=numericise_ignore, expected_headers=headers)
     data = convert_data(data, return_type)
     data = rename_data(data, rename)
-    data = filter_data(data, fields, default=default, if_null=if_null, reorder=reorder)
+    data = filter_data(data, cast_list(fields), default=default, if_null=if_null, reorder=reorder)
     return apply_data(data, apply=(lambda x: cast_datetime_format(x, default=_cast_boolean(x))), all_keys=True)
 
 

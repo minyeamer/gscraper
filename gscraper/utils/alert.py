@@ -1,0 +1,268 @@
+from gscraper.base.abstract import CustomDict
+from gscraper.base.types import _KT, _VT, Status, Datetime, Data
+
+from gscraper.utils.cast import cast_numeric, cast_str
+from gscraper.utils.date import get_datetime, get_datetime_pair, get_date, get_date_pair, get_weekday
+from gscraper.utils.map import iloc, notna_dict, filter_data, get_scala, regex_get, safe_len
+from gscraper.utils.map import aggregate_data as agg
+
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+import datetime as dt
+import os
+import re
+import sys
+
+import jwt
+import requests
+import time
+
+
+HEADER = "header"
+FOOTER = "footer"
+NULL = "#N/A"
+
+ENV_PATH = "env/"
+PRIVATE_KEY = ENV_PATH+"private.key"
+
+NAVER_WORKS_LIMIT = 2000
+NATEON_LIMIT = 2000
+
+DEFAULT_DATE_FORMAT = "%y-%m-%d({d})"
+DEFAULT_DATE_END_FORMAT = "%m-%d-({d})"
+
+DEFAULT_DATETIME_FORMAT = "%y-%m-%d({d}) %H:%M:%S"
+DEFAULT_DATETIME_END_FORMAT = "%H:%M:%S"
+
+DEFAULT_RANGE_FORMAT = "{start} to {end}"
+
+DEFAULT_TEXT_BODY_FORMAT = "▶ [{name}] {length():,} rows collected"
+
+
+###################################################################
+########################## Format String ##########################
+###################################################################
+
+DateFormat = Union[str,Tuple[str,str]]
+
+class Mapping(dict):
+    def __missing__(self, key: str) -> Any:
+        return str() if key in (HEADER,FOOTER) else NULL
+
+
+def format_map(__s: str, mapping: Dict) -> str:
+    return __s.format_map(Mapping(mapping))
+
+
+def get_format_map(data: Data, textFormat: str, textHeader=str(), textFooter=str(), dateFormat=str(), rangeFormat=str(),
+                    tzinfo=None, busdate=False, **kwargs) -> Dict:
+    mapping = dict()
+    if ("{header}" in textFormat) and textHeader:
+        textFormat = textFormat.replace("{header}", textHeader)
+    if ("{footer}" in textFormat) and textFooter:
+        textFormat = textFormat.replace("{footer}", textFooter)
+    for __key in set(regex_get(r"\{([^}]+)\}", textFormat, indices=[])):
+        try:
+            __key, __value = get_format_value(data, __key, dateFormat, rangeFormat, tzinfo, busdate, **kwargs)
+            mapping[__key] = __value
+        except: pass
+    return mapping
+
+
+def get_format_value(data: Data, __key: str, dateFormat=str(), rangeFormat=str(),
+                    tzinfo=None, busdate=False, **kwargs) -> Tuple[_KT,_VT]:
+    if re.match(r"^(date|datetime)\(.+\)$", __key):
+        if not dateFormat: return __key, str()
+        dateFunc, path = regex_get(r"^(\w+)\((.+)\)$", __key, groups=[0,1])
+        __datetime = _get_date_object(kwargs.get(path), dateFunc, tzinfo=tzinfo, busdate=busdate)
+        return __key, format_date(__datetime, dateFormat, tzinfo=tzinfo)
+    elif re.match(r"^(daterange|timerange)\([^,]+,[^,]+\)$", __key):
+        if not (dateFormat or rangeFormat): return __key, str()
+        dateFunc, start, end = regex_get(r"^(\w+)\(([^,]+),([^,]+)\)$", __key, groups=[0,1,2])
+        __start, __end = _get_date_range_object(kwargs.get(start), kwargs.get(end), dateFunc, tzinfo=tzinfo, busdate=busdate)
+        return __key, format_date_range(__start, __end, dateFormat, rangeFormat, tzinfo=tzinfo)
+    else: return __key.rsplit(':', maxsplit=1)[0], format_value(data, __key, **kwargs)
+
+
+def format_date(__datetime: Datetime, dateFormat: str, tzinfo=None) -> str:
+    if not isinstance(__datetime, (dt.date,dt.datetime)):
+        return NULL
+    elif ("{d}" in dateFormat) or ("{ddd}" in dateFormat):
+        mapping = {__k: get_weekday(__datetime, __f, tzinfo) for __k, __f in zip(["d","ddd"],["short","long"])}
+        dateFormat = format_map(dateFormat, mapping)
+    return __datetime.strftime(dateFormat.encode("unicode-escape").decode()).encode().decode("unicode-escape")
+
+
+def format_date_range(__start: Datetime, __end: Datetime, dateFormat: Tuple[str,str], rangeFormat: str, tzinfo=None) -> str:
+    startFormat, endFormat = get_scala(dateFormat, 0), get_scala(dateFormat, 1)
+    if __start == __end:
+        return format_date(__start, dateFormat=startFormat, tzinfo=tzinfo)
+    elif not (isinstance(__start, (dt.date,dt.datetime)) and (type(__start) == type(__end))):
+        return format_map(rangeFormat, dict(start=NULL, end=NULL))
+    if not endFormat: endFormat = startFormat
+    elif isinstance(__start, dt.datetime) and re.search(r"(%[^\s]*H|%[^\s]*M|%[^\s]*S)", startFormat):
+        endFormat = endFormat if __start.date() == __end.date() else startFormat
+    else: endFormat = endFormat if __start.year == __end.year else startFormat
+    __start = format_date(__start, dateFormat=startFormat, tzinfo=tzinfo)
+    __end = format_date(__end, dateFormat=endFormat, tzinfo=tzinfo)
+    return rangeFormat.format_map(dict(start=__start, end=__end))
+
+
+def _get_date_object(__object, dateFunc: Literal["date","datetime"]=str(), tzinfo=None, busdate=False) -> Datetime:
+    if isinstance(__object, (dt.date,dt.datetime)): return __object
+    elif dateFunc == "date": return get_date(__object, if_null=None, tzinfo=tzinfo, busdate=busdate)
+    elif dateFunc == "datetime": return get_datetime(__object, if_null=None, tzinfo=tzinfo)
+    else: return None
+
+
+def _get_date_range_object(__start, __end, dateFunc: Literal["daterange","timerange"]=str(),
+                            tzinfo=None, busdate=False) -> Tuple[Datetime,Datetime]:
+    if isinstance(__start, (dt.date,dt.datetime)) and (type(__start) == type(__end)): return __start, __end
+    elif dateFunc == "daterange": return get_date_pair(__start, __end, if_null=None, tzinfo=tzinfo, busdate=busdate)
+    elif dateFunc == "timerange": return get_datetime_pair(__start, __end, if_null=None, tzinfo=tzinfo)
+    else: return (None, None)
+
+
+def format_value(data: Data, __key: str, **kwargs) -> Any:
+    __key, isNumber = (__key.rsplit(':', maxsplit=1)[0], True) if ':' in __key else (__key, False)
+    if re.match(r"^\w+\(.*\)$", __key):
+        aggFunc, path = regex_get(r"^(\w+)\((.*)\)$", __key, groups=[0,1])
+        return aggregate_data(data, aggFunc, path)
+    elif __key in kwargs:
+        return cast_numeric(kwargs[__key]) if isNumber else cast_str(kwargs[__key], default=NULL)
+    else: return 0 if isNumber else NULL
+
+
+def aggregate_data(data: Data, aggFunc: str, path: str) -> Union[float,int]:
+    if '>' in path:
+        name, column = path.split('>', maxsplit=1)
+        return aggregate_data(data[name], aggFunc, column)
+    elif aggFunc == "length":
+        return safe_len(data[path]) if path else safe_len(data)
+    else:
+        values = filter_data(data, path, if_null="drop") if path else data
+        return cast_numeric(agg(values, aggFunc))
+
+
+def split_lines(__s: str, maxLength: int, sep='\n', strip=True) -> List[str]:
+    array, lines, length = list(), str(), 0
+    for line in __s.split(sep):
+        length += len(line)+len(sep)
+        if length >= maxLength:
+            array.append(lines.strip() if strip else lines)
+            lines, length = line, len(line)
+        else: lines = sep.join([lines, line]) if lines else line
+    if lines: array.append(lines.strip() if strip else lines)
+    return array
+
+
+###################################################################
+########################### Private Key ###########################
+###################################################################
+
+def get_sys_file(file: str) -> str:
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__)))
+    return os.path.join(base_path, file)
+
+
+def read_file(file: str) -> Union[str,bytes]:
+    if os.path.exists(file):
+        with open(file, "rb") as f:
+            return f.read()
+    else: return file
+
+
+def read_private_key(file=str()) -> Union[str,bytes]:
+    if isinstance(file, str) and file.endswith(".key") and os.path.exists(file): pass
+    elif os.path.exists(PRIVATE_KEY): file = PRIVATE_KEY
+    else: file = get_sys_file(PRIVATE_KEY.split('/')[-1])
+    return read_file(file)
+
+
+###################################################################
+######################### NAVER WORKS API #########################
+###################################################################
+
+class AlertInfo(CustomDict):
+    def __init__(self, clientId: str, clientSecret: str, serviceAccount: str, botId: str,
+                channelId=str(), userId=str(), limit=2000, strip=True, privateKey: Union[str,bytes]=str(),
+                textFormat: Optional[str]=None, textHeader: Optional[str]=None, textBody: Optional[str]=None, textFooter: Optional[str]=None,
+                dateFormat: Optional[Union[str,Sequence,Literal["date","datetime"]]]=None, rangeFormat: Optional[str]=None, name=str()):
+        authInfo = dict(clientId=clientId, clientSecret=clientSecret, serviceAccount=serviceAccount, privateKey=privateKey)
+        botInfo = dict(botId=botId, channelId=channelId, userId=userId, limit=min(limit,NAVER_WORKS_LIMIT), strip=strip)
+        textInfo = dict(name=name, **self.set_text_format(textFormat, textHeader, textBody, textFooter), **self.set_date_format(dateFormat, rangeFormat))
+        super().__init__(authInfo=authInfo, botInfo=botInfo, textInfo=textInfo)
+
+    def set_text_format(self, textFormat=None, textHeader=None, textBody=None, textFooter=None) -> Dict[str,str]:
+        textFormat = textFormat if textFormat else ("{header}"+(textBody if textBody else DEFAULT_TEXT_BODY_FORMAT)+"{footer}")
+        return notna_dict(textFormat=textFormat, textHeader=textHeader, textFooter=textFooter)
+
+    def set_date_format(self, dateFormat: Union[str,Sequence,Literal["date","datetime"]]=str(), rangeFormat=str()) -> Dict[str,DateFormat]:
+        if isinstance(dateFormat, str):
+            return dict(dateFormat=self.get_date_format(dateFormat))
+        elif isinstance(dateFormat, Sequence):
+            return dict(zip(["dateFormat","rangeFormat"], self.get_date_range_format(dateFormat, rangeFormat)))
+        else: return dict()
+
+    def get_date_format(self, dateFormat=str()) -> str:
+        if dateFormat == "date": return DEFAULT_DATE_FORMAT
+        elif dateFormat == "datetime": return DEFAULT_DATETIME_FORMAT
+        else: return dateFormat if isinstance(dateFormat, str) else str()
+
+    def get_date_end_format(self, dateFormat=str()) -> str:
+        if dateFormat == "date": return DEFAULT_DATE_END_FORMAT
+        elif dateFormat == "datetime": return DEFAULT_DATETIME_END_FORMAT
+        else: return dateFormat if isinstance(dateFormat, str) else str()
+
+    def get_date_range_format(self, dateFormat: Sequence[str], rangeFormat=str()) -> Tuple[Tuple[str,str],str]:
+        dateStart, dateEnd = iloc(dateFormat, [0,1], default=str(), if_null="pass")
+        dateFormat = (self.get_date_format(dateStart), self.get_date_end_format(dateEnd if dateEnd else dateStart))
+        return dateFormat, (rangeFormat if rangeFormat else DEFAULT_RANGE_FORMAT)
+
+
+class NaverBot(requests.Session):
+    accessToken = str()
+
+    def __init__(self, clientId: str, clientSecret: str, serviceAccount: str, privateKey: Union[str,bytes]=str()):
+        super().__init__()
+        privateKey = privateKey if isinstance(privateKey, bytes) else read_private_key(privateKey)
+        self.accessToken = self.authorize(clientId, clientSecret, serviceAccount, privateKey)
+
+    def authorize(self, clientId: str, clientSecret: str, serviceAccount: str, privateKey: Union[str,bytes], expires=60*5) -> str:
+        url = "https://auth.worksmobile.com/oauth2/v2.0/token"
+        params = dict(
+            assertion=self.encode_jwt(clientId, serviceAccount, privateKey, expires),
+            grant_type="urn:ietf:params:oauth:grant-type:jwt-bearer",
+            client_id=clientId,
+            client_secret=clientSecret,
+            scope="bot"
+        )
+        response = self.post(url, params=params)
+        return response.json()["access_token"]
+
+    def encode_jwt(self, clientId: str, serviceAccount: str, privateKey: Union[str,bytes], expires=60*5) -> str:
+        headers = {"alg":"RS256", "typ":"JWT"}
+        payload = {"iss":clientId, "sub":serviceAccount, "iat":int(time.time()), "exp":int(time.time())+expires}
+        return jwt.encode(payload, privateKey, algorithm="HS256", headers=headers)
+
+    def send_text(self, text: str, botId: str, channelId=str(), userId=str(), limit=2000, strip=True) -> Status:
+        __id, __type = (channelId if channelId else userId), ("channels" if channelId else "users")
+        url = f"https://www.worksapis.com/v1.0/bots/{botId}/{__type}/{__id}/messages"
+        headers = {"Authorization":f"Bearer {self.accessToken}", "Content-Type":"application/json"}
+        status = list()
+        for lines in split_lines((text.strip() if strip else text), maxLength=limit, strip=strip):
+            data = {"content":{"type":"text", "text":lines}}
+            response = self.post(url, headers=headers, json=data)
+            status.append(response.status_code)
+        return status[0] if len(status) == 1 else status
+
+
+###################################################################
+############################ NateOn API ###########################
+###################################################################
+
+def alert_nateon(nateonUrl: str, content: str, limit=(2000-100)) -> Status:
+    status, headers = list(), {"Content-Type":"application/x-www-form-urlencoded"}
+    for lines in split_lines(content, maxLength=limit):
+        data = {"content":lines}
+        status.append(requests.post(nateonUrl, headers=headers, data=data).status_code)
+    return status[0] if len(status) == 1 else status

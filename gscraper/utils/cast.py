@@ -45,14 +45,13 @@ def cast_int1(__object, default=1, clean=True) -> int:
 
 def cast_numeric(__object, __type: TypeHint="auto", default=0, clean=True,
                 trunc: Optional[int]=None, **kwargs) -> Union[float,int]:
-    if __type == "auto": pass
+    if __type == "auto":
+        __object = cast_float(__object, default=default, clean=clean, trunc=trunc)
+        if isinstance(__object, float): return __object if __object % 1. else int(__object)
+        else: return __object
     elif is_int_type(__type): return cast_int(__object, default=default, clean=clean)
     elif is_float_type(__type): return cast_float(__object, default=default, clean=clean, trunc=trunc)
     else: return default
-
-    __object = cast_float(__object, default=default, clean=clean, trunc=trunc)
-    if isinstance(__object, float):
-        return __object if __object % 1. else int(__object)
 
 
 ###################################################################
