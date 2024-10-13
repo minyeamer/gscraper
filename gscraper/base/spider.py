@@ -198,8 +198,9 @@ class UploadSession(GoogleUploader):
     def map_alert_data(self, data: Data, **context) -> Data:
         return data
 
-    def format_alert_text(self, data: Data, textFormat: str, textHeader=str(), textFooter=str(),
-                        dateFormat=str(), rangeFormat=str(), name=str(), **context) -> str:
+    def format_alert_text(self, data: Data, textFormat: str, textHeader: Optional[str]=None, textFooter: Optional[str]=None,
+                        dateFormat: Optional[DateFormat]=None, rangeFormat: Optional[str]=None,
+                        name: Optional[str]=None, **context) -> str:
         textInfo = dict(dateFormat=dateFormat, rangeFormat=rangeFormat, name=name)
         if "{header}" in textFormat:
             header = self.format_alert_header(data, textHeader=textHeader, **textInfo, **context)
@@ -212,18 +213,18 @@ class UploadSession(GoogleUploader):
                 for __key in set(regex_get(r"\{([^}]+)\}", textFormat, indices=[]))]))
         return format_map(textFormat, mapping)
 
-    def format_alert_header(self, data: Data, textHeader=str(), **context) -> str:
-        return textHeader if textHeader else str()
+    def format_alert_header(self, data: Data, textHeader: Optional[str]=None, **context) -> str:
+        return textHeader if isinstance(textHeader, str) else str()
 
-    def format_alert_footer(self, data: Data, textFooter=str(), **context) -> str:
-        if textFooter: return textFooter
+    def format_alert_footer(self, data: Data, textFooter: Optional[str]=None, **context) -> str:
+        if isinstance(textFooter, str): return textFooter
         elif self.uploadStatus: return '\n\n'+self.format_upload_status(**context)
         else: return str()
 
     @BaseSession.catch_exception
     def format_alert_value(self, data: Data, __key: str, name=str(), **context) -> Tuple[_KT,_VT]:
         if __key == "name":
-            return __key, (name if name else self.operation)
+            return __key, (name if isinstance(name, str) else self.operation)
         elif re.match(r"^(date|datetime)\(.+\)$", __key):
             dateFunc, path = regex_get(r"^(\w+)\((.+)\)$", __key, groups=[0,1])
             return __key, self.format_alert_date(context.get(path), dateFunc, **context)
@@ -232,21 +233,19 @@ class UploadSession(GoogleUploader):
             return __key, self.format_alert_date_range(context.get(start), context.get(end), dateFunc, **context)
         else: return __key.rsplit(':', maxsplit=1)[0], format_alert_value(data, __key, **context)
 
-    def format_alert_date(self, __object, __func: str, dateFormat: str, busdate=False, **context) -> str:
-        if not dateFormat: return str()
-        elif isinstance(__object, (dt.date,dt.datetime)): __datetime = __object
+    def format_alert_date(self, __object, __func: str, dateFormat: Optional[str]=None, busdate=False, **context) -> str:
+        if isinstance(__object, (dt.date,dt.datetime)): __datetime = __object
         elif __func == "date": __datetime = self.get_date(__object, if_null=None, busdate=busdate)
         elif __func == "datetime": __datetime = self.get_datetime(__object, if_null=None)
         else: __datetime = None
-        return format_alert_date(__datetime, dateFormat, tzinfo=self.tzinfo)
+        return format_alert_date(__datetime, (dateFormat if dateFormat else __func), tzinfo=self.tzinfo)
 
-    def format_alert_date_range(self, __start, __end, __func: str, dateFormat: str, rangeFormat: str, busdate=False, **context) -> str:
-        if not (dateFormat or rangeFormat): return str()
-        elif isinstance(__start, (dt.date,dt.datetime)) and (type(__start) == type(__end)): pass
-        elif __func == "daterange": __start, __end = self.get_date_pair(__start, __end, if_null=None, busdate=busdate)
+    def format_alert_date_range(self, __start, __end, __func: str, dateFormat: Optional[Union[str,Tuple[str,str]]]=None,
+                                rangeFormat: Optional[str]=None, busdate=False, **context) -> str:
+        if __func == "daterange": __start, __end = self.get_date_pair(__start, __end, if_null=None, busdate=busdate)
         elif __func == "timerange": __start, __end = self.get_datetime_pair(__start, __end, if_null=None)
         else: __start, __end = None, None
-        return format_alert_date_range(__start, __end, dateFormat, rangeFormat, tzinfo=self.tzinfo)
+        return format_alert_date_range(__start, __end, (dateFormat if dateFormat else __func), rangeFormat, tzinfo=self.tzinfo)
 
     def log_alert(self, status: Status, text: str, limit=100):
         if isinstance(status, List):
