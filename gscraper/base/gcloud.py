@@ -3,7 +3,7 @@ from gscraper.base.abstract import OptionalDict, TypedRecords, Value, ValueSet
 from gscraper.base.abstract import GCLOUD_CONTEXT, INVALID_OBJECT_MSG, INVALID_MSG, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.session import BaseSession
 
-from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap
+from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap, TypeMap
 from gscraper.base.types import TabularData, PostData, from_literal
 
 from gscraper.utils.cast import cast_list, cast_date, cast_datetime, cast_datetime_format
@@ -251,26 +251,26 @@ class BigQueryContext(BigQueryReadContext):
 class ExcelReadContext(OptionalDict):
     def __init__(self, file_path: str, sheet_name: Union[str,int]=0, fields: Optional[IndexLabel]=None,
                 default: Optional[Any]=None, if_null: Literal["drop","pass"]="pass",
-                str_cols: Optional[NumericiseIgnore]=None, return_type: Optional[TypeHint]="dataframe",
+                dtype: Optional[Union[TypeMap,Literal["str"]]]=None, return_type: Optional[TypeHint]="dataframe",
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **kwargs):
+                regex_path=False, reverse_path=False, size: Optional[int]=None, name=str(), **kwargs):
         super().__init__(file_path=file_path, sheet_name=sheet_name,
             optional=dict(
-                fields=fields, default=default, if_null=if_null, str_cols=str_cols, return_type=return_type,
-                rename=rename, to=to, file_pattern=file_pattern, reverse=reverse, size=size, name=name, **kwargs),
-            null_if=dict(if_null="pass", return_type="dataframe", to="name", file_pattern=False, reverse=False, name=str()))
+                fields=fields, default=default, if_null=if_null, dtype=(str if dtype == "str" else dtype), return_type=return_type,
+                rename=rename, to=to, regex_path=regex_path, reverse_path=reverse_path, size=size, name=name, **kwargs),
+            null_if=dict(if_null="pass", return_type="dataframe", to="name", regex_path=False, reverse_path=False, name=str()))
 
 
 class ExcelQueryContext(ExcelReadContext):
     def __init__(self, file_path: str, sheet_name: Union[str,int]=0, fields: Optional[IndexLabel]=None,
                 default: Optional[Any]=None, if_null: Literal["drop","pass"]="pass", axis=0,
-                dropna=True, drop_empty=False, unique=False, str_cols: Optional[NumericiseIgnore]=None,
+                dropna=True, drop_empty=False, unique=False, dtype: Optional[Union[TypeMap,Literal["str"]]]=None,
                 arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **kwargs):
+                regex_path=False, reverse_path=False, size: Optional[int]=None, name=str(), **kwargs):
         return_type = "records" if as_records else "dataframe"
         super().__init__(
-            file_path, sheet_name, fields, default, if_null, str_cols, return_type, rename, to, file_pattern, reverse, size, name)
+            file_path, sheet_name, fields, default, if_null, dtype, return_type, rename, to, regex_path, reverse_path, size, name)
         self.update_notna(
                 axis=axis, dropna=dropna, drop_empty=drop_empty, unique=unique, arr_cols=arr_cols,
                 as_records=as_records, as_frame=as_frame, **kwargs,
@@ -341,11 +341,11 @@ class GoogleQueryReader(BaseSession):
 
     def read_excel(self, file_path: str, sheet_name: Union[str,int]=0,
                     fields: IndexLabel=list(), default=None, if_null: Literal["drop","pass"]="pass",
-                    str_cols: NumericiseIgnore=list(), return_type: Literal["records","dataframe"]="dataframe",
+                    dtype: TypeMap=None, return_type: Literal["records","dataframe"]="dataframe",
                     rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                    file_pattern=False, reverse=False, size: Optional[int]=None, name=str(), **context) -> TabularData:
+                    regex_path=False, reverse_path=False, size: Optional[int]=None, name=str(), **context) -> TabularData:
         rename_map = rename if rename else self.get_rename_map(to=to, query=True)
-        kwargs = dict(str_cols=str_cols, return_type=return_type, rename=rename_map, file_pattern=file_pattern, reverse=reverse)
+        kwargs = dict(dtype=dtype, return_type=return_type, rename=rename_map, regex_path=regex_path, reverse_path=reverse_path)
         data = read_table(file_path, sheet_name=sheet_name, columns=fields, default=default, if_null=if_null, **kwargs)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_excel", msg={FILEPATH:file_path, SHEETNAME:sheet_name, DATA:data}, save=data)
