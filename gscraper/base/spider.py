@@ -495,7 +495,8 @@ class RequestSession(UploadSession):
     @BaseSession.catch_exception
     def upload_result(self, data: Data, uploadList: GoogleUploadList=list(), **context):
         if not uploadList: return
-        elif self.mappedReturn and isinstance(data, Dict):
+        self.uploadStatus = dict()
+        if self.mappedReturn and isinstance(data, Dict):
             for uploadContext in uploadList:
                 if not isinstance(uploadContext, Dict): continue
                 elif uploadContext.get(NAME) not in data: continue
