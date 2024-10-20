@@ -63,13 +63,13 @@ def get_format_map(data: Data, textFormat: str, textHeader: Optional[str]=None, 
         textFormat = textFormat.replace("{footer}", textFooter)
     for __key in set(regex_get(r"\{([^}]+)\}", textFormat, indices=[])):
         try:
-            __key, __value = get_format_value(data, __key, dateFormat, rangeFormat, tzinfo, busdate, **kwargs)
+            __key, __value = format_key_value(data, __key, dateFormat, rangeFormat, tzinfo, busdate, **kwargs)
             mapping[__key] = __value
         except: pass
     return mapping
 
 
-def get_format_value(data: Data, __key: str, dateFormat: Optional[DateFormat]=None, rangeFormat: Optional[str]=None,
+def format_key_value(data: Data, __key: str, dateFormat: Optional[DateFormat]=None, rangeFormat: Optional[str]=None,
                     tzinfo=None, busdate=False, **kwargs) -> Tuple[_KT,_VT]:
     if re.match(r"^(date|datetime)\(.+\)$", __key):
         dateFunc, path = regex_get(r"^(\w+)\((.+)\)$", __key, groups=[0,1])
@@ -82,7 +82,7 @@ def get_format_value(data: Data, __key: str, dateFormat: Optional[DateFormat]=No
     else: return __key.rsplit(':', maxsplit=1)[0], format_value(data, __key, **kwargs)
 
 
-def format_value(data: Data, __key: str, **kwargs) -> Any:
+def format_value(data: Data, __key: str, **kwargs) -> _VT:
     __key, isNumber = (__key.rsplit(':', maxsplit=1)[0], True) if ':' in __key else (__key, False)
     if re.match(r"^\w+\(.*\)$", __key):
         aggFunc, path = regex_get(r"^(\w+)\((.*)\)$", __key, groups=[0,1])

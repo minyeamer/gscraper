@@ -209,7 +209,7 @@ class UploadSession(GoogleUploader):
             footer = self.format_alert_footer(data, textFooter=textFooter, **textInfo, **context)
             textFormat = textFormat.replace("{footer}", footer)
         mapping = dict(filter(None,
-            [self.format_alert_value(data, __key, **textInfo, **context)
+            [self.format_alert_key_value(data, __key, **textInfo, **context)
                 for __key in set(regex_get(r"\{([^}]+)\}", textFormat, indices=[]))]))
         return format_map(textFormat, mapping)
 
@@ -222,7 +222,7 @@ class UploadSession(GoogleUploader):
         else: return str()
 
     @BaseSession.catch_exception
-    def format_alert_value(self, data: Data, __key: str, name=str(), **context) -> Tuple[_KT,_VT]:
+    def format_alert_key_value(self, data: Data, __key: str, name=str(), **context) -> Tuple[_KT,_VT]:
         if __key == "name":
             return __key, (name if isinstance(name, str) else self.operation)
         elif re.match(r"^(date|datetime)\(.+\)$", __key):
@@ -231,7 +231,10 @@ class UploadSession(GoogleUploader):
         elif re.match(r"^(daterange|timerange)\([^,]+,[^,]+\)$", __key):
             dateFunc, start, end = regex_get(r"^(\w+)\(([^,]+),([^,]+)\)$", __key, groups=[0,1,2])
             return __key, self.format_alert_date_range(context.get(start), context.get(end), dateFunc, **context)
-        else: return __key.rsplit(':', maxsplit=1)[0], format_alert_value(data, __key, **context)
+        else: return __key.rsplit(':', maxsplit=1)[0], self.format_alert_value(data, __key, **context)
+
+    def format_alert_value(self, data: Data, __key: str, **context) -> _VT:
+        return format_alert_value(data, __key, **context)
 
     def format_alert_date(self, __object, __func: str, dateFormat: Optional[str]=None, busdate=False, **context) -> str:
         if isinstance(__object, (dt.date,dt.datetime)): __datetime = __object
