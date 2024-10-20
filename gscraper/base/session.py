@@ -247,13 +247,13 @@ class Sum(Stat):
 
 
 class Map(Apply):
-    def __init__(self, schema: Schema, type: Optional[TypeHint]=None, root: Optional[_KT]=None,
+    def __init__(self, schema: Schema, type: TypeHint, root: Optional[_KT]=None,
                 match: Optional[Match]=None, groupby: Optional[_KT]=None, groupSize: Optional[NestedDict]=None,
                 countby: Literal["page","start"]="start", page=1, start=1,
                 submatch: Optional[Union[MatchFunction,bool]]=True, discard=True) -> Data:
-        Function.__init__(self, func=__MAP__, schema=schema,
+        Function.__init__(self, func=__MAP__, schema=schema, type=type,
             optional=dict(
-                type=type, root=root, match=match, groupby=groupby, groupSize=groupSize,
+                root=root, match=match, groupby=groupby, groupSize=groupSize,
                 countby=countby, page=page, start=start, submatch=submatch, discard=discard),
             null_if=dict(countby="start", page=1, start=1, submatch=True, discard=True))
 
@@ -1246,9 +1246,7 @@ class Mapper(BaseSession):
         elif func == __SPLIT__: return self.__split__(__object, **kwargs)
         elif func == __STAT__: return self.__stat__(__object, **kwargs)
         elif func == __SUM__: return self.__stat__(__object, **kwargs)
-        elif func == __MAP__:
-            kwargs["type"] = field[TYPE]
-            return self.__map__(__object, context=context, name=name, **kwargs)
+        elif func == __MAP__: return self.__map__(__object, context=context, name=name, **kwargs)
         else: raise ForbiddenError(INVALID_APPLY_SPECIAL_MSG(func, context, field, name))
 
     def __cast__(self, __object, type: TypeHint, default=None, clean=False, drop_empty=False,
