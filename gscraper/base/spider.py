@@ -1036,7 +1036,7 @@ class AsyncSession(RequestSession):
         async def wrapper(self: AsyncSession, *args, self_var=True, **context):
             args, context = self.init_context(args, context, self_var=self_var)
             semaphore = self.asyncio_semaphore(**context)
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(**self.set_client_session(**context)) as session:
                 data = await func(self, *args, session=session, semaphore=semaphore, **SESSION_CONTEXT(**context))
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
@@ -1046,6 +1046,9 @@ class AsyncSession(RequestSession):
     def asyncio_semaphore(self, numTasks: Optional[int]=None, **context) -> asyncio.Semaphore:
         numTasks = numTasks if isinstance(numTasks, int) and numTasks > 0 else self.numTasks
         return asyncio.Semaphore(min(numTasks, self.maxLimit))
+
+    def set_client_session(self, **context) -> Dict:
+        return dict()
 
     def limit_request(func):
         @functools.wraps(func)
@@ -1788,13 +1791,15 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
             with self.init_auth(**context) as auth:
                 self.login(auth, **context)
                 authInfo = self.set_auto_info(auth, **context)
-                cookies = dict(cookies=auth.get_cookies(encode=False)) if "cookies" not in authInfo else dict()
-                async with aiohttp.ClientSession(**cookies) as session:
+                async with aiohttp.ClientSession(**self.set_client_session(auth=auth, **authInfo)) as session:
                     data = await func(self, *args, auth=auth, session=session, semaphore=semaphore, **SESSION_CONTEXT(**authInfo))
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
         return wrapper
+
+    def set_client_session(self, auth: LoginSpider, cookies=str(), **context) -> Dict:
+        return dict(cookies=auth.get_cookies(encode=False)) if cookies else dict()
 
     ###################################################################
     ########################### API Managers ##########################
