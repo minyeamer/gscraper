@@ -3,7 +3,7 @@ from gscraper.base.abstract import OptionalDict, TypedRecords, Value, ValueSet
 from gscraper.base.abstract import GCLOUD_CONTEXT, INVALID_OBJECT_MSG, INVALID_MSG, INVALID_OBJECT_TYPE_MSG
 from gscraper.base.session import BaseSession
 
-from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, RenameMap, TypeMap
+from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, DateFormat, RenameMap, TypeMap
 from gscraper.base.types import TabularData, PostData, from_literal
 
 from gscraper.utils.cast import cast_list, cast_date, cast_datetime, cast_datetime_format
@@ -378,11 +378,11 @@ class GoogleQueryReader(BaseSession):
 class GspreadUpdateContext(OptionalDict):
     def __init__(self, key: str, sheet: str, columns: IndexLabel=list(),
                 mode: Literal["append","replace","ignore","upsert"]="append", primary_key: Optional[_KT]=None,
-                cell: Optional[str]=None, read: Optional[Dict]=None, name=str(), **kwargs):
+                set_date: Optional[Dict]=None, cell: Optional[str]=None, read: Optional[Dict]=None, name=str(), **kwargs):
         super().__init__(key=key, sheet=sheet,
             optional=dict(
-                columns=columns, mode=mode, primary_key=cast_list(primary_key), cell=cell,
-                read=read, name=name, **kwargs),
+                columns=columns, mode=mode, primary_key=cast_list(primary_key), set_date=set_date,
+                cell=cell, read=read, name=name, **kwargs),
             null_if=dict(mode="append", head=1, to="name", name=str()))
 
 
@@ -398,11 +398,11 @@ class BigQueryPartition(OptionalDict):
 class BigQueryUploadContext(OptionalDict):
     def __init__(self, table: str, project_id: str, columns: IndexLabel=list(),
                 mode: Literal["append","replace","ignore","upsert"]="append", primary_key: Optional[_KT]=None,
-                partition: Optional[Dict]=None, read: Optional[Dict]=None, name=str(), **kwargs):
+                partition: Optional[Dict]=None, set_date: Optional[Dict]=None, read: Optional[Dict]=None, name=str(), **kwargs):
         super().__init__(table=table, project_id=project_id,
             optional=dict(
                 columns=columns, mode=mode, primary_key=cast_list(primary_key),
-                partition=partition, read=read, name=name, **kwargs),
+                partition=partition, set_date=set_date, read=read, name=name, **kwargs),
             null_if=dict(mode="append", partition_by="auto", name=str()))
 
 
@@ -485,8 +485,8 @@ class GoogleUploader(GoogleQueryReader):
     @BaseSession.catch_exception
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, columns: IndexLabel=list(),
                         mode: Literal["append","replace","ignore","upsert"]="append", primary_key: List[str]=list(),
-                        cell=str(), read=None, name=str(), account: Account=dict(), **context) -> bool:
-        params = dict(key=key, sheet=sheet, mode=mode, primary_key=primary_key, name=name, account=account)
+                        set_date=None, cell=str(), read=None, name=str(), account: Account=dict(), **context) -> bool:
+        params = dict(key=key, sheet=sheet, mode=mode, primary_key=primary_key, set_date=set_date, name=name, account=account)
         if mode in ("ignore","upsert"):
             read = self.set_base_sheet(read=read, **params, **context)
             mode = {"ignore":"append", "upsert":"replace"}.get(mode)
@@ -512,9 +512,10 @@ class GoogleUploader(GoogleQueryReader):
     @BaseSession.catch_exception
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, columns: IndexLabel=list(),
                     mode: Literal["append","replace","ignore","upsert"]="append", primary_key: List[str]=list(),
-                    partition=None, read=None, progress=True, name=str(), account: Account=dict(), **context) -> bool:
+                    partition=None, set_date=None, read=None, progress=True, name=str(), account: Account=dict(), **context) -> bool:
         partition = self.validate_partition(partition, **context)
-        params = dict(table=table, project_id=project_id, mode=mode, primary_key=primary_key, partition=partition, name=name, account=account)
+        params = dict(table=table, project_id=project_id, mode=mode,
+            primary_key=primary_key, partition=partition, set_date=set_date, name=name, account=account)
         if mode in ("ignore","upsert"):
             read = self.set_base_query(read=read, **params, **context)
             mode = {"ignore":"append", "upsert":"replace"}.get(mode)
@@ -579,8 +580,8 @@ class GoogleUploader(GoogleQueryReader):
     ######################### Map Upload Data #########################
     ###################################################################
 
-    def map_upload_data(self, data: pd.DataFrame, columns: IndexLabel=list(),
-                        primary_key: List[str]=list(), partition=dict(), name=str(), **context) -> pd.DataFrame:
+    def map_upload_data(self, data: pd.DataFrame, columns: IndexLabel=list(), primary_key: List[str]=list(),
+                        partition=dict(), set_date=None, name=str(), **context) -> pd.DataFrame:
         columns = cast_list(columns) if columns else self.get_upload_columns(name=name, **context)
         if columns:
             data = cloc(data, columns, if_null="pass", reorder=True)
@@ -588,6 +589,8 @@ class GoogleUploader(GoogleQueryReader):
             data = data.dropna(subset=primary_key, how="any").drop_duplicates(primary_key)
         if isinstance(partition, Dict) and partition.get("field") and partition.get("has_value"):
             data = self.filter_by_partition(data, **partition)
+        if isinstance(set_date, Dict) and set_date:
+            data = self.set_upload_date(data, set_date=set_date, name=name, **context)
         return data
 
     def get_upload_columns(self, name=str(), **context) -> IndexLabel:
@@ -601,6 +604,14 @@ class GoogleUploader(GoogleQueryReader):
         match_right = (values<=right) if right is not None else values.notna()
         match_value = (values==value) if value is not None else values.notna()
         return data[match_left&match_right&match_value]
+
+    def set_upload_date(self, data: pd.DataFrame, set_date: Dict[str,DateFormat], name=str(), **context) -> pd.DataFrame:
+        data = data.copy()
+        for __key, __value in set_date.items():
+            __date = self.get_date(__value)
+            if (__key in data) and isinstance(__date, dt.date):
+                data[__key] = __date
+        return data
 
 
 ###################################################################

@@ -79,7 +79,7 @@ RESPONSE_CONTEXT = lambda response=None, tzinfo=None, countryCode=None, iterateU
 GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None, table=None, query=None, project_id=None, \
                         columns=None, mode=None, primary_key=None, base=None, read=None, upload=None, \
                         cell=None, clear=None, default=None, head=None, headers=None, str_cols=None, arr_cols=None, \
-                        rename=None, to=None, progress=None, partition=None, fields=None, **context: context
+                        rename=None, to=None, progress=None, partition=None, set_date=None, fields=None, **context: context
 
 
 UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, alertInfo=None, **context: context
