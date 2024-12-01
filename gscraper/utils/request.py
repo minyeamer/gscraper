@@ -8,7 +8,7 @@ from urllib.parse import quote, urlencode, urlparse
 import aiohttp
 import requests
 
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Optional, Union
 from ast import literal_eval
 import json
 import re
@@ -98,17 +98,20 @@ class GraphQLVariables(GraphQLObject):
 
     def generate_variables(self, indent=4, step=2, linebreak=True, colons=True, prefix=str(), suffix=str(), replace=dict(), **kwargs) -> str:
         if isinstance(self.variables, Dict):
-            variables = {__k: self.format_variables(__v, linebreak=False, bracket=False) for __k, __v in self.variables.items()}
-            __formatted = '('+self.format(variables, indent, step, linebreak, colons)+')'
+            __formatted = self.format_variables_dict(self.variables, indent, step, linebreak, colons)
         else: __formatted = self.format_variables(self.variables, indent, step, linebreak, bracket=True)
         return prefix+(replace_map(__formatted, **replace) if replace else __formatted)+suffix
-
 
     def format_variables(self, variables: List[str], indent=4, step=2, linebreak=True, bracket=True) -> str:
         if linebreak:
             variables = ('\n'+' '*indent).join([(__name+': $'+__name) for __name in variables])
             return ('('*bracket)+'\n'+(' '*indent)+variables+'\n'+(' '*max(indent-step,0))+(')'*bracket)
         else: return ('('*bracket)+", ".join([(__name+': $'+__name) for __name in variables])+(')'*bracket)
+
+    def format_variables_dict(self, variables: Dict, indent=4, step=2, linebreak=True, colons=True) -> str:
+        variables = {__k: self.format_variables(__v, linebreak=False, bracket=False) for __k, __v in self.variables.items()}
+        __formatted = self.format(variables, indent, step, linebreak=False, colons=colons)
+        return '('+(('\n'+' '*indent) if linebreak else '')+__formatted+(('\n'+' '*max(indent-step,0)) if linebreak else '')+')'
 
 
 class GraphQLFields(GraphQLObject):
@@ -147,26 +150,26 @@ class GraphQLSelection(GraphQLObject):
     name = str()
     alias = str()
     variables = None
-    fields = list()
+    fields = None
 
-    def __init__(self, name: str, variables: Union[Dict,List], fields: Union[Dict,List], alias=str(), typename=True):
+    def __init__(self, name: str, variables: Union[Dict,List], fields: Optional[Union[Dict,List]]=None, alias=str(), typename=True):
         self.name = name
         self.alias = alias
         self.variables = variables if isinstance(variables, GraphQLVariables) else GraphQLVariables(variables)
-        self.fields = fields if isinstance(fields, GraphQLFields) else GraphQLFields(fields, typename)
+        self.fields = (fields if isinstance(fields, GraphQLFields) else GraphQLFields(fields, typename)) if fields is not None else None
         CustomDict.__init__(self)
 
     def get_variables(self) -> Union[Dict,List]:
         return self.variables.get_variables()
 
     def get_fields(self) -> Union[Dict,List]:
-        return self.fields.get_fields()
+        return self.fields.get_fields() if self.fields is not None else list()
 
     def generate_selection(self, indent=2, step=2, variables=dict(), fields=dict(), **kwargs) -> str:
         name = f"{self.name}: {self.alias}" if self.alias else self.name
         variables = self.variables.generate_variables(indent+step, step, **variables)
-        fields = self.fields.generate_fields(indent+step, step, **fields)
-        return '{\n'+(' '*indent)+f"{name}{variables} {fields}"+'\n'+(' '*max(indent-step,0))+'}'
+        fields = (' '+self.fields.generate_fields(indent+step, step, **fields)) if self.fields is not None else str()
+        return '{\n'+(' '*indent)+f"{name}{variables}{fields}"+'\n'+(' '*max(indent-step,0))+'}'
 
 
 class GraphQLFragment(GraphQLObject):
@@ -213,14 +216,16 @@ class GraphQLOperation(GraphQLObject):
         return get_json_values(fields, GraphQLFragment)
 
     def generate_data(self, query_options=dict()) -> Dict:
-        query = self.generate_query(**query_options)
-        return dict(operationName=self.operation, variables=self.variables, query=query)
+        data = dict(operationName=self.operation) if self.operation else dict()
+        data["variables"] = self.variables
+        data["query"] = self.generate_query(**query_options)
+        return data
 
-    def generate_query(self, selection=dict(), fragment=dict(), prefix=str(), suffix=str(), **kwargs) -> str:
+    def generate_query(self, command="query", selection=dict(), fragment=dict(), prefix=str(), suffix=str(), **kwargs) -> str:
         signature = self.generate_signature()
         selection = self.selection.generate_selection(**selection)
         fragments = self.generate_fragments(**fragment)
-        return prefix+f"query {signature} {selection}{fragments}"+suffix
+        return prefix+f"{command} {signature} {selection}{fragments}"+suffix
 
     def generate_signature(self) -> str:
         return self.operation+'('+', '.join([f"${__name}: {__type}" for __name, __type in self.types.items()])+')'
