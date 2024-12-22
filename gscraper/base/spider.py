@@ -543,6 +543,7 @@ class Spider(RequestSession, Iterator, Parser):
     pageLimit = 0
     interval = None
     fromNow = None
+    timeout = None
     ssl = None
     numRetries = 0
     delay = 1.
@@ -806,7 +807,7 @@ class Spider(RequestSession, Iterator, Parser):
                 session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                 exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                 close=True, **context) -> requests.Response:
-        response = session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl)
+        response = session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options())
         self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
         if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
         return response.close() if close else response
@@ -817,7 +818,7 @@ class Spider(RequestSession, Iterator, Parser):
                         session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                         exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                         **context) -> int:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status_code
@@ -828,7 +829,7 @@ class Spider(RequestSession, Iterator, Parser):
                         session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                         exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                         **context) -> bytes:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.content
@@ -839,7 +840,7 @@ class Spider(RequestSession, Iterator, Parser):
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                     **context) -> str:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.text
@@ -850,7 +851,7 @@ class Spider(RequestSession, Iterator, Parser):
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                     **context) -> JsonData:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.json()
@@ -861,7 +862,7 @@ class Spider(RequestSession, Iterator, Parser):
                         session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                         exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                         **context) -> Dict:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
@@ -872,7 +873,7 @@ class Spider(RequestSession, Iterator, Parser):
                         session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                         exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                         features="html.parser", **context) -> Tag:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(response.text, features)
@@ -883,10 +884,13 @@ class Spider(RequestSession, Iterator, Parser):
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                     table_type="auto", table_idx=0, table_header=0, engine=None, **context) -> pd.DataFrame:
-        with session.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return read_table(response.content, file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine)
+
+    def get_request_options(self) -> Dict:
+        return dict(timeout=self.timeout, verify=self.ssl)
 
     def encode_params(self, url: str, params: Optional[Dict]=None, encode: Optional[bool]=None) -> Tuple[str,Dict]:
         if not params: return url, None
@@ -1119,6 +1123,7 @@ class AsyncSpider(Spider, AsyncSession):
     pageLimit = 0
     interval = None
     fromNow = None
+    timeout = None
     ssl = None
     numRetries = 0
     delay = 1.
@@ -1253,7 +1258,7 @@ class AsyncSpider(Spider, AsyncSession):
                         session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                         exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                         **context):
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
 
@@ -1263,7 +1268,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             **context) -> int:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.status
@@ -1274,7 +1279,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt",  valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             **context) -> bytes:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.read()
@@ -1285,7 +1290,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             encoding=None, **context) -> str:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.text(encoding=encoding)
@@ -1296,7 +1301,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             encoding=None, **context) -> JsonData:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return await response.json(encoding=encoding, content_type=None)
@@ -1307,7 +1312,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             **context) -> Dict:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return response.headers
@@ -1318,7 +1323,7 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             encoding=None, features="html.parser", **context) -> Tag:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return BeautifulSoup(await response.text(encoding=encoding), features)
@@ -1329,10 +1334,14 @@ class AsyncSpider(Spider, AsyncSession):
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
                             table_type="auto", table_idx=0, table_header=0, engine=None, **context) -> pd.DataFrame:
-        async with session.request(method, url, **messages, allow_redirects=allow_redirects, ssl=self.ssl) as response:
+        async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
             return read_table(await response.read(), file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine)
+
+    def get_request_options(self) -> Dict:
+        timeout = aiohttp.ClientTimeout(total=self.timeout) if self.timeout is not None else None
+        return dict(timeout=timeout, ssl=self.ssl)
 
     def validate_status(self, response: aiohttp.ClientResponse, how: Literal["error","interrupt"]="interrupt",
                         valid: Optional[Status]=None, invalid: Optional[Status]=None):
@@ -1395,6 +1404,7 @@ class LoginSpider(requests.Session, Spider):
     operation = "login"
     host = str()
     where = WHERE
+    timeout = None
     ssl = None
     cookie = str()
 
@@ -1444,7 +1454,7 @@ class LoginSpider(requests.Session, Spider):
     def request_url(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context):
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
@@ -1453,7 +1463,7 @@ class LoginSpider(requests.Session, Spider):
     def request_status(self, method: str, url: str, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
                         headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> int:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
@@ -1463,7 +1473,7 @@ class LoginSpider(requests.Session, Spider):
     def request_content(self, method: str, url: str, messages: Dict=dict(),
                         params=None, encode: Optional[bool]=None, data=None, json=None,
                         headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> bytes:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
@@ -1473,7 +1483,7 @@ class LoginSpider(requests.Session, Spider):
     def request_text(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> str:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return response.text
@@ -1482,7 +1492,7 @@ class LoginSpider(requests.Session, Spider):
     def request_json(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> JsonData:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
@@ -1492,7 +1502,7 @@ class LoginSpider(requests.Session, Spider):
     def request_headers(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, **context) -> Dict:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             self.log_response_text(response, origin)
@@ -1502,7 +1512,7 @@ class LoginSpider(requests.Session, Spider):
     def request_source(self, method: str, url: str, messages: Dict=dict(),
                     params=None, encode: Optional[bool]=None, data=None, json=None,
                     headers=None, cookies=str(), *args, origin=str(), allow_redirects=True, features="html.parser", **context) -> Tag:
-        with self.request(method, url, **messages, allow_redirects=allow_redirects, verify=self.ssl) as response:
+        with self.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, origin=origin))
             self.logger.debug(log_messages(cookies=self.get_cookies(encode=False), origin=origin, dump=self.logJson))
             return BeautifulSoup(response.text, features)
@@ -1681,6 +1691,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     pageLimit = 0
     interval = None
     fromNow = None
+    timeout = None
     ssl = None
     numRetries = 0
     delay = 1.
@@ -1846,6 +1857,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     pageLimit = 0
     interval = None
     fromNow = None
+    timeout = None
     ssl = None
     numRetries = 0
     delay = 1.
