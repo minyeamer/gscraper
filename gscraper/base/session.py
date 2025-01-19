@@ -632,10 +632,14 @@ class BaseSession(CustomDict):
         file_name = self._validate_file(file_name)
         data = self.rename_save_data(to_dataframe(data), rename)
         try: data.to_excel(file_name, sheet_name=sheet_name, index=False)
-        except: self._write_dataframe(data, file_name)
+        except: self._safe_save_dataframe(data, file_name, sheet_name)
 
     def rename_save_data(self, data: pd.DataFrame, rename: Union[Literal["name","desc"],Dict]="desc", **context) -> pd.DataFrame:
         return data.rename(columns=(rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)))
+
+    def _safe_save_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
+        try: self._write_dataframe(data, file_name, sheet_name)
+        except: data.to_csv(os.path.splitext(file_name)[0]+".csv", sheet_name=sheet_name, index=False)
 
     def _write_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
         writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_kwargs={"options":{"strings_to_urls":False}})

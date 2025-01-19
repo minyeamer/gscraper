@@ -24,4 +24,4 @@ db-dtypes>=1.2.0
 holidays>=0.43
 workalendar>=17.0.0
 
-# twine>=4.0.2
+# twine>=6.0.1
