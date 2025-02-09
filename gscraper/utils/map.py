@@ -128,14 +128,14 @@ def to_dict(__object: MappingData, orient: Optional[Literal["dict","list","index
     if isinstance(__object, Dict): return __object
     elif is_records(__object, empty=True): return chain_dict(__object, keep="first")
     elif isinstance(__object, pd.DataFrame):
-        return fillna_dict(__object.to_dict(orient), value=None, fill_empty=True, depth=depth)
+        return fillna_dict(__object.to_dict(orient), depth=depth)
     else: return dict()
 
 
 def to_records(__object: MappingData, depth=1) -> Records:
     if is_records(__object, empty=True): return __object
     elif isinstance(__object, pd.DataFrame):
-        return fillna_records(__object.to_dict("records"), value=None, fill_empty=True, depth=depth)
+        return fillna_records(__object.to_dict("records"), depth=depth)
     elif isinstance(__object, Dict): return [__object]
     else: return list()
 
@@ -1287,7 +1287,7 @@ def get_index(__s: IndexedSequence, values: _VT, default=None, if_null: Literal[
 def get_scala(__object, index: Optional[int]=0, default=None, random=False) -> _VT:
     if not is_array(__object): return __object
     elif isinstance(__object, Set): return __object.copy().pop()
-    elif __object and random: return rand.choice(__object) if __object else default
+    elif random: return rand.choice(__object) if __object else default
     else: return iloc(__object, index, default=default)
 
 
@@ -1436,6 +1436,16 @@ def merge_subset(left: pd.DataFrame, right: pd.DataFrame, how: Literal["left","r
     return df
 
 
+def merge_unique(left: pd.DataFrame, right: pd.DataFrame, drop: Literal["left","right"]="right",
+                how: Literal["left","right","outer","inner","cross"]="inner", on: Optional[IndexLabel]=None) -> pd.DataFrame:
+    if set(left.columns) == set(right.columns):
+        return left if drop == "right" else right
+    elif drop == "right":
+        right = right[diff(right.columns, diff(left.columns, cast_list(on)))]
+    else: left = left[diff(left.columns, diff(right.columns, cast_list(on)))]
+    return left.merge(right, how=how, on=on)
+
+
 def unroll_df(df: pd.DataFrame, columns: IndexLabel, values: _VT) -> pd.DataFrame:
     columns, values = cast_tuple(columns), cast_tuple(values)
     __get = lambda row: [row[__value] for __value in values]
@@ -1457,8 +1467,8 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
 ###################################################################
 
 def read_table(io: Union[bytes,str], file_type: Literal["auto","html","xlsx","csv"]="auto",
-            sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: TypeMap=None, engine=None,
-            parse_dates: IndexLabel=None, columns: Optional[IndexLabel]=list(), default=None,
+            sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: Optional[TypeMap]=None, engine=None,
+            parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
             if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
             rename: RenameMap=dict(), regex_path=False, reverse_path=False) -> Union[Data,Dict[str,Data]]:
     file_type = _get_table_type(io, file_type)
@@ -1476,7 +1486,7 @@ def _get_table_type(io: Union[bytes,str], file_type: Literal["auto","html","xlsx
 
 
 def _read_table(io: BytesIO, file_type: Literal["auto","html","xlsx","csv"]="auto",
-                sheet_name: Optional[Union[str,int,List]]=0, dtype: TypeMap=None, engine=None, **kwargs) -> pd.DataFrame:
+                sheet_name: Optional[Union[str,int,List]]=0, dtype: Optional[TypeMap]=None, engine=None, **kwargs) -> pd.DataFrame:
     if file_type == "html": return pd.read_html(io, converters=dtype, **kwargs)[cast_int(sheet_name)]
     elif file_type == "xlsx":
         if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, dtype=dtype, **kwargs)
@@ -1523,8 +1533,8 @@ def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
 
 
 def read_table_bulk(dir: str, file_pattern=None, file_type: Literal["auto","html","xlsx","csv"]="auto",
-                    sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: TypeMap=None, engine=None,
-                    parse_dates: IndexLabel=None, columns: Optional[IndexLabel]=list(), default=None,
+                    sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: Optional[TypeMap]=None, engine=None,
+                    parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
                     if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
                     rename: RenameMap=dict(), progress=True, start=None, size=None) -> pd.DataFrame:
     kwargs = drop_dict(locals(), ["dir","file_pattern","progress","start","size"])
