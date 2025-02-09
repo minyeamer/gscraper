@@ -6,7 +6,7 @@ from gscraper.base.session import BaseSession
 from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, DateFormat, RenameMap, TypeMap
 from gscraper.base.types import TabularData, PostData, from_literal
 
-from gscraper.utils.cast import cast_list, cast_date, cast_datetime, cast_datetime_format
+from gscraper.utils.cast import cast_float, cast_list, cast_date, cast_datetime, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
 from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table, arg_and
@@ -204,12 +204,13 @@ class GspreadReadContext(OptionalDict):
                 if_null: Literal["drop","pass"]="pass", head=1, headers: Optional[IndexLabel]=None,
                 str_cols: Optional[NumericiseIgnore]=None, return_type: Optional[TypeHint]="dataframe",
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                size: Optional[int]=None, name=str(), **kwargs):
+                convert_dtypes=True, size: Optional[int]=None, name=str(), **kwargs):
         super().__init__(key=key, sheet=sheet,
             optional=dict(
                 fields=fields, default=default, if_null=if_null, head=head, headers=headers,
-                str_cols=str_cols, return_type=return_type, rename=rename, to=to, size=size, name=name, **kwargs),
-            null_if=dict(if_null="pass", head=1, to="name", return_type="dataframe", name=str()))
+                str_cols=str_cols, return_type=return_type, rename=rename, to=to, convert_dtypes=convert_dtypes,
+                size=size, name=name, **kwargs),
+            null_if=dict(if_null="pass", head=1, to="name", return_type="dataframe", convert_dtypes=True, name=str()))
 
 
 class GspreadQueryContext(GspreadReadContext):
@@ -218,10 +219,10 @@ class GspreadQueryContext(GspreadReadContext):
                 head=1, headers: Optional[IndexLabel]=None, str_cols: Optional[NumericiseIgnore]=None,
                 arr_cols: Optional[IndexLabel]=None, as_records=False, as_frame=False,
                 rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                size: Optional[int]=None, name=str(), **kwargs):
+                convert_dtypes=True, size: Optional[int]=None, name=str(), **kwargs):
         return_type = "records" if as_records else "dataframe"
         super().__init__(
-            key, sheet, fields, default, if_null, head, headers, str_cols, return_type, rename, to, size, name)
+            key, sheet, fields, default, if_null, head, headers, str_cols, return_type, rename, to, convert_dtypes, size, name)
         self.update_notna(
                 axis=axis, dropna=dropna, drop_empty=drop_empty, unique=unique, arr_cols=arr_cols,
                 as_records=as_records, as_frame=as_frame, **kwargs,
@@ -322,9 +323,9 @@ class GoogleQueryReader(BaseSession):
                     if_null: Literal["drop","pass"]="pass", head=1, headers=None,
                     str_cols: NumericiseIgnore=list(), return_type: Optional[TypeHint]="dataframe",
                     rename: Optional[RenameMap]=None, to: Optional[Literal["desc","name"]]="name",
-                    size: Optional[int]=None, name=str(), account: Account=dict(), **context) -> TabularData:
+                    convert_dtypes=True, size: Optional[int]=None, name=str(), account: Account=dict(), **context) -> TabularData:
         rename_map = rename if rename else self.get_rename_map(to=to, query=True)
-        kwargs = dict(numericise_ignore=str_cols, return_type=return_type, rename=rename_map, account=account)
+        kwargs = dict(numericise_ignore=str_cols, return_type=return_type, rename=rename_map, convert_dtypes=convert_dtypes, account=account)
         data = read_gspread(key, sheet, fields, default, if_null, head, headers, **kwargs)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
@@ -634,32 +635,18 @@ def gs_loaded(func):
     return wrapper
 
 
-def _cast_boolean(__object) -> Union[bool,Any]:
-    return {"TRUE":True, "FALSE":False}.get(__object, __object)
-
-
-def _to_excel_date(__object) -> Union[int,Any]:
-    if isna(__object): return None
-    elif not isinstance(__object, dt.date): return __object
-    offset = 693594
-    days = __object.toordinal() - offset
-    if isinstance(__object, dt.datetime):
-        seconds = (__object.hour*60*60 + __object.minute*60 + __object.second)/(24*60*60)
-        return days + seconds
-    return days
-
-
 @gs_loaded
 def read_gspread(key: str, sheet: str, fields: Optional[IndexLabel]=list(), default=None,
                 if_null: Literal["drop","pass"]="pass", head=1, headers=None, numericise_ignore: NumericiseIgnore=list(),
-                reorder=True, return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict(),
+                reorder=True, return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict(), convert_dtypes=True,
                 account: Account=dict(), gs: Optional[Worksheet]=None) -> TabularData:
-    if isinstance(numericise_ignore, bool): numericise_ignore = ["all"] if numericise_ignore else list()
+    if isinstance(numericise_ignore, bool):
+        numericise_ignore = ["all"] if numericise_ignore else list()
     data = gs.get_all_records(head=head, default_blank=default, numericise_ignore=numericise_ignore, expected_headers=headers)
     data = convert_data(data, return_type)
     data = rename_data(data, rename)
     data = filter_data(data, cast_list(fields), default=default, if_null=if_null, reorder=reorder)
-    return apply_data(data, apply=(lambda x: cast_datetime_format(x, default=_cast_boolean(x))), all_keys=True)
+    return apply_data(data, apply=_convert_dtype, all_keys=True) if convert_dtypes else data
 
 
 @gs_loaded
@@ -682,6 +669,26 @@ def update_gspread(key: str, sheet: str, data: TabularData, col='A', row=0, cell
         cell = col+str(row if row else len(gs.get_all_records())+2)
         gs.add_rows(len(values))
     gs.update(cell, values)
+
+
+def _convert_dtype(__value) -> Any:
+    if isinstance(__value, str):
+        if __value == "TRUE": return True
+        elif __value == "FALSE": return False
+        elif re.match(r"^\d[\d.]*%$", __value): return cast_float(__value) / 100
+        else: return cast_datetime_format(__value, default=__value)
+    else: return __value
+
+
+def _to_excel_date(__value) -> Union[int,Any]:
+    if isna(__value): return None
+    elif not isinstance(__value, dt.date): return __value
+    offset = 693594
+    days = __value.toordinal() - offset
+    if isinstance(__value, dt.datetime):
+        seconds = (__value.hour*60*60 + __value.minute*60 + __value.second)/(24*60*60)
+        return days + seconds
+    return days
 
 
 ###################################################################
