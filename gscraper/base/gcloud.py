@@ -63,7 +63,7 @@ UPLOAD = lambda name=str(): f"upload_{name}" if name else "upload"
 ###################################################################
 
 INVALID_QUERY_MSG = "To update data, parameters for source and destination are required."
-UPLOAD_GBQ_MSG = lambda table, partitioned=False: f"Uploading data to '{table}'" + (" by partition" if partitioned else str())
+UPLOAD_GBQ_MSG = lambda table: f"Uploading data to '{table}' table"
 
 UPLOAD_STATUS_TITLE = "▷ Upload Status"
 UPLOAD_STATUS_MSG = lambda idx, name, type, status=True: f'({idx}) "{name}" {type} {"✅" if status else "❌"}'
@@ -389,11 +389,11 @@ class GspreadUpdateContext(OptionalDict):
 
 class BigQueryPartition(OptionalDict):
     def __init__(self, field: str, type: Literal["date","datetime","number"]="date",
-                unit: Literal["auto","hour","day","month","year","date","none"]="auto",
-                left=None, right=None, value=None, limited=True):
+                unit: Literal["auto","hour","day","month","year"]="auto",
+                left=None, right=None, value=None, limited=True, drop_partition=False):
         has_value = (left is not None) or (right is not None) or (value is not None)
         super().__init__(field=field, type=type, unit=unit,
-            optional=dict(left=left, right=right, value=value, limited=limited, has_value=has_value))
+            optional=dict(left=left, right=right, value=value, limited=limited, drop_partition=drop_partition, has_value=has_value))
 
 
 class BigQueryUploadContext(OptionalDict):
@@ -710,7 +710,7 @@ def execute_query(query: str, project_id=str(), account: Account=dict()) -> RowI
 
 
 def make_select_query(table: str, columns: IndexLabel=list(), field=str(), type: Literal["date","datetime","number"]="date",
-                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs):
+                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs) -> str:
     query = f"SELECT {', '.join(columns) if columns else '*'} FROM `{table}`"
     if not field: return query + ';'
     elif (not limited) or has_value:
@@ -719,7 +719,7 @@ def make_select_query(table: str, columns: IndexLabel=list(), field=str(), type:
 
 
 def make_delete_query(table: str, field=str(), type: Literal["date","datetime","number"]="date",
-                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs):
+                    left=None, right=None, value=None, limited=True, has_value=True, **kwargs) -> str:
     query = f"DELETE FROM `{table}`"
     if not field: return query + ' ' + "WHERE TRUE" + ';'
     elif (not limited) or has_value:
@@ -727,12 +727,10 @@ def make_delete_query(table: str, field=str(), type: Literal["date","datetime","
     else: raise ValueError(INVALID_MSG(PARTITION_FILTER))
 
 
-def get_partition_filter(field=str(), type: Literal["date","datetime","number"]="date",
-                        left=None, right=None, value=None, **kwargs):
-    if any(map(lambda x: isinstance(x, dt.date), [left,right,value])):
-        if type == "datetime": field = f"DATE({field})"
-        left, right, value = map(lambda x: f"'{x}'" if isinstance(x, dt.date) else None, [left,right,value])
-    if value is not None:
+def get_partition_filter(field=str(), type: Literal["date","datetime","number"]="date", left=None, right=None, value=None, **kwargs) -> str:
+    if type in ("date","datetime"):
+        return _get_datetime_partition_filter(field, type, left, right, value)
+    elif value is not None:
         return f"WHERE {field} = {value}"
     elif (left is not None) and (right is not None):
         if left == right: return f"WHERE {field} = {left}"
@@ -741,6 +739,22 @@ def get_partition_filter(field=str(), type: Literal["date","datetime","number"]=
         return f"WHERE {field} >= {left}"
     elif right is not None:
         return f"WHERE {field} <= {right}"
+    else: return "WHERE TRUE"
+
+
+def _get_datetime_partition_filter(field=str(), dtype: Literal["date","datetime"]="date", left=None, right=None, value=None) -> str:
+    def set_filed(field: str, dtype: Literal["date","datetime"], value: dt.date) -> str:
+        return f"DATE({field})" if (dtype == "datetime") and not isinstance(value, dt.datetime) else field
+    if isinstance(value, dt.date):
+        return f"WHERE {set_filed(field, dtype, value)} = '{value}'"
+    elif isinstance(left, dt.date) and isinstance(right, dt.date) and (type(left) == type(right)):
+        field = set_filed(field, dtype, left)
+        if left == right: return f"WHERE {field} = '{left}'"
+        else: return f"WHERE {field} BETWEEN '{left}' AND '{right}'"
+    elif isinstance(left, dt.date):
+        return f"WHERE {set_filed(field, dtype, left)} >= '{left}'"
+    elif isinstance(right, dt.date):
+        return f"WHERE {set_filed(field, dtype, right)} <= '{right}'"
     else: return "WHERE TRUE"
 
 
@@ -758,20 +772,25 @@ def upload_gbq(table: str, project_id: str, data: pd.DataFrame, if_exists: Liter
     if if_exists == "replace":
         client.query(make_delete_query(table, **partition))
     job_config = LoadJobConfig(write_disposition="WRITE_APPEND")
-    iterator = groupby_partition(data, **partition)
-    for __data in tqdm(iterator, desc=UPLOAD_GBQ_MSG(table, partitioned=(len(iterator) > 1)), disable=(not progress)):
+    iterator = make_gbq_iterator(data, **partition) if _is_partitioned_data(data, partition) else [data]
+    for __data in tqdm(iterator, desc=UPLOAD_GBQ_MSG(table), disable=(not progress)):
         client.load_table_from_dataframe(__data, f"{project_id}.{table}", job_config=job_config)
 
 
-def groupby_partition(data: pd.DataFrame, field=str(),
-                    unit: Literal["auto","hour","day","month","year","none"]="auto", **kwargs) -> Sequence[pd.DataFrame]:
-    if (not field) or (field not in data) or (unit == "none"):
-        return [data]
-    elif unit.lower() in DATE_UNIT:
+def _is_partitioned_data(data: pd.DataFrame, partition: BigQueryPartition=dict()) -> bool:
+    return isinstance(partition, Dict) and partition.get("field") and (partition["field"] in data)
+
+
+def make_gbq_iterator(data: pd.DataFrame, field: str, type: Literal["date","datetime","number"]="date",
+                    unit: Literal["auto","hour","day","month","year"]="auto",
+                    drop_partition=False, **kwargs) -> Iterable[pd.DataFrame]:
+    if (type in ("date","datetime")) and (unit.lower() in DATE_UNIT):
         if unit == "day": data["_PARTITIONTIME"] = data[field].apply(get_date)
         else: data["_PARTITIONTIME"] = data[field].apply(lambda x: get_datetime(x, unit=unit))
-        return [data[data["_PARTITIONTIME"]==part].drop(columns=["_PARTITIONTIME"]) for part in sorted(data["_PARTITIONTIME"].unique())]
-    else: return [data[data[field]==part] for part in sorted(data[field].unique())]
+        field, drop_partition = "_PARTITIONTIME", True
+    for __part in sorted(data[field].unique()):
+        if not drop_partition: yield data[data[field]==__part]
+        else: yield data[data[field]==__part].drop(columns=[field])
 
 
 def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, primary_key: List[str],
