@@ -23,8 +23,8 @@ from google.cloud import bigquery
 from google.cloud.bigquery.table import RowIterator
 from google.cloud.bigquery.job import LoadJobConfig
 
-from abc import ABCMeta
 from tqdm import tqdm
+import abc
 import copy
 import functools
 import os
@@ -310,7 +310,7 @@ class GoogleQueryList(TypedRecords):
 
 
 class GoogleQueryReader(BaseSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "googleQueryReader"
 
     def read_data(self, context: Dict, account: Account=dict()) -> TabularData:
@@ -442,7 +442,7 @@ class GoogleUploadList(TypedRecords):
 
 
 class GoogleUploader(GoogleQueryReader):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "googleUploader"
     uploadStatus = dict()
 
@@ -465,7 +465,7 @@ class GoogleUploader(GoogleQueryReader):
         elif isinstance(uploadContext, GoogleCopyContext): return self._get_upload_target(uploadContext["upload"])
         else: return uploadContext.get(NAME, "unnamed") if isinstance(uploadContext, Dict) else "unnamed"
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def copy_data(self, read: Dict, upload: Dict, account: Account=dict(), **context) -> bool:
         read["rename"] = read.get("rename", self.get_rename_map(to=context.get("to", "name")))
         data = self.read_data(read, account)
@@ -483,7 +483,7 @@ class GoogleUploader(GoogleQueryReader):
     ###################### Google Spread Sheets #######################
     ###################################################################
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def upload_gspread(self, key: str, sheet: str, data: pd.DataFrame, columns: IndexLabel=list(),
                         mode: Literal["append","replace","ignore","upsert"]="append", primary_key: List[str]=list(),
                         set_date=None, cell=str(), read=None, name=str(), account: Account=dict(), **context) -> bool:
@@ -510,7 +510,7 @@ class GoogleUploader(GoogleQueryReader):
     ######################### Google BigQuery #########################
     ###################################################################
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def upload_gbq(self, table: str, project_id: str, data: pd.DataFrame, columns: IndexLabel=list(),
                     mode: Literal["append","replace","ignore","upsert"]="append", primary_key: List[str]=list(),
                     partition=None, set_date=None, read=None, progress=True, name=str(), account: Account=dict(), **context) -> bool:

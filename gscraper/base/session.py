@@ -14,7 +14,7 @@ from gscraper.utils import isna, isna_plus, notna, notna_plus, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
 from gscraper.utils.date import now, today, get_datetime, get_datetime_pair, get_date, get_date_pair, set_date
 from gscraper.utils.date import is_daily_frequency, get_date_range
-from gscraper.utils.logs import CustomLogger, dumps_data, log_exception, log_data
+from gscraper.utils.logs import CustomLogger, get_log_level, dumps_data, log_error, log_data
 from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import concat, rename_value, regex_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
@@ -22,10 +22,10 @@ from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain
 from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
 from gscraper.utils.map import get_value, filter_data, set_data, isin_data, chain_exists, groupby_data, is_single_selector
 
-from abc import ABCMeta
 from ast import literal_eval
 from math import ceil
 from itertools import product
+import abc
 import copy
 import functools
 import logging
@@ -43,7 +43,7 @@ import re
 CHECKPOINT = [
     "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count",
     "redirect", "request", "response", "parse", "map", "schema", "field", "group",
-    "apply", "[origin]_apply" "match", "[origin]_match", "login", "exception"]
+    "apply", "[origin]_apply" "match", "[origin]_match", "login", "error"]
 CHECKPOINT_PATH = "saved/"
 
 PAGE_ITERATOR = ["page", "start", "dataSize"]
@@ -155,7 +155,7 @@ UPDATE_DATE, UPDATE_TIME = "updateDate", "updateTime"
 ###################################################################
 
 class Function(OptionalDict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
 
     def raise_ctype_error(self, __object, __type=str()):
         __type = __type if __type else self.__class__.__name__
@@ -463,7 +463,7 @@ class Info(TypedDict):
 ###################################################################
 
 class BaseSession(CustomDict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "session"
     tzinfo = TZINFO
     countryCode = COUNTRY_CODE
@@ -473,9 +473,9 @@ class BaseSession(CustomDict):
 
     def __init__(self, tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None, **context):
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, **context):
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, localSave, debugPoint, killPoint, extraSave)
         super().__init__(context)
 
     def set_init_time(self, tzinfo: Optional[Timezone]=None, countryCode=str(),
@@ -486,16 +486,16 @@ class BaseSession(CustomDict):
         self.initTime = now(tzinfo=self.tzinfo, droptz=True)
 
     def set_logger(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None):
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None):
         logName = logName if logName else self.operation
-        self.logLevel = int(logLevel) if str(logLevel).isdigit() else logging.getLevelName(str(logLevel).upper())
+        self.logLevel = get_log_level(logLevel)
         self.logFile = logFile
         self.logJson = bool(logFile)
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
         self.localSave = localSave
-        self.debug = cast_list(debug)
+        self.debugPoint = cast_list(debugPoint)
+        self.killPoint = cast_list(killPoint)
         self.extraSave = cast_list(extraSave)
-        self.interrupt = cast_list(interrupt)
 
     def from_locals(self, locals: Dict=dict(), drop: _KT=list(), **context) -> Context:
         drop_keys = cast_list(drop)
@@ -602,13 +602,13 @@ class BaseSession(CustomDict):
 
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
-        if self.debug and self._isin_log_list(point, self.debug):
+        if self.debugPoint and self._isin_log_list(point, self.debugPoint):
             self.logger.warning(dict(point=f"({point})", **dumps_data(msg, limit=0)))
         if self.extraSave and self._isin_log_list(point, self.extraSave) and notna(save):
             save, ext = self._validate_extension(save, ext)
             self._validate_dir(CHECKPOINT_PATH)
             self.save_data(save, prefix=CHECKPOINT_PATH+str(point).replace('.','_'), ext=ext)
-        if self.interrupt and self._isin_log_list(point, self.interrupt):
+        if self.killPoint and self._isin_log_list(point, self.killPoint):
             raise UserInterrupt(USER_INTERRUPT_MSG(where))
 
     def save_data(self, data: Data, prefix=str(), suffix="now", ext: Optional[TypeHint]=None):
@@ -698,25 +698,28 @@ class BaseSession(CustomDict):
     ########################### Log Managers ##########################
     ###################################################################
 
-    def catch_exception(func):
+    def ignore_exception(func):
         @functools.wraps(func)
         def wrapper(self: BaseSession, *args, **context):
             try: return func(self, *args, **context)
             except Exception as exception:
-                return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
+                return self.pass_exception(exception, func, msg={"args":args, "context":context})
         return wrapper
 
     def pass_exception(self, exception: Exception, func: Callable, msg: Dict) -> Any:
-        self.log_errors(func=func, msg=msg)
-        if ("exception" in self.debug) or ("all" in self.debug):
-            self.checkpoint("exception", where=func.__name__, msg=msg)
-            raise exception
+        self.log_error(func, msg)
+        self.debug_error(exception, func, msg)
         return init_origin(func)
 
-    def log_errors(self, func: Callable, msg: Dict):
+    def log_error(self, func: Callable, msg: Dict):
         func_name = f"{func.__name__}({self.__class__.__name__})"
-        self.logger.error(log_exception(func_name, json=self.logJson, **msg))
+        self.logger.error(log_error(func_name, json=self.logJson, **msg))
         self.errors.append(msg)
+
+    def debug_error(self, exception: Exception, func: Callable, msg: Dict):
+        if ("error" in self.debugPoint) or ("all" in self.debugPoint):
+            self.checkpoint("exception", where=func.__name__, msg=msg)
+            raise exception
 
     ###################################################################
     ############################ Print Log ############################
@@ -798,7 +801,7 @@ class Iterator(CustomDict):
         if keys_only: return query
         else: return kloc(context, query, if_null=if_null, values_only=values_only)
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def set_iterator(self, *args: Sequence, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
                     iterateUnit: Optional[int]=None, pagination: Pagination=False, interval: Optional[Timedelta]=None,
                     indexing=True, **context) -> Tuple[List[Context],Context]:
@@ -1018,7 +1021,7 @@ class Flow(TypedRecords):
 ###################################################################
 
 class Mapper(BaseSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "mapper"
     pageFrom = 1
     offsetFrom = 1
@@ -1422,7 +1425,7 @@ def _is_single_path_by_data(data: ResponseData, path: _KT, hier=False) -> bool:
 ###################################################################
 
 class SequenceMapper(Mapper):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "mapper"
     pageFrom = 1
     offsetFrom = 1
@@ -1564,7 +1567,7 @@ class SequenceMapper(Mapper):
 ###################################################################
 
 class Parser(SequenceMapper):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "parser"
     fields = list()
     iterateCount = dict()

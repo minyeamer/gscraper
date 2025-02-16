@@ -30,10 +30,10 @@ from gscraper.utils.alert import format_date_range as format_alert_date_range
 from gscraper.utils.alert import format_value as format_alert_value
 from gscraper.utils.request import get_cookies, decode_cookies, encode_params
 
-from abc import ABCMeta, abstractmethod
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
 from tqdm.auto import tqdm
+import abc
 import asyncio
 import aiohttp
 import copy
@@ -52,6 +52,8 @@ import pandas as pd
 import re
 
 
+CONTINUE, RETURN = 0, 1
+
 GET = "GET"
 POST = "POST"
 OPTIONS = "OPTIONS"
@@ -66,10 +68,10 @@ MAX_ASYNC_TASK_LIMIT = 100
 MAX_REDIRECT_LIMIT = 10
 
 TIME_UNIQUE = ["tzinfo", "countryCode", "datetimeUnit"]
-LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debug", "extraSave", "interrupt"]
+LOG_UNIQUE = ["logName", "logLevel", "logFile", "localSave", "debugPoint", "killPoint", "extraSave"]
 
 ITERATOR_UNIQUE = ["iterateUnit", "interval", "fromNow"]
-GCLOUD_UNIQUE = ["queryList", "uploadList", "alertInfo", "account"]
+UPLOAD_UNIQUE = ["queryList", "uploadList", "alertInfo", "account"]
 
 FILTER_UNIQUE = ["fields", "ranges", "returnType"]
 REQUEST_UNIQUE = ["numRetries", "delay", "cookies"]
@@ -80,7 +82,7 @@ REDIRECT_UNIQUE = ["apiRedirect", "redirectUnit", "redirectUrl", "authorization"
 ENCRYPTED_UNIQUE = ["encryptedKey", "decryptedKey"]
 PIPELINE_UNIQUE = ["globalProgress", "asyncProgress", "taskProgress"]
 
-PROXY_LOG = ["logLevel", "logFile", "debug", "extraSave", "interrupt"]
+PROXY_LOG = ["logLevel", "logFile", "debugPoint", "killPoint", "extraSave"]
 
 WORKER_CONFIG = (
     FILTER_UNIQUE + TIME_UNIQUE + PROXY_LOG + REQUEST_UNIQUE +
@@ -101,11 +103,11 @@ class AuthenticationError(ValueError):
 class ParameterError(ValueError):
     ...
 
-SPIDER_INTERRUPT = (UserInterrupt, RequestInterrupt, ParameterError)
+SPIDER_KILL = (UserInterrupt, RequestInterrupt, ParameterError)
 SPIDER_ERROR = (ForbiddenError, ParseError)
 
-ENCRYPTED_SESSION_INTERRUPT = (UserInterrupt, AuthenticationError, ParameterError)
-ENCRYPTED_SPIDER_INTERRUPT = (UserInterrupt, RequestInterrupt, AuthenticationError, ParameterError)
+ENCRYPTED_SESSION_KILL = (UserInterrupt, AuthenticationError, ParameterError)
+ENCRYPTED_SPIDER_KILL = (UserInterrupt, RequestInterrupt, AuthenticationError, ParameterError)
 
 
 ###################################################################
@@ -172,7 +174,7 @@ class RangeFilter(TypedRecords):
 ###################################################################
 
 class UploadSession(GoogleUploader):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "session"
     alertStatus = None
 
@@ -221,7 +223,7 @@ class UploadSession(GoogleUploader):
         elif self.uploadStatus: return '\n\n'+self.format_upload_status(**context)
         else: return str()
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def format_alert_key_value(self, data: Data, __key: str, name=str(), **context) -> Tuple[_KT,_VT]:
         if __key == "name":
             return __key, (name if isinstance(name, str) else self.operation)
@@ -263,7 +265,7 @@ class UploadSession(GoogleUploader):
 ###################################################################
 
 class RequestSession(UploadSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "session"
     fields = list()
@@ -271,6 +273,7 @@ class RequestSession(UploadSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = None
     mappedReturn = False
@@ -279,12 +282,12 @@ class RequestSession(UploadSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, localSave, debugPoint, killPoint, extraSave)
         self.set_request_variables(numRetries, delay, cookies)
         UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
 
@@ -373,18 +376,35 @@ class RequestSession(UploadSession):
 
     def retry_request(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, **context):
-            for count in reversed(range(self.numRetries+1)):
-                try: return func(self, *args, **context)
+        def wrapper(self: RequestSession, *args, numRetries: Optional[int]=None, **context):
+            numRetries = numRetries if isinstance(numRetries, int) else self.numRetries
+            for count in reversed(range(numRetries+1)):
+                try: return func(self, *args, numRetries=numRetries, retryCount=count, **context)
                 except Exception as exception:
-                    if self.is_interrupt(exception): raise exception
-                    elif (count == 0) or self.is_error(exception):
-                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
-                    else: self.sleep(context.get("delay"))
+                    exitCode, value = self.catch_exception(exception, func, args, context, numRetries, retryCount=count)
+                    if exitCode == RETURN: return value
+                    elif exitCode == CONTINUE: continue
+                    else: raise exception
         return wrapper
 
+    def catch_exception(self, exception: Exception, func: Callable, args: Arguments, context: Context,
+                        numRetries=0, retryCount=0) -> Tuple[int,Any]:
+        if self.is_interrupt(exception):
+            return self.interrupt(*args, exception=exception, func=func, numRetries=numRetries, retryCount=retryCount, **context)
+        elif self.is_kill(exception):
+            raise exception
+        elif (retryCount == 0) or self.is_error(exception):
+            return RETURN, self.pass_exception(exception, func, msg={"args":args, "context":context})
+        else: return CONTINUE, self.sleep(context.get("delay"))
+
+    def interrupt(self, *args, **context) -> Tuple[int,Any]:
+        return CONTINUE, None
+
     def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, UserInterrupt) or isinstance(exception, self.interruptType)
+        return isinstance(exception, self.interruptType)
+
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, UserInterrupt) or isinstance(exception, self.killType)
 
     def is_error(self, exception: Exception) -> bool:
         return isinstance(exception, ForbiddenError) or isinstance(exception, self.errorType)
@@ -474,7 +494,7 @@ class RequestSession(UploadSession):
         self.upload_result(data, uploadList, **context)
         self.alert_result(data, alertInfo, **context)
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def save_result(self, data: Data, **context):
         if not self.localSave: return
         file_name = self.get_save_name()+'_'+self.now("%Y%m%d%H%M%S")+".xlsx"
@@ -489,7 +509,7 @@ class RequestSession(UploadSession):
                 __data = self.rename_save_data(to_dataframe(__data), key=__key, **context)
                 __data.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def upload_result(self, data: Data, uploadList: GoogleUploadList=list(), **context):
         if not uploadList: return
         self.uploadStatus = dict()
@@ -500,7 +520,7 @@ class RequestSession(UploadSession):
                 else: self.upload_data(data[uploadContext[NAME]], [uploadContext], **context)
         else: self.upload_data(data, uploadList, **context)
 
-    @BaseSession.catch_exception
+    @BaseSession.ignore_exception
     def alert_result(self, data: Data, alertInfo: AlertInfo=dict(), **context) -> Status:
         if not alertInfo: return
         elif not isinstance(alertInfo, AlertInfo): alertInfo = AlertInfo(**alertInfo)
@@ -521,7 +541,7 @@ class RequestSession(UploadSession):
 ###################################################################
 
 class Spider(RequestSession, Iterator, Parser):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "spider"
     host = str()
@@ -548,6 +568,7 @@ class Spider(RequestSession, Iterator, Parser):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     responseType = "records"
     returnType = "records"
@@ -562,14 +583,14 @@ class Spider(RequestSession, Iterator, Parser):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, localSave, debugPoint, killPoint, extraSave)
         self.set_request_variables(numRetries, delay, cookies)
         self.set_spider_variables(fromNow, discard, progress)
         self.set_gather_message(where, which, by, message)
@@ -604,15 +625,15 @@ class Spider(RequestSession, Iterator, Parser):
     ############################# Override ############################
     ###################################################################
 
-    def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, SPIDER_KILL) or isinstance(exception, self.killType)
 
     def is_error(self, exception: Exception) -> bool:
         return isinstance(exception, SPIDER_ERROR) or isinstance(exception, self.errorType)
 
-    def log_errors(self, func: Callable, msg: Dict):
+    def log_error(self, func: Callable, msg: Dict):
         iterator = self.get_iterator(**msg.get("context", dict()))
-        super().log_errors(func=func, msg=(iterator if iterator else msg))
+        super().log_error(func=func, msg=(iterator if iterator else msg))
 
     def get_date(self, date: Optional[DateFormat]=None, if_null: Optional[Unit]=None, index=0, busdate=False) -> dt.date:
         if_null = if_null if if_null is not None else self.fromNow
@@ -673,8 +694,7 @@ class Spider(RequestSession, Iterator, Parser):
     ########################### Gather Data ###########################
     ###################################################################
 
-    @abstractmethod
-    @RequestSession.init_session
+    @abc.abstractmethod
     def crawl(self, *args, **context) -> Data:
         args, context = self.validate_params(locals())
         return self.gather(*args, **context)
@@ -720,8 +740,8 @@ class Spider(RequestSession, Iterator, Parser):
     def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
         if iterator:
-            return [self.fetch(**__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
-        else: return self.fetch(fields=fields, **context)
+            return [self.fetch(**__i, fields=fields, progress=progress, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        else: return self.fetch(fields=fields, progress=progress, **context)
 
     ###################################################################
     ########################### Gather Count ##########################
@@ -771,9 +791,7 @@ class Spider(RequestSession, Iterator, Parser):
     ########################### Request Data ##########################
     ###################################################################
 
-    @abstractmethod
-    @RequestSession.retry_request
-    @RequestSession.limit_request
+    @abc.abstractmethod
     def fetch(self, *args, **context) -> Data:
         ...
 
@@ -958,7 +976,7 @@ class Spider(RequestSession, Iterator, Parser):
                         fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
         iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
-        return [self.fetch_redirect(__i, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        return [self.fetch_redirect(__i, fields=fields, progress=progress, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
 
     def _get_redirect_data(self, iterator: List[Context], redirectUrl: str, authorization: str,
                             account: Account=dict(), **context) -> str:
@@ -988,7 +1006,7 @@ class Spider(RequestSession, Iterator, Parser):
 ###################################################################
 
 class AsyncSession(RequestSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = True
     operation = "session"
     fields = list()
@@ -997,6 +1015,7 @@ class AsyncSession(RequestSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = None
     mappedReturn = False
@@ -1005,12 +1024,12 @@ class AsyncSession(RequestSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, localSave, debugPoint, killPoint, extraSave)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
         UploadSession.__init__(self, queryList, uploadList, alertInfo, **context)
 
@@ -1074,15 +1093,29 @@ class AsyncSession(RequestSession):
 
     def retry_request(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSession, *args, **context):
-            for count in reversed(range(self.numRetries+1)):
-                try: return await func(self, *args, **context)
+        async def wrapper(self: AsyncSession, *args, numRetries: Optional[int]=None, **context):
+            numRetries = numRetries if isinstance(numRetries, int) else self.numRetries
+            for count in reversed(range(numRetries+1)):
+                try: return await func(self, *args, numRetries=numRetries, retryCount=count, **context)
                 except Exception as exception:
-                    if self.is_interrupt(exception): raise exception
-                    elif (count == 0) or self.is_error(exception):
-                        return self.pass_exception(exception, func=func, msg={"args":args, "context":context})
-                    else: await self.async_sleep(context.get("delay"))
+                    exitCode, value = await self.catch_exception(exception, func, args, context, numRetries, retryCount=count)
+                    if exitCode == RETURN: return value
+                    elif exitCode == CONTINUE: continue
+                    else: raise exception
         return wrapper
+
+    async def catch_exception(self, exception: Exception, func: Callable, args: Arguments, context: Context,
+                            numRetries=0, retryCount=0) -> Tuple[int,Any]:
+        if self.is_interrupt(exception):
+            return await self.interrupt(*args, exception=exception, func=func, numRetries=numRetries, retryCount=retryCount, **context)
+        elif self.is_kill(exception):
+            raise exception
+        elif (retryCount == 0) or self.is_error(exception):
+            return RETURN, self.pass_exception(exception, func, msg={"args":args, "context":context})
+        else: return CONTINUE, await self.async_sleep(context.get("delay"))
+
+    async def interrupt(self, *args, **context) -> Tuple[int,Any]:
+        return CONTINUE, None
 
     def validate_data(func):
         @functools.wraps(func)
@@ -1099,7 +1132,7 @@ class AsyncSession(RequestSession):
 ###################################################################
 
 class AsyncSpider(Spider, AsyncSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = True
     operation = "spider"
     host = str()
@@ -1128,6 +1161,7 @@ class AsyncSpider(Spider, AsyncSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     responseType = "records"
     returnType = "records"
@@ -1142,14 +1176,14 @@ class AsyncSpider(Spider, AsyncSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(), **context):
         self.set_filter_variables(fields, ranges, returnType)
         self.set_init_time(tzinfo, countryCode, datetimeUnit)
-        self.set_logger(logName, logLevel, logFile, localSave, debug, extraSave, interrupt)
+        self.set_logger(logName, logLevel, logFile, localSave, debugPoint, killPoint, extraSave)
         self.set_async_variables(numRetries, delay, cookies, numTasks)
         self.set_max_limit(apiRedirect)
         self.set_spider_variables(fromNow, discard, progress)
@@ -1166,8 +1200,7 @@ class AsyncSpider(Spider, AsyncSession):
     ########################### Async Gather ##########################
     ###################################################################
 
-    @abstractmethod
-    @AsyncSession.init_session
+    @abc.abstractmethod
     async def crawl(self, *args, **context) -> Data:
         args, context = self.validate_params(locals())
         return await self.gather(*args, **context)
@@ -1189,12 +1222,12 @@ class AsyncSpider(Spider, AsyncSession):
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
-    async def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(),
-                            **context) -> List[Data]:
+    async def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
         if iterator:
-            return await tqdm.gather(*[self.fetch(**__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
-        else: return await self.fetch(fields=fields, **context)
+            return await tqdm.gather(*[
+                self.fetch(**__i, fields=fields, progress=progress, **context) for __i in iterator], desc=message, disable=(not progress))
+        else: return await self.fetch(fields=fields, progress=progress, **context)
 
     ###################################################################
     ########################### Async Count ###########################
@@ -1231,9 +1264,7 @@ class AsyncSpider(Spider, AsyncSession):
     ########################## Async Request ##########################
     ###################################################################
 
-    @abstractmethod
-    @AsyncSession.retry_request
-    @AsyncSession.limit_request
+    @abc.abstractmethod
     async def fetch(self, *args, **context) -> Data:
         ...
 
@@ -1391,7 +1422,8 @@ class AsyncSpider(Spider, AsyncSession):
                             fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
         iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
-        return await tqdm.gather(*[self.fetch_redirect(__i, fields=fields, **context) for __i in iterator], desc=message, disable=(not progress))
+        return await tqdm.gather(*[
+            self.fetch_redirect(__i, fields=fields, progress=progress, **context) for __i in iterator], desc=message, disable=(not progress))
 
 
 ###################################################################
@@ -1399,7 +1431,7 @@ class AsyncSpider(Spider, AsyncSession):
 ###################################################################
 
 class LoginSpider(requests.Session, Spider):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "login"
     host = str()
@@ -1408,16 +1440,16 @@ class LoginSpider(requests.Session, Spider):
     ssl = None
     cookie = str()
 
-    @abstractmethod
+    @abc.abstractmethod
     def __init__(self, logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 cookies: Optional[Union[str,Dict]]=None, **context):
         requests.Session.__init__(self)
         self.set_cookies(cookies)
-        self.set_logger(logName, logLevel, logFile, debug=debug, extraSave=extraSave, interrupt=interrupt)
+        self.set_logger(logName, logLevel, logFile, False, debugPoint, killPoint, extraSave)
         self._disable_warnings()
 
-    @abstractmethod
+    @abc.abstractmethod
     def login(self):
         ...
 
@@ -1537,7 +1569,7 @@ class LoginCookie(LoginSpider):
 ###################################################################
 
 class EncryptedSession(RequestSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "session"
     where = WHERE
@@ -1546,6 +1578,7 @@ class EncryptedSession(RequestSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = None
     mappedReturn = False
@@ -1557,7 +1590,7 @@ class EncryptedSession(RequestSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
@@ -1574,8 +1607,8 @@ class EncryptedSession(RequestSession):
         if decryptedKey:
             self.update(encryptedKey=encrypt(decryptedKey,1), decryptedKey=decryptedKey)
 
-    def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, ENCRYPTED_SESSION_INTERRUPT) or isinstance(exception, self.interruptType)
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SESSION_KILL) or isinstance(exception, self.killType)
 
     ###################################################################
     ########################## Login Managers #########################
@@ -1631,7 +1664,7 @@ class EncryptedSession(RequestSession):
     def set_auth_info(self, auth: LoginSpider, cookies=str(), includeCookies=False, **context) -> Context:
         cookies = auth.get_cookies(encode=True)
         includeCookies = includeCookies or isinstance(auth, LoginCookie)
-        authInfo = self.get_auth_info(auth, cookies=cookies, includeCookies=includeCookies, **context)
+        authInfo = self.get_auth_info(auth=auth, cookies=cookies, includeCookies=includeCookies, **context)
         self.checkpoint("login", where="set_auth_info", msg=dict(authInfo, cookies=auth.get_cookies(encode=False)))
         self.update(authInfo, cookies=cookies)
         return dict(context, **authInfo)
@@ -1669,7 +1702,7 @@ class EncryptedSession(RequestSession):
 ###################################################################
 
 class EncryptedSpider(Spider, EncryptedSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "spider"
     host = str()
@@ -1696,6 +1729,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     responseType = "records"
     returnType = "records"
@@ -1713,7 +1747,7 @@ class EncryptedSpider(Spider, EncryptedSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
@@ -1722,8 +1756,8 @@ class EncryptedSpider(Spider, EncryptedSession):
         Spider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
 
-    def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, ENCRYPTED_SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SPIDER_KILL) or isinstance(exception, self.killType)
 
 
 ###################################################################
@@ -1731,7 +1765,7 @@ class EncryptedSpider(Spider, EncryptedSession):
 ###################################################################
 
 class EncryptedAsyncSession(AsyncSession, EncryptedSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = True
     operation = "session"
     fields = list()
@@ -1740,6 +1774,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = None
     mappedReturn = False
@@ -1751,15 +1786,15 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None, **context):
         AsyncSession.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
 
-    def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, ENCRYPTED_SESSION_INTERRUPT) or isinstance(exception, self.interruptType)
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SESSION_KILL) or isinstance(exception, self.killType)
 
     ###################################################################
     ########################## Login Managers #########################
@@ -1833,7 +1868,7 @@ class EncryptedAsyncSession(AsyncSession, EncryptedSession):
 ###################################################################
 
 class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = True
     operation = "spider"
     host = str()
@@ -1862,6 +1897,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     responseType = "records"
     returnType = "records"
@@ -1879,7 +1915,7 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 fromNow: Optional[Unit]=None, discard=True, progress=True, where=str(), which=str(), by=str(), message=str(),
                 iterateUnit: Optional[int]=None, interval: Optional[Timedelta]=None, apiRedirect=False, redirectUnit: Optional[int]=None,
@@ -1888,8 +1924,8 @@ class EncryptedAsyncSpider(AsyncSpider, EncryptedAsyncSession):
         AsyncSpider.__init__(self, **self.from_locals(locals(), drop=ENCRYPTED_UNIQUE))
         self.set_secret(encryptedKey, decryptedKey)
 
-    def is_interrupt(self, exception: Exception) -> bool:
-        return isinstance(exception, ENCRYPTED_SPIDER_INTERRUPT) or isinstance(exception, self.interruptType)
+    def is_kill(self, exception: Exception) -> bool:
+        return isinstance(exception, ENCRYPTED_SPIDER_KILL) or isinstance(exception, self.killType)
 
 
 ###################################################################
@@ -1968,7 +2004,7 @@ class PipelineInfo(Info):
 ###################################################################
 
 class Pipeline(EncryptedSession):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     asyncio = False
     operation = "pipeline"
     fields = list()
@@ -1977,6 +2013,7 @@ class Pipeline(EncryptedSession):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
@@ -1990,7 +2027,7 @@ class Pipeline(EncryptedSession):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
@@ -2003,8 +2040,7 @@ class Pipeline(EncryptedSession):
         self.globalProgress = globalProgress if isinstance(globalProgress, bool) else self.globalProgress
         self.taskProgress = taskProgress if isinstance(taskProgress, bool) else self.taskProgress
 
-    @abstractmethod
-    @EncryptedSession.init_task
+    @abc.abstractmethod
     def crawl(self, **context) -> Data:
         return self.gather(**context)
 
@@ -2045,8 +2081,7 @@ class Pipeline(EncryptedSession):
     def request_crawl(self, worker: Spider, **params) -> Data:
         return worker.crawl(**params)
 
-    @abstractmethod
-    @EncryptedSession.arrange_data
+    @abc.abstractmethod
     def map_reduce(self, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         ...
 
@@ -2089,7 +2124,7 @@ class Pipeline(EncryptedSession):
 
 
 class AsyncPipeline(EncryptedAsyncSession, Pipeline):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     operation = "pipeline"
     fields = list()
     derivFields = list()
@@ -2097,6 +2132,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     numRetries = 0
     delay = 1.
     interruptType = tuple()
+    killType = tuple()
     errorType = tuple()
     returnType = "dataframe"
     mappedReturn = False
@@ -2113,7 +2149,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
     def __init__(self, fields: Optional[IndexLabel]=None, ranges: Optional[RangeFilter]=None, returnType: Optional[TypeHint]=None,
                 tzinfo: Optional[Timezone]=None, countryCode=str(), datetimeUnit: Optional[Literal["second","minute","hour","day"]]=None,
                 logName: Optional[str]=None, logLevel: LogLevel="WARN", logFile: Optional[str]=None, localSave=False,
-                debug: Optional[Keyword]=None, extraSave: Optional[Keyword]=None, interrupt: Optional[Keyword]=None,
+                debugPoint: Optional[Keyword]=None, killPoint: Optional[Keyword]=None, extraSave: Optional[Keyword]=None,
                 numRetries: Optional[int]=None, delay: Range=1., cookies: Optional[str]=None, numTasks=100,
                 queryList: GoogleQueryList=list(), uploadList: GoogleUploadList=list(), alertInfo: AlertInfo=dict(),
                 encryptedKey: Optional[EncryptedKey]=None, decryptedKey: Optional[DecryptedKey]=None,
@@ -2127,8 +2163,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
         self.asyncMessage = exists_one(asyncMessage, self.asyncMessage, PIPELINE_DEFAULT_ASYNC_MSG)
         self.asyncProgress = asyncProgress if isinstance(asyncProgress, bool) else self.asyncProgress
 
-    @abstractmethod
-    @EncryptedAsyncSession.init_task
+    @abc.abstractmethod
     async def crawl(self, **context) -> Data:
         return await self.gather(**context)
 

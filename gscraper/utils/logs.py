@@ -52,6 +52,14 @@ class CustomLogger(logging.Logger):
         self.addHandler(handler)
 
 
+def get_log_level(level: Union[int,str]) -> int:
+    if isinstance(level, str):
+        if not level: return None
+        elif level.isdigit(): return int(level)
+        else: return attr if isinstance(attr := getattr(logging, level.upper(), None), int) else None
+    else: return int(level) if isinstance(level, (float,int)) else None
+
+
 def fit_json_log(log_file=str()):
     if not os.path.exists(log_file): return
     with open(log_file, 'r', encoding="utf-8") as __input:
@@ -196,7 +204,7 @@ def log_data(data: Data, **kwargs) -> LogMessage:
     return dict(**kwargs, **{"data-length":length})
 
 
-def log_exception(func: str, dump=False, **kwargs) -> LogMessage:
+def log_error(func: str, dump=False, **kwargs) -> LogMessage:
     error = '\\n'.join(traceback.format_exception(*sys.exc_info()))
     error = unraw(error) if dump else error
     return dict(func=func, kwargs=dumps(kwargs, dump=dump), error=error)

@@ -6,7 +6,7 @@ from gscraper.utils import notna
 from gscraper.utils.map import hier_get, notna_dict, exists_dict, drop_dict
 from gscraper.utils.map import kloc, vloc, match_records, drop_duplicates
 
-from abc import ABCMeta
+import abc
 import copy
 import functools
 
@@ -33,7 +33,7 @@ BASE_CONTEXT = lambda self=None, operation=None, info=None, initTime=None, prefi
                         inplace=None, self_var=None, update=None, **context: context
 
 
-LOG_CONTEXT = lambda logger=None, logJson=None, interruptType=None, errorType=None, errors=None, func=None, **context: context
+LOG_CONTEXT = lambda logger=None, logJson=None, interruptType=None, killType=None, errorType=None, errors=None, **context: context
 
 
 ITERATOR_CONTEXT = lambda iterator=None, iterateArgs=None, iterateCount=None, iterateProduct=None, pagination=None, \
@@ -66,10 +66,9 @@ PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=Non
 
 
 REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
-                        params=None, encode=None, data=None, json=None, headers=None, cookies=None, \
-                        allow_redirects=None, validate=None, exception=None, valid=None, invalid=None, \
-                        close=None, encoding=None, features=None, table_type=None, table_idx=None, table_header=None, \
-                        engine=None, **context: context
+                        params=None, encode=None, data=None, json=None, headers=None, cookies=None, allow_redirects=None, \
+                        validate=None, valid=None, invalid=None, close=None, encoding=None, features=None, \
+                        table_type=None, table_idx=None, table_header=None, engine=None, **context: context
 
 
 RESPONSE_CONTEXT = lambda response=None, tzinfo=None, countryCode=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, \
@@ -85,10 +84,10 @@ GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None
 UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, alertInfo=None, **context: context
 
 
-TASK_CONTEXT = lambda **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
+TASK_CONTEXT = lambda func=None, exception=None, retryCount=None, **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
 
 
-SESSION_CONTEXT = lambda session=None, semaphore=None, cookies=str(), **context: \
+SESSION_CONTEXT = lambda func=None, exception=None, retryCount=None, session=None, semaphore=None, cookies=str(), **context: \
                         dict(UPLOAD_CONTEXT(**REQUEST_CONTEXT(**PARAMS_CONTEXT(**context))), **exists_dict(cookies=cookies))
 
 
@@ -106,7 +105,7 @@ REDIRECT_CONTEXT = lambda logFile=None, **context: LOCAL_CONTEXT(**SESSION_CONTE
 ###################################################################
 
 class CustomDict(dict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
 
     def __init__(self, __m: Dict=dict(), self_var=True, **kwargs):
         super().__init__()
@@ -143,14 +142,14 @@ class CustomDict(dict):
 
 
 class OptionalDict(CustomDict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
 
     def __init__(self, optional: Dict=dict(), null_if: Dict=dict(), self_var=False, **kwargs):
         super().__init__(kwargs, **notna_dict(optional, null_if=null_if), self_var=self_var)
 
 
 class TypedDict(CustomDict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     dtype = None
     typeCheck = True
 
@@ -173,7 +172,7 @@ class TypedDict(CustomDict):
 ###################################################################
 
 class CustomRecords(list):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
 
     def __init__(self, __iterable: Records):
         super().__init__(__iterable)
@@ -223,7 +222,7 @@ class CustomRecords(list):
 
 
 class TypedRecords(CustomRecords):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     dtype = dict
     typeCheck = True
 
@@ -245,7 +244,7 @@ class TypedRecords(CustomRecords):
 
 
 class NamedRecords(TypedRecords):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
 
     def rename(self, __s: str, to: Optional[Literal["name","desc"]]="desc",
                 if_null: Union[Literal["pass"],Any]="pass") -> str:
@@ -266,7 +265,7 @@ class NamedRecords(TypedRecords):
 ###################################################################
 
 class Value(OptionalDict):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     typeCast = True
 
     def __init__(self, name: _KT, type: TypeHint, optional: Dict=dict(), null_if: Dict=dict(), self_var=False, **kwargs):
@@ -275,7 +274,7 @@ class Value(OptionalDict):
 
 
 class ValueSet(NamedRecords):
-    __metaclass__ = ABCMeta
+    __metaclass__ = abc.ABCMeta
     dtype = Value
     typeCheck = True
 
@@ -423,7 +422,8 @@ LOG_QUERY = lambda: Query(
     Variable(name="logLevel", type="STRING", default="WARN"),
     Variable(name="logFile", type="STRING", default=None),
     Variable(name="localSave", type="BOOLEAN", default=None),
-    Variable(name="debug", type="[STRING]", default=None),
+    Variable(name="debugPoint", type="[STRING]", default=None),
+    Variable(name="killPoint", type="[STRING]", default=None),
     Variable(name="extraSave", type="[STRING]", default=None),
     Variable(name="interrupt", type="[STRING]", default=None),
 )
