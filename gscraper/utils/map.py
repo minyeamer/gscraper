@@ -1,6 +1,6 @@
 from gscraper.base.types import _KT, _VT, _PASS, _BOOL, _TYPE, Comparable, Context, TypeHint
 from gscraper.base.types import Index, IndexLabel, Keyword, Unit, IndexedSequence, RenameMap, TypeMap
-from gscraper.base.types import Records, MappingData, TabularData, Data, PandasData, HtmlData, ResponseData
+from gscraper.base.types import Records, MappingData, TabularData, Data, JsonData, PandasData, HtmlData, ResponseData
 from gscraper.base.types import ApplyFunction, MatchFunction, RegexFormat, PANDAS_DATA
 from gscraper.base.types import is_bool_array, is_int_array, is_array, is_2darray, is_records, is_dfarray, is_tag_array
 from gscraper.base.types import init_origin, is_list_type, is_dict_type, is_records_type, is_dataframe_type, is_bytes_type
@@ -13,9 +13,12 @@ from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set, cast_
 from typing import Any, Dict, List, Set
 from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Union
 from numbers import Real
+
+from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
 from io import BytesIO
 import numpy as np
+import json
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils.exceptions import IllegalCharacterError
@@ -141,6 +144,15 @@ def to_records(__object: MappingData, depth=1) -> Records:
         return fillna_records(__object.to_dict("records"), depth=depth)
     elif isinstance(__object, Dict): return [__object]
     else: return list()
+
+
+def to_json(__object: Union[bytes,str,JsonData], default=None) -> JsonData:
+    if isinstance(__object, (bytes,str)):
+        try: return json.loads(__object)
+        except:
+            try: return literal_eval(__object) if isinstance(__object, str) else default
+            except: return default
+    else: return __object if isinstance(__object, (Dict,List)) else default
 
 
 def to_dataframe(__object: MappingData, columns: Optional[IndexLabel]=None, index: Optional[Sequence]=None) -> pd.DataFrame:
