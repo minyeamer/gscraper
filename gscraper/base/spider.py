@@ -52,7 +52,7 @@ import pandas as pd
 import re
 
 
-CONTINUE, RETURN = 0, 1
+RETRY, RETURN = 0, 1
 
 GET = "GET"
 POST = "POST"
@@ -390,7 +390,7 @@ class RequestSession(UploadSession):
                 except Exception as exception:
                     exitCode, value = self.catch_exception(exception, func, args, context, numRetries, retryCount=count)
                     if exitCode == RETURN: return value
-                    elif exitCode == CONTINUE: continue
+                    elif exitCode == RETRY: continue
                     else: raise exception
         return wrapper
 
@@ -402,10 +402,10 @@ class RequestSession(UploadSession):
             raise exception
         elif (retryCount == 0) or self.is_error(exception):
             return RETURN, self.pass_exception(exception, func, msg={"args":args, "context":context})
-        else: return CONTINUE, self.sleep(context.get("delay"))
+        else: return RETRY, self.sleep(context.get("delay"))
 
     def interrupt(self, *args, **context) -> Tuple[int,Any]:
-        return CONTINUE, None
+        return RETRY, None
 
     def is_interrupt(self, exception: Exception) -> bool:
         return isinstance(exception, self.interruptType)
@@ -1127,7 +1127,7 @@ class AsyncSession(RequestSession):
                 except Exception as exception:
                     exitCode, value = await self.catch_exception(exception, func, args, context, numRetries, retryCount=count)
                     if exitCode == RETURN: return value
-                    elif exitCode == CONTINUE: continue
+                    elif exitCode == RETRY: continue
                     else: raise exception
         return wrapper
 
@@ -1139,10 +1139,10 @@ class AsyncSession(RequestSession):
             raise exception
         elif (retryCount == 0) or self.is_error(exception):
             return RETURN, self.pass_exception(exception, func, msg={"args":args, "context":context})
-        else: return CONTINUE, await self.async_sleep(context.get("delay"))
+        else: return RETRY, await self.async_sleep(context.get("delay"))
 
     async def interrupt(self, *args, **context) -> Tuple[int,Any]:
-        return CONTINUE, None
+        return RETRY, None
 
     def validate_data(func):
         @functools.wraps(func)
