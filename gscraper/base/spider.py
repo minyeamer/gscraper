@@ -747,50 +747,53 @@ class Spider(RequestSession, Iterator, Parser):
 
     def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
-        if iterator:
-            return [self.fetch(**__i, fields=fields, progress=progress, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
-        else: return self.fetch(fields=fields, progress=progress, **context)
+        return [self.fetch(**__i, progress=progress, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
 
     ###################################################################
     ########################### Gather Count ##########################
     ###################################################################
 
-    def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
+    def gather_count(self, *args, iterator: List[Context]=list(), message=str(), progress=True,
                     fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None,
-                    size: Optional[int]=None, pageSize=0, **context) -> Data:
+                    countPath: _KT=list(), size: Optional[int]=None, pageSize=0, **context) -> Data:
         hasSize = (size is not None) and (isinstance(size, int) or is_int_array(size, how="all", empty=False))
         context = dict(context, size=(size if hasSize else pageSize), pageSize=pageSize)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=hasSize)
-        if not (hasSize or iterator):
-            iterator = [{ITER_INDEX:0}]
+        if not iterator:
+            iterator, context = self._init_first_iterator(args, context, self.iterateArgs, self.iterateProduct, hasSize)
         data = self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
-        iterator, context = self._init_count_iterator(iterator, context)
+        iterator, context = self._init_next_iterator(iterator, context)
         if iterator and (not hasSize):
-            data += self._gather_next(iterator, progress=progress, fields=fields, **context)
+            data += self._gather_next(iterator, progress=progress, **context)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
+    def _init_first_iterator(self, args: Arguments, context: Context, iterateArgs: List[_KT]=list(), iterateProduct: List[_KT]=list(),
+                            hasSize=False, indexing=True) -> Tuple[List[Context],Context]:
+        if iterateArgs or iterateProduct or hasSize:
+            return self._init_iterator(args, context, iterateArgs, iterateProduct, pagination=hasSize, indexing=indexing)
+        else: return [{ITER_INDEX:0}], context
+
     def _gather_first(self, iterator: List[Context], countPath: _KT=list(), hasSize=False,
-                    message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
+                    message=str(), progress=True, **context) -> List[Data]:
         message = message if message else self.get_gather_message(by=(FIRST_PAGE if not hasSize else self.by), **context)
-        data = self._gather_data(iterator, countPath=countPath, message=message, progress=progress, fields=fields, **context)
+        data = self._gather_data(iterator, countPath=countPath, message=message, progress=progress, **context)
         self.checkpoint("gather", where="gather_first", msg={"data":data}, save=data)
         return data
 
-    def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
-        message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
-        data = self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
-        self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
-        return data
-
-    def _init_count_iterator(self, iterator: List[Context], context: Context, indexing=True) -> Tuple[List[Context],Context]:
+    def _init_next_iterator(self, iterator: List[Context], context: Context, indexing=True) -> Tuple[List[Context],Context]:
         iterateArgs = list(drop_dict(iterator[0], [ITER_INDEX]+PAGE_ITERATOR, inplace=False).keys())
         args = transpose_array([kloc(__i, iterateArgs, values_only=True) for __i in iterator])
-        context = self._init_count_size(iterator, **context)
+        context = self._set_count_size(iterator, **context)
         iterator, context = self.set_iterator(*args, iterateArgs=iterateArgs, pagination=True, indexing=indexing, **context)
-        self.checkpoint("iterator_count", where="init_count_iterator", msg={"iterator":iterator})
+        self.checkpoint("iterator_next", where="init_next_iterator", msg={"iterator":iterator})
         return iterator, context
 
-    def _init_count_size(self, iterator: List[Context], pageSize=0, pageStart=1, offset=1, **context) -> Context:
+    def _gather_next(self, iterator: List[Context], message=str(), progress=True, **context) -> List[Data]:
+        message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
+        data = self._gather_data(iterator, message=message, progress=progress, **context)
+        self.checkpoint("gather_next", where="gather_next", msg={"data":data}, save=data)
+        return data
+
+    def _set_count_size(self, iterator: List[Context], pageSize=0, pageStart=1, offset=1, **context) -> Context:
         context["size"] = [max(self.iterateCount.get(__i[ITER_INDEX], 0)-pageSize, 0) for __i in iterator]
         context.update(pageSize=pageSize, pageStart=pageStart+1, offset=offset+pageSize, interval=None)
         return context
@@ -952,10 +955,11 @@ class Spider(RequestSession, Iterator, Parser):
         return wrapper
 
     @gcloud_authorized
-    def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True, fields: IndexLabel=list(),
-                ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
+    def redirect(self, *args, iterator: List[Context]=list(), redirectUnit: Optional[int]=None, progress=True,
+                fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        if not iterator:
+            iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
         data = self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
@@ -968,8 +972,8 @@ class Spider(RequestSession, Iterator, Parser):
     @gcloud_authorized
     def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
                         account: Account=dict(), cookies=str(), **context) -> Data:
-        data = self._get_redirect_data(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
-        response = self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
+        body = self._make_redirect_body(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+        response = self.request_json(POST, redirectUrl, data=body, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
 
     def _validate_redirect_info(self, redirectUrl=str(), authorization=str(), account: Account=dict()) -> Context:
@@ -980,14 +984,13 @@ class Spider(RequestSession, Iterator, Parser):
             authorization = fetch_gcloud_authorization(redirectUrl, account)
         return dict(redirectUrl=redirectUrl, authorization=authorization, account=account)
 
-    def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None, message=str(), progress=True,
-                        fields: IndexLabel=list(), **context) -> List[Data]:
-        fields = fields if isinstance(fields, Sequence) else list()
+    def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None,
+                        message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
-        return [self.fetch_redirect(__i, fields=fields, progress=progress, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
+        fields = fields if isinstance(fields, Sequence) else list()
+        return [self.fetch_redirect(__i, progress=progress, fields=fields, **context) for __i in tqdm(iterator, desc=message, disable=(not progress))]
 
-    def _get_redirect_data(self, iterator: List[Context], redirectUrl: str, authorization: str,
-                            account: Account=dict(), **context) -> str:
+    def _make_redirect_body(self, iterator: List[Context], redirectUrl: str, authorization: str, account: Account=dict(), **context) -> str:
         return json.dumps(dict(
             operation = self.operation,
             iterator = iterator,
@@ -1237,51 +1240,51 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @redirect_available
-    async def gather(self, *args, iterator: List[Context]=list(), message=str(), progress=True,
+    async def gather(self, *args, iterator: List[Context]=list(), asynchronous=True, message=str(), progress=True,
                     fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = message if message else self.get_gather_message(**context)
         if not iterator:
             iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
-        data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
+        data = await self._gather_data(iterator, asynchronous, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="gather", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
-    async def _gather_data(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
+    async def _gather_data(self, iterator: List[Context], asynchronous=True,
+                            message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         fields = fields if isinstance(fields, Sequence) else list()
-        if iterator:
-            return await tqdm.gather(*[
-                self.fetch(**__i, fields=fields, progress=progress, **context) for __i in iterator], desc=message, disable=(not progress))
-        else: return await self.fetch(fields=fields, progress=progress, **context)
+        options = dict(desc=message, disable=(not progress))
+        if asynchronous:
+            return await tqdm.gather(*[self.fetch(**__i, progress=progress, fields=fields, **context) for __i in iterator], **options)
+        else: return [(await self.fetch(**__i, progress=progress, fields=fields, **context)) for __i in tqdm(iterator, **options)]
 
     ###################################################################
     ########################### Async Count ###########################
     ###################################################################
 
-    async def gather_count(self, *args, countPath: _KT=list(), message=str(), progress=True,
+    async def gather_count(self, *args, iterator: List[Context]=list(), asynchronous=True, message=str(), progress=True,
                             fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None,
-                            size: Optional[int]=None, pageSize=0, **context) -> Data:
+                            countPath: _KT=list(), size: Optional[int]=None, pageSize=0, **context) -> Data:
         hasSize = (size is not None) and (isinstance(size, int) or is_int_array(size, how="all", empty=False))
         context = dict(context, size=(size if hasSize else pageSize), pageSize=pageSize)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, pagination=hasSize)
-        if not (hasSize or iterator):
-            iterator = [{ITER_INDEX:0}]
-        data = await self._gather_first(iterator, countPath, hasSize, progress=progress, fields=fields, **context)
-        iterator, context = self._init_count_iterator(iterator, context)
+        if not iterator:
+            iterator, context = self._init_first_iterator(args, context, self.iterateArgs, self.iterateProduct, hasSize)
+        data = await self._gather_first(iterator, asynchronous, countPath, hasSize, progress=progress, fields=fields, **context)
+        iterator, context = self._init_next_iterator(iterator, context)
         if iterator and (not hasSize):
-            data += await self._gather_next(iterator, progress=progress, fields=fields, **context)
+            data += await self._gather_next(iterator, asynchronous, progress=progress, fields=fields, **context)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
-    async def _gather_first(self, iterator: List[Context], countPath: _KT=list(), hasSize=False,
-                            message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
+    async def _gather_first(self, iterator: List[Context], asynchronous=True, countPath: _KT=list(), hasSize=False,
+                            message=str(), progress=True, **context) -> List[Data]:
         message = message if message else self.get_gather_message(by=(FIRST_PAGE if not hasSize else self.by), **context)
-        data = await self._gather_data(iterator, countPath=countPath, message=message, progress=progress, fields=fields, **context)
+        data = await self._gather_data(iterator, asynchronous, countPath=countPath, message=message, progress=progress, **context)
         self.checkpoint("gather", where="gather_first", msg={"data":data}, save=data)
         return data
 
-    async def _gather_next(self, iterator: List[Context], message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
+    async def _gather_next(self, iterator: List[Context], asynchronous=True, message=str(), progress=True, **context) -> List[Data]:
         message = message if message else self.get_gather_message(by=NEXT_PAGE, **context)
-        data = await self._gather_data(iterator, message=message, progress=progress, fields=fields, **context)
-        self.checkpoint("gather_count", where="gather_next", msg={"data":data}, save=data)
+        data = await self._gather_data(iterator, asynchronous, message=message, progress=progress, **context)
+        self.checkpoint("gather_next", where="gather_next", msg={"data":data}, save=data)
         return data
 
     ###################################################################
@@ -1425,11 +1428,12 @@ class AsyncSpider(Spider, AsyncSession):
         return wrapper
 
     @gcloud_authorized
-    async def redirect(self, *args, redirectUnit: Optional[int]=None, progress=True,
+    async def redirect(self, *args, iterator: List[Context], asynchronous=True, redirectUnit: Optional[int]=None, progress=True,
                         fields: IndexLabel=list(), ranges: RangeFilter=list(), returnType: Optional[TypeHint]=None, **context) -> Data:
         message = self.get_redirect_message(**context)
-        iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
-        data = await self._redirect_data(iterator, redirectUnit, message=message, progress=progress, fields=fields, **context)
+        if not iterator:
+            iterator, context = self._init_iterator(args, context, self.iterateArgs, self.iterateProduct, self.pagination)
+        data = await self._redirect_data(iterator, asynchronous, redirectUnit, message=message, progress=progress, fields=fields, **context)
         self.checkpoint("gather", where="redirect", msg={"data":data}, save=data)
         return self.reduce(data, fields=fields, ranges=ranges, returnType=returnType, **context)
 
@@ -1438,16 +1442,18 @@ class AsyncSpider(Spider, AsyncSession):
     @gcloud_authorized
     async def fetch_redirect(self, iterator: List[Context], redirectUrl: str, authorization: str,
                             account: Account=dict(), cookies=str(), **context) -> Records:
-        data = self._get_redirect_data(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
-        response = await self.request_json(POST, redirectUrl, data=data, headers=dict(Authorization=authorization), **context)
+        body = self._make_redirect_body(iterator, redirectUrl, authorization, account, cookies=cookies, **context).encode("utf-8")
+        response = await self.request_json(POST, redirectUrl, data=body, headers=dict(Authorization=authorization), **context)
         return self._parse_redirect(response, **context)
 
-    async def _redirect_data(self, iterator: List[Context], redirectUnit: Optional[int]=None, message=str(), progress=True,
-                            fields: IndexLabel=list(), **context) -> List[Data]:
-        fields = fields if isinstance(fields, Sequence) else list()
+    async def _redirect_data(self, iterator: List[Context], asynchronous=True, redirectUnit: Optional[int]=None,
+                            message=str(), progress=True, fields: IndexLabel=list(), **context) -> List[Data]:
         iterator = unit_array(iterator, max(cast_int(redirectUnit), 1))
-        return await tqdm.gather(*[
-            self.fetch_redirect(__i, fields=fields, progress=progress, **context) for __i in iterator], desc=message, disable=(not progress))
+        fields = fields if isinstance(fields, Sequence) else list()
+        options = dict(desc=message, disable=(not progress))
+        if asynchronous:
+            return await tqdm.gather(*[self.fetch_redirect(__i, progress=progress, fields=fields, **context) for __i in iterator], **options)
+        else: return [(await self.fetch_redirect(**__i, progress=progress, fields=fields, **context)) for __i in tqdm(iterator, **options)]
 
 
 ###################################################################
@@ -2198,7 +2204,7 @@ class AsyncPipeline(EncryptedAsyncSession, Pipeline):
                 response = await tqdm.gather(*[
                     self.run_task(subtask, fields=fields, data=data, progress=progress, **context) for subtask in task],
                         desc=self.asyncMessage, disable=(self.globalProgress or (not (self.asyncProgress and progress))))
-                data = dict(data, **dict(zip(vloc(task, DATANAME), response)))
+                data.update(dict(zip(vloc(task, DATANAME), response)))
             else: data[task[DATANAME]] = await self.run_task(task, fields=fields, data=data, progress=progress, **context)
         return self.map_reduce(fields=fields, returnType=returnType, **dict(context, **data))
 

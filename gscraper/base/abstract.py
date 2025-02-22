@@ -65,7 +65,7 @@ PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=Non
                         index=None, log=None, depth=None, hier=None, to=None, countPath=None, hasSize=None, primary=None, **context: context
 
 
-REQUEST_CONTEXT = lambda session=None, semaphore=None, method=None, url=None, referer=None, messages=None, \
+REQUEST_CONTEXT = lambda session=None, semaphore=None, asynchronous=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, cookies=None, allow_redirects=None, \
                         validate=None, valid=None, invalid=None, close=None, encoding=None, features=None, \
                         table_type=None, table_idx=None, table_header=None, engine=None, **context: context

@@ -40,7 +40,7 @@ import re
 
 
 CHECKPOINT = [
-    "all", "context", "crawl", "params", "iterator", "iterator_count", "gather", "gather_count",
+    "all", "context", "crawl", "params", "iterator", "iterator_next", "gather", "gather_next",
     "redirect", "request", "response", "parse", "map", "schema", "field", "group",
     "apply", "[origin]_apply" "match", "[origin]_match", "login", "error"]
 CHECKPOINT_PATH = "saved/"
