@@ -1273,12 +1273,20 @@ def endswith(__string: str, __keyword: Keyword) -> bool:
     else: return False
 
 
-def encrypt(s: str, count=1) -> str:
-    return encrypt(base64.b64encode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
+def encrypt(__object, count=1) -> str:
+    return encrypt(_b64encode(__object).decode("utf-8"), count-1) if count else __object
 
 
-def decrypt(s: str, count=1) -> str:
-    return decrypt(base64.b64decode(str(s).encode("utf-8")).decode("utf-8"), count-1) if count else s
+def decrypt(__object, count=1) -> str:
+    return decrypt(_b64decode(__object).decode("utf-8"), count-1) if count else __object
+
+
+def _b64encode(__object) -> bytes:
+    return base64.b64encode(__object if isinstance(__object, bytes) else str(__object).encode("utf-8"))
+
+
+def _b64decode(__object) -> bytes:
+    return base64.b64decode(__object if isinstance(__object, bytes) else str(__object))
 
 
 ###################################################################

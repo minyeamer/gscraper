@@ -1635,7 +1635,8 @@ class EncryptedSession(RequestSession):
             except JSONDecodeError: raise AuthenticationError(INVALID_USER_INFO_MSG(self.where))
         decryptedKey = decryptedKey if isinstance(decryptedKey, Dict) else self.decryptedKey
         if decryptedKey:
-            self.update(encryptedKey=encrypt(decryptedKey,1), decryptedKey=decryptedKey)
+            encryptedKey = encrypt(json.dumps(decryptedKey, ensure_ascii=False, default=str))
+            self.update(encryptedKey=encryptedKey, decryptedKey=decryptedKey)
 
     def is_kill(self, exception: Exception) -> bool:
         return isinstance(exception, ENCRYPTED_SESSION_KILL) or isinstance(exception, self.killType)
