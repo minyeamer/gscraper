@@ -362,6 +362,13 @@ class RequestSession(UploadSession):
             return data
         return wrapper
 
+    def with_session(func):
+        @functools.wraps(func)
+        def wrapper(self: RequestSession, *args, **context):
+            with requests.Session() as session:
+                return func(self, *args, session=session, **context)
+        return wrapper
+
     def limit_request(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, **context):
@@ -1062,6 +1069,22 @@ class AsyncSession(RequestSession):
             await asyncio.sleep(.25)
             self.with_data(data, func=func.__name__, **context)
             return data
+        return wrapper
+
+    def with_requests_session(func):
+        @functools.wraps(func)
+        async def wrapper(self: AsyncSession, *args, **context):
+            with requests.Session() as session:
+                return await func(self, *args, session=session, **context)
+        return wrapper
+
+    def with_async_session(func):
+        @functools.wraps(func)
+        async def wrapper(self: AsyncSession, *args, semaphore: Optional[asyncio.Semaphore]=None, **context):
+            if semaphore is None:
+                semaphore = self.asyncio_semaphore(**context)
+            async with aiohttp.ClientSession(**self.set_client_session(**context)) as session:
+                return await func(self, *args, session=session, semaphore=semaphore, **context)
         return wrapper
 
     def asyncio_semaphore(self, numTasks: Optional[int]=None, **context) -> asyncio.Semaphore:
