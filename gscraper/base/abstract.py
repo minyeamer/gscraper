@@ -429,8 +429,8 @@ LOG_QUERY = lambda: Query(
 )
 
 REQUEST_QUERY = lambda: Query(
-    Variable(name="numRetries", type="INTEGER", default=0),
-    Variable(name="delay", type="[FLOAT]", default=1.),
+    Variable(name="numRetries", type="INTEGER", default=None),
+    Variable(name="delay", type="[FLOAT]", default=None),
     Variable(name="cookies", type="STRING", default=None),
 )
 
