@@ -19,7 +19,7 @@ from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scal
 from gscraper.utils.map import concat, rename_value, regex_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
 from gscraper.utils.map import kloc, is_single_path, hier_get, notna_dict, chain_dict, drop_dict
-from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series
+from gscraper.utils.map import vloc, concat_df, safe_apply_df, match_df, to_dataframe, to_series, to_excel
 from gscraper.utils.map import get_value, filter_data, set_data, isin_data, chain_exists, groupby_data, is_single_selector
 
 from ast import literal_eval
@@ -28,7 +28,6 @@ from itertools import product
 import abc
 import copy
 import functools
-import logging
 import os
 
 from typing import Any, Dict, Callable, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
@@ -631,8 +630,7 @@ class BaseSession(CustomDict):
     def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1", rename: Union[Literal["name","desc"],Dict]="desc"):
         file_name = self._validate_file(file_name)
         data = self.rename_save_data(to_dataframe(data), rename)
-        try: data.to_excel(file_name, sheet_name=sheet_name, index=False)
-        except: self._safe_save_dataframe(data, file_name, sheet_name)
+        to_excel(data, file_name, sheet_name, if_error="to_csv", engine="xlsxwriter", options={"strings_to_urls":False})
 
     def rename_save_data(self, data: pd.DataFrame, rename: Union[Literal["name","desc"],Dict]="desc", **context) -> pd.DataFrame:
         return data.rename(columns=(rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)))

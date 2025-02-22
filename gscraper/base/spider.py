@@ -20,7 +20,7 @@ from gscraper.utils.date import get_random_seconds, get_date_pair, get_datetime_
 from gscraper.utils.logs import log_encrypt, log_messages, log_response, log_client, log_data
 from gscraper.utils.map import to_array, align_array, transpose_array, unit_array, get_scala, union, inter, diff
 from gscraper.utils.map import kloc, hier_get, notna_dict, drop_dict, split_dict, traversal_dict
-from gscraper.utils.map import vloc, apply_records, to_dataframe, convert_data, filter_data, regex_get
+from gscraper.utils.map import vloc, apply_records, to_dataframe, write_df, convert_data, filter_data, regex_get
 from gscraper.utils.map import exists_one, unique, chain_exists, between_data, concat, encrypt, decrypt, read_table
 from gscraper.utils.map import convert_dtypes as _convert_dtypes
 
@@ -507,7 +507,8 @@ class RequestSession(UploadSession):
             for __key, __data in data.items():
                 sheet_name = self.get_save_sheet(__key)
                 __data = self.rename_save_data(to_dataframe(__data), key=__key, **context)
-                __data.to_excel(writer, sheet_name=sheet_name, index=False)
+                try: write_df(__data, writer, sheet_name=sheet_name, index=False)
+                except: continue
 
     @BaseSession.ignore_exception
     def upload_result(self, data: Data, uploadList: GoogleUploadList=list(), **context):

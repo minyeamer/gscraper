@@ -15,8 +15,11 @@ from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Union
 from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from io import BytesIO
-from pandas.core.indexes.base import Index as PandasIndex
 import numpy as np
+
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.utils.exceptions import IllegalCharacterError
+from pandas.core.indexes.base import Index as PandasIndex
 import pandas as pd
 
 from collections import defaultdict
@@ -1460,6 +1463,38 @@ def round_df(df: pd.DataFrame, columns: IndexLabel, trunc=2) -> pd.DataFrame:
     if not isinstance(trunc, int): return df
     __round = lambda x: round(x,trunc) if isinstance(x,float) else x
     return apply_df(df, **{__column: __round for __column in cast_tuple(columns)})
+
+
+def to_excel(df: pd.DataFrame, file_name: str, sheet_name="Sheet1", index=False, engine="openpyxl",
+            if_error: Literal["error","ignore","to_csv"]="to_csv", **engine_kwargs):
+    try:
+        try: df.to_excel(file_name, sheet_name=sheet_name, index=index)
+        except:
+            with pd.ExcelWriter(file_name, engine=engine, engine_kwargs=engine_kwargs) as writer:
+                write_df(df, writer, sheet_name=sheet_name, index=index)
+    except Exception as exception:
+        if os.path.exists(file_name):
+            os.remove(file_name)
+        if if_error == "to_csv":
+            df.to_csv(os.path.splitext(file_name)[0]+".csv", index=index)
+        elif if_error == "error":
+            raise exception
+        else: return
+
+
+def write_df(df: pd.DataFrame, writer: pd.ExcelWriter, sheet_name="Sheet1", index=False):
+    try: df.to_excel(writer, sheet_name=sheet_name, index=index)
+    except IllegalCharacterError:
+        df = _remove_illegal_characters(df)
+        df.to_excel(writer, sheet_name=sheet_name, index=index)
+
+
+def _remove_illegal_characters(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for __column in df.columns:
+        if df[__column].dtype == "object":
+            df[__column] = df[__column].apply(lambda x: ILLEGAL_CHARACTERS_RE.sub('', x) if isinstance(x, str) else x)
+    return df
 
 
 ###################################################################
