@@ -84,10 +84,10 @@ GCLOUD_CONTEXT = lambda name=None, data=None, account=None, key=None, sheet=None
 UPLOAD_CONTEXT = lambda queryList=None, uploadList=None, alertInfo=None, **context: context
 
 
-TASK_CONTEXT = lambda func=None, exception=None, retryCount=None, **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
+TASK_CONTEXT = lambda func=None, exception=None, **context: UPLOAD_CONTEXT(**PARAMS_CONTEXT(**context))
 
 
-SESSION_CONTEXT = lambda func=None, exception=None, retryCount=None, session=None, semaphore=None, cookies=str(), **context: \
+SESSION_CONTEXT = lambda func=None, exception=None, session=None, semaphore=None, cookies=str(), **context: \
                         dict(UPLOAD_CONTEXT(**REQUEST_CONTEXT(**PARAMS_CONTEXT(**context))), **exists_dict(cookies=cookies))
 
 

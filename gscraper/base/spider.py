@@ -431,6 +431,10 @@ class RequestSession(UploadSession):
         elif isinstance(delay, Sequence) and delay: return get_random_seconds(*delay[:2])
         else: return 0.
 
+    def get_retry_delay(self, delay: Optional[Range]=None, numRetries=0, retryCount=0, increment=1., **context) -> Union[float,int]:
+        count = numRetries - retryCount
+        return self.get_delay(delay) + (count * increment)
+
     ###################################################################
     ########################## Validate Data ##########################
     ###################################################################
@@ -825,8 +829,7 @@ class Spider(RequestSession, Iterator, Parser):
         url, params = self.encode_params(url, params, encode=encode)
         if headers and cookies: headers["Cookie"] = str(cookies)
         messages = messages if messages else notna_dict(params=params, data=data, json=json, headers=headers)
-        iter_context = {ITER_INDEX: context[ITER_INDEX]} if ITER_INDEX in context else dict()
-        self.logger.debug(log_messages(**iter_context, **messages, dump=self.logJson))
+        self.logger.debug(log_messages(**notna_dict({ITER_INDEX: context.get(ITER_INDEX)}), **messages, dump=self.logJson))
         return dict(context, method=method, url=url, messages=messages)
 
     def _validate_session(self, context: Context) -> Context:
