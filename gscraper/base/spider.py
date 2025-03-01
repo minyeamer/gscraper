@@ -29,6 +29,7 @@ from gscraper.utils.alert import format_date as format_alert_date
 from gscraper.utils.alert import format_date_range as format_alert_date_range
 from gscraper.utils.alert import format_value as format_alert_value
 from gscraper.utils.request import get_cookies, decode_cookies, encode_params
+from gscraper.utils.request import apply_nest_asyncio, close_async_loop, asyncio_run
 
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
@@ -42,7 +43,8 @@ import inspect
 import requests
 import time
 
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Coroutine, Dict, Iterable, List, Literal
+from typing import Optional, Sequence, Tuple, Type, Union
 from numbers import Real
 from bs4 import BeautifulSoup, Tag
 from json import JSONDecodeError
@@ -372,10 +374,37 @@ class RequestSession(UploadSession):
     def limit_request(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, **context):
-            response = func(self, *args, **context)
-            self.sleep()
-            return response
+            try: return func(self, *args, **context)
+            finally: self.sleep()
         return wrapper
+
+    ###################################################################
+    ########################## Async Managers #########################
+    ###################################################################
+
+    def with_async_loop(func):
+        @functools.wraps(func)
+        def wrapper(self: RequestSession, *args, loop: _PASS=None, **context):
+            loop, close = self.run_async_loop()
+            try: return func(self, *args, loop=loop, **context)
+            finally:
+                if close: close_async_loop(loop)
+        return wrapper
+
+    def run_async_loop(self) -> Tuple[asyncio.AbstractEventLoop,bool]:
+        try:
+            loop, close = asyncio.get_running_loop(), False
+            apply_nest_asyncio()
+        except RuntimeError:
+            loop, close = asyncio.new_event_loop(), True
+            asyncio.set_event_loop(loop)
+        return loop, close
+
+    def close_async_loop(loop: asyncio.AbstractEventLoop):
+        close_async_loop(loop)
+
+    def asyncio_run(self, func: Coroutine, loop: asyncio.AbstractEventLoop, args: Arguments=tuple(), kwargs: Context=dict()) -> Any:
+        return asyncio_run(func, loop, args, kwargs)
 
     ###################################################################
     ########################### Log Managers ##########################
@@ -383,7 +412,7 @@ class RequestSession(UploadSession):
 
     def retry_request(func):
         @functools.wraps(func)
-        def wrapper(self: RequestSession, *args, numRetries: Optional[int]=None, **context):
+        def wrapper(self: RequestSession, *args, numRetries: Optional[int]=None, retryCount: _PASS=None, **context):
             numRetries = numRetries if isinstance(numRetries, int) else self.numRetries
             for count in reversed(range(numRetries+1)):
                 try: return func(self, *args, numRetries=numRetries, retryCount=count, **context)
@@ -1108,12 +1137,12 @@ class AsyncSession(RequestSession):
     def limit_request(func):
         @functools.wraps(func)
         async def wrapper(self: AsyncSession, *args, semaphore: Optional[asyncio.Semaphore]=None, **context):
-            if semaphore:
-                async with semaphore:
-                    response = await func(self, *args, **context)
-            else: response = await func(self, *args, **context)
-            await self.async_sleep()
-            return response
+            try:
+                if semaphore is not None:
+                    async with semaphore:
+                        return await func(self, *args, **context)
+                else: return await func(self, *args, **context)
+            finally: await self.async_sleep()
         return wrapper
 
     async def async_sleep(self, delay: Optional[Range]=None, minimum=0., maximum=None):
@@ -1128,7 +1157,7 @@ class AsyncSession(RequestSession):
 
     def retry_request(func):
         @functools.wraps(func)
-        async def wrapper(self: AsyncSession, *args, numRetries: Optional[int]=None, **context):
+        async def wrapper(self: AsyncSession, *args, numRetries: Optional[int]=None, retryCount: _PASS=None, **context):
             numRetries = numRetries if isinstance(numRetries, int) else self.numRetries
             for count in reversed(range(numRetries+1)):
                 try: return await func(self, *args, numRetries=numRetries, retryCount=count, **context)
@@ -1169,7 +1198,7 @@ class AsyncSession(RequestSession):
 ########################### Async Spider ##########################
 ###################################################################
 
-class AsyncSpider(Spider, AsyncSession):
+class AsyncSpider(AsyncSession, Spider):
     __metaclass__ = abc.ABCMeta
     asyncio = True
     operation = "spider"

@@ -1,14 +1,15 @@
 from gscraper.base.abstract import CustomDict, INVALID_OBJECT_TYPE_MSG
-from gscraper.base.types import _KT, _VT, TypeHint, IndexLabel, JsonData
+from gscraper.base.types import _KT, _VT, Arguments, Context, TypeHint, IndexLabel, JsonData
 from gscraper.utils.map import regex_get, replace_map
 
 from http.cookies import SimpleCookie
 from requests.cookies import RequestsCookieJar
 from urllib.parse import quote, urlencode, urlparse
+import asyncio
 import aiohttp
 import requests
 
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Coroutine, Dict, List, Literal, Optional, Union
 from ast import literal_eval
 import json
 import re
@@ -23,7 +24,7 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
     "Connection": "keep-alive",
-    "sec-ch-ua": '"Google Chrome";v="127", "Chromium";v="127", "Not:A-Brand";v="99"',
+    "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
     "Sec-Fetch-Dest": "empty",
@@ -59,6 +60,33 @@ def get_headers(authority=str(), referer=str(), cookies=str(), host=str(),
         headers["Content-Type"] = get_content_type(content_type, urlencoded, utf8)
     if xml: headers["X-Requested-With"] = "XMLHttpRequest"
     return dict(headers, **kwargs)
+
+
+###################################################################
+############################# Asyncio #############################
+###################################################################
+
+def apply_nest_asyncio():
+    import nest_asyncio
+    nest_asyncio.apply()
+
+
+def run_async_loop() -> asyncio.AbstractEventLoop:
+    try: return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
+def close_async_loop(loop: asyncio.AbstractEventLoop):
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.close()
+
+
+def asyncio_run(func: Coroutine, loop: asyncio.AbstractEventLoop, args: Arguments=tuple(), kwargs: Context=dict()) -> Any:
+    task = asyncio.create_task(func(*args, **kwargs))
+    return loop.run_until_complete(task)
 
 
 ###################################################################

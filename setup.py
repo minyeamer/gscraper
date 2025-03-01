@@ -15,7 +15,8 @@ REQUIRES = [
     "gspread>=5.6.2",
     "google-cloud-bigquery>=3.4.0",
     "holidays>=0.43",
-    "workalendar>=17.0.0"]
+    "workalendar>=17.0.0",
+]
 
 setup(
     name="gcp-scraper",
