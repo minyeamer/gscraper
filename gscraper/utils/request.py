@@ -352,7 +352,7 @@ def encode_cookies(cookies: Union[str,Dict], *args, **kwargs) -> str:
 def decode_cookies(cookies: Union[str,Dict], **kwargs) -> Dict:
     if not cookies: return kwargs
     elif isinstance(cookies, str):
-        cookies = dict(map(lambda x: regex_get("([^=]*)=(.*)", x, indices=0), cookies.split('; ')))
+        cookies = dict([__cookie.split('=', maxsplit=1) for __cookie in cookies.split('; ') if '=' in __cookie])
     return dict(cookies, **kwargs)
 
 

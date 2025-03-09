@@ -192,9 +192,8 @@ class Match(Function):
 
 
 class Cast(Apply):
-    def __init__(self, type: TypeHint, default: Optional[Any]=None, clean=False, drop_empty=False, **context):
-        Function.__init__(self, func=__CAST__, type=type, default=default, **context,
-            optional=dict(clean=clean, drop_empty=drop_empty), null_if=dict(clean=False, drop_empty=False))
+    def __init__(self, type: TypeHint, default: Optional[Any]=None, **kwargs):
+        Function.__init__(self, func=__CAST__, type=type, default=default, options=kwargs, null_if=dict(options=dict()))
 
 
 class Exists(Apply):
@@ -1254,9 +1253,8 @@ class Mapper(BaseSession):
         elif func == __MAP__: return self.__map__(__object, context=context, name=name, **kwargs)
         else: raise ForbiddenError(INVALID_APPLY_SPECIAL_MSG(func, context, field, name))
 
-    def __cast__(self, __object, type: TypeHint, default=None, clean=False, drop_empty=False,
-                context: Context=dict(), **kwargs) -> _VT:
-        context = dict(context, default=default, clean=clean, drop_empty=drop_empty)
+    def __cast__(self, __object, type: TypeHint, default=None, options=dict(), context: Context=dict(), **kwargs) -> _VT:
+        context = dict(context, default=default, **options)
         if isinstance(__object, List):
             return [cast_object(__e, type, **context) for __e in __object]
         else: return cast_object(__object, type, **context)
