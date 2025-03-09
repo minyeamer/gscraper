@@ -1496,10 +1496,19 @@ def to_excel(df: pd.DataFrame, file_name: str, sheet_name="Sheet1", index=False,
         if os.path.exists(file_name):
             os.remove(file_name)
         if if_error == "to_csv":
-            df.to_csv(os.path.splitext(file_name)[0]+".csv", index=index)
+            _escape_newline(df).to_csv(os.path.splitext(file_name)[0]+".csv", index=index)
         elif if_error == "error":
             raise exception
         else: return
+
+
+def _escape_newline(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for __column in df.columns:
+        if df[__column].dtype == "object":
+            try: df[__column] = df[__column].str.replace('\n', '\\n')
+            except: pass
+    return df
 
 
 def write_df(df: pd.DataFrame, writer: pd.ExcelWriter, sheet_name="Sheet1", index=False):
