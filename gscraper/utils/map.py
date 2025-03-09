@@ -16,7 +16,7 @@ from numbers import Real
 
 from ast import literal_eval
 from bs4 import BeautifulSoup, Tag
-from io import BytesIO
+from io import BytesIO, StringIO
 import numpy as np
 import json
 
@@ -40,7 +40,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 INVALID_ISIN_MSG = "Isin function requires at least one parameter: exact, include, and exclude."
 SOURCE_SEQUENCE_TYPE_MSG = "Required array of HTML source as input."
 LENGTH_MISMATCH_MSG = lambda left, right: f"Length of two input values are mismatched: [{left}, {right}]"
+
 FILE_PATTERN_MISMATCH_MSG = "No files matching the filename pattern exist."
+TABLE_PATH_ERROR_MSG = "Table path does not exist."
+TABLE_TYPE_ERROR_MSG = "Table type is not valid."
 
 
 def arg_or(*args: Union[bool,int,Set]) -> bool:
@@ -1534,53 +1537,25 @@ def _remove_illegal_characters(df: pd.DataFrame) -> pd.DataFrame:
 ############################## Table ##############################
 ###################################################################
 
-def read_table(io: Union[bytes,str], file_type: Literal["auto","html","xlsx","csv"]="auto",
-            sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: Optional[TypeMap]=None, engine=None,
-            parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
+def read_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv","html","xml"]="auto",
+            sheet_name: Optional[Union[str,int,List]]=0, header=None, dtype: Optional[TypeMap]=None, engine=None,
+            encoding=None, parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
             if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
             rename: RenameMap=dict(), regex_path=False, reverse_path=False) -> Union[Data,Dict[str,Data]]:
-    file_type = _get_table_type(io, file_type)
-    io = BytesIO(read_bytes(io, regex_path, reverse_path))
-    table = _read_table(io, file_type, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates)
+    io, file_type = _validate_table(io, file_type)
+    table = _read_table(io, file_type, sheet_name, header, dtype, engine, encoding, parse_dates)
     args = (columns, default, if_null, reorder, return_type, rename)
     if isinstance(table, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in table.items()}
     else: return _to_data(table, *args)
 
 
-def _get_table_type(io: Union[bytes,str], file_type: Literal["auto","html","xlsx","csv"]="auto") -> str:
-    if (file_type == "auto") and isinstance(io, str) and (os.path.splitext(io)[1] in (".xlsx",".html",".csv")):
-        return os.path.splitext(io)[1][1:]
-    else: return file_type
-
-
-def _read_table(io: BytesIO, file_type: Literal["auto","html","xlsx","csv"]="auto",
-                sheet_name: Optional[Union[str,int,List]]=0, dtype: Optional[TypeMap]=None, engine=None, **kwargs) -> pd.DataFrame:
-    if file_type == "html": return pd.read_html(io, converters=dtype, **kwargs)[cast_int(sheet_name)]
-    elif file_type == "xlsx":
-        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, dtype=dtype, **kwargs)
-        else: return pd.read_excel(io, sheet_name=sheet_name, dtype=dtype, engine=engine, **kwargs)
-    elif file_type == "csv": return pd.read_csv(io, dtype=dtype, engine=engine, **kwargs)
-    else: return _read_table_auto(io, sheet_name=sheet_name, dtype=dtype, engine=engine, **kwargs)
-
-
-def _read_table_auto(io: BytesIO, **kwargs) -> pd.DataFrame:
-    for file_type in ["html", "xlsx", "csv"]:
-        try: return _read_table(io, file_type, **kwargs)
-        except Exception as exception:
-            if file_type == "csv": raise exception
-
-
-def _read_xlrd(io: BytesIO, **kwargs) -> pd.DataFrame:
-    from xlrd import open_workbook
-    with open_workbook(file_contents=io.getvalue(), logfile=open(os.devnull, "w")) as wb:
-        return pd.read_excel(wb, engine="xlrd", **kwargs)
-
-
 def read_bytes(__object: Union[str,MappingData], regex_path=False, reverse_path=False) -> bytes:
     if isinstance(__object, str):
         file_path = get_file_path(__object, regex_path, reverse_path)
-        with open(file_path, "rb") as file:
-            return file.read()
+        if os.path.exists(file_path):
+            with open(file_path, "rb") as file:
+                return file.read()
+        else: raise ValueError(TABLE_PATH_ERROR_MSG)
     else: return to_bytes(__object)
 
 
@@ -1592,6 +1567,42 @@ def get_file_path(file_path: str, regex_path=False, reverse_path=False) -> str:
     raise ValueError(FILE_PATTERN_MISMATCH_MSG)
 
 
+def _validate_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv","html","xml"]="auto",
+                    regex_path=False, reverse_path=False) -> Tuple[BytesIO,str]:
+    if isinstance(io, str):
+        if (file_type == "auto") and (os.path.splitext(io)[1] in (".xlsx",".html")):
+            return BytesIO(read_bytes(io, regex_path, reverse_path)), os.path.splitext(io)[1][1:]
+        elif file_type in ("csv","html","xml"):
+            if io.endswith(f".{file_type}"):
+                return BytesIO(read_bytes(io, regex_path, reverse_path)), os.path.splitext(io)[1][1:]
+            else: return StringIO(io), file_type
+        else: raise ValueError(TABLE_TYPE_ERROR_MSG)
+    elif isinstance(io, bytes): return BytesIO(io), file_type
+    else: raise ValueError(TABLE_TYPE_ERROR_MSG)
+
+
+def _read_table(io: BytesIO, file_type: Literal["auto","xlsx","csv","html","xml"]="auto", sheet_name: Optional[Union[str,int,List]]=0,
+                header=None, dtype: Optional[TypeMap]=None, engine=None, encoding=None, parse_dates: Optional[IndexLabel]=None) -> pd.DataFrame:
+    if file_type == "xlsx":
+        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, header=header, dtype=dtype, parse_dates=parse_dates)
+        else: return pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates)
+    elif file_type == "csv": return pd.read_csv(io, header=header, dtype=dtype, engine=engine, encoding=encoding, parse_dates=parse_dates)
+    elif file_type == "html": return pd.read_html(io, header=header, converters=dtype, encoding=encoding, parse_dates=parse_dates)[cast_int(sheet_name)]
+    elif file_type == "xml": return pd.read_xml(io, converters=dtype, encoding=encoding, parse_dates=parse_dates)
+    else: return _read_table_auto(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, encoding=encoding, parse_dates=parse_dates)
+
+
+def _read_table_auto(io: BytesIO, **kwargs) -> pd.DataFrame:
+    try: return _read_table(io, "html", **kwargs)
+    except: return _read_table(io, "xlsx", **kwargs)
+
+
+def _read_xlrd(io: BytesIO, **kwargs) -> pd.DataFrame:
+    from xlrd import open_workbook
+    with open_workbook(file_contents=io.getvalue(), logfile=open(os.devnull, "w")) as wb:
+        return pd.read_excel(wb, engine="xlrd", **kwargs)
+
+
 def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
             default=None, if_null: Literal["drop","pass"]="pass", reorder=True,
             return_type: Optional[TypeHint]="dataframe", rename: RenameMap=dict()) -> Data:
@@ -1600,7 +1611,7 @@ def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),
     return filter_data(data, columns, default=default, if_null=if_null, reorder=reorder)
 
 
-def read_table_bulk(dir: str, file_pattern=None, file_type: Literal["auto","html","xlsx","csv"]="auto",
+def read_table_bulk(dir: str, file_pattern=None, file_type: Literal["auto","xlsx","csv","html","xml"]="auto",
                     sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype: Optional[TypeMap]=None, engine=None,
                     parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
                     if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
