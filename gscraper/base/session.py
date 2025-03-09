@@ -1587,9 +1587,9 @@ class Parser(SequenceMapper):
             context = RESPONSE_CONTEXT(**REQUEST_CONTEXT(**self.from_locals(locals, drop, **context)))
             is_valid = self.is_valid_response(response)
             if notna(context.get("countPath")) and (ITER_INDEX in context):
-                self.iterateCount[context[ITER_INDEX]] = cast_int(get_value(response, context["countPath"]))
+                self.iterateCount[context[ITER_INDEX]] = cast_int(get_value(response, context["countPath"], hier=True))
             if notna(context.get("returnPath")):
-                return get_value(response, context["returnPath"])
+                return get_value(response, context["returnPath"], hier=True)
             data = func(self, response, *args, **context) if is_valid else init_origin(func)
             self.checkpoint(iter_task(context, "parse"), where=func.__name__, msg={"data":data}, save=data)
             self.log_results(data, **context)

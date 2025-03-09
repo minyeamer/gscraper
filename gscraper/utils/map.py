@@ -319,14 +319,18 @@ def sloc(source: Tag, selectors: Sequence[_KT], default=None, if_null: Literal["
     return list(__m.values()) if values_only else __m
 
 
-def get_value(data: ResponseData, field: Union[_KT,Index], default=None, **kwargs) -> _VT:
-    if not field: return default
-    elif isinstance(data, Dict): return hier_get(data, field, default)
-    elif is_records(data): return [hier_get(__m, field, default) for __m in data]
+def get_value(data: ResponseData, field: Union[_KT,Index], default=None, hier=False, **kwargs) -> _VT:
+    if not field:
+        return default
+    elif isinstance(data, Dict):
+        return hier_get(data, field, default)
+    elif is_records(data):
+        return hier_get(data, field, default) if hier else [hier_get(__m, field, default) for __m in data]
     elif isinstance(data, PANDAS_DATA):
         column = get_scala(field)
         return fillna_data(data[column], default) if column in data else default
-    elif isinstance(data, Tag): return hier_select(data, field, default, **kwargs)
+    elif isinstance(data, Tag):
+        return hier_select(data, field, default, **kwargs)
     elif is_array(data):
         index = get_scala(field)
         return data[index] if index < len(data) else default
