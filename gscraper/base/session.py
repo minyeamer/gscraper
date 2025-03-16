@@ -37,6 +37,7 @@ import datetime as dt
 import json
 import pandas as pd
 import re
+import xml.dom.minidom
 
 
 CHECKPOINT = [
@@ -614,17 +615,27 @@ class BaseSession(CustomDict):
         suffix = self.now("%Y%m%d%H%M%S") if suffix == "now" else suffix
         file_name = concat(prefix, suffix, sep='_')
         ext = ext if ext else type(data)
-        if is_dataframe_type(ext):
+        if ext == "json":
+            self.save_json(data, file_name+".json")
+        elif is_dataframe_type(ext):
             self.save_dataframe(data, file_name+".xlsx")
         elif is_tag_type(ext):
             self.save_source(data, file_name+".html")
-        else: self.save_json(data, file_name+".json")
+        elif ext == "xml":
+            self.save_xml(data, file_name+".xml")
+        else: self.save_text(data, file_name+".txt")
+
+    def save_text(self, data: Data, file_name: str):
+        file_name = self._validate_file(file_name)
+        with open(file_name, "w", encoding="utf-8") as file:
+            file.write(str(data))
 
     def save_json(self, data: Data, file_name: str):
         file_name = self._validate_file(file_name)
-        if isinstance(data, pd.DataFrame): data = data.to_dict("records")
-        with open(file_name, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+        if isinstance(data, pd.DataFrame):
+            data = data.to_dict("records")
+        with open(file_name, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2, ensure_ascii=False, default=str)
 
     def save_dataframe(self, data: Data, file_name: str, sheet_name="Sheet1", rename: Union[Literal["name","desc"],Dict]="desc"):
         file_name = self._validate_file(file_name)
@@ -634,21 +645,19 @@ class BaseSession(CustomDict):
     def rename_save_data(self, data: pd.DataFrame, rename: Union[Literal["name","desc"],Dict]="desc", **context) -> pd.DataFrame:
         return data.rename(columns=(rename if isinstance(rename, Dict) else self.get_rename_map(to=rename)))
 
-    def _safe_save_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
-        try: self._write_dataframe(data, file_name, sheet_name)
-        except: data.to_csv(os.path.splitext(file_name)[0]+".csv", sheet_name=sheet_name, index=False)
-
-    def _write_dataframe(self, data: pd.DataFrame, file_name: str, sheet_name="Sheet1"):
-        writer = pd.ExcelWriter(file_name, engine="xlsxwriter", engine_kwargs={"options":{"strings_to_urls":False}})
-        data.to_excel(writer, sheet_name=sheet_name, index=False)
-        writer.close()
-
     def save_source(self, data: Union[str,Tag], file_name: str):
         file_name = self._validate_file(file_name)
         if not isinstance(data, Tag):
             data = BeautifulSoup(data, "html.parser")
-        with open(file_name, "w", encoding="utf-8") as f:
-            f.write(str(data.prettify()))
+        with open(file_name, "w", encoding="utf-8") as file:
+            file.write(str(data.prettify()))
+
+    def save_xml(self, data: Union[str,xml.dom.minidom.Document], file_name: str):
+        file_name = self._validate_file(file_name)
+        if not isinstance(data, xml.dom.minidom.Document):
+            data = xml.dom.minidom.parseString(data)
+        with open(file_name, "w", encoding="utf-8") as file:
+            file.write(data.toprettyxml())
 
     def _isin_log_list(self, point: str, log_list: Keyword) -> bool:
         log_list = cast_list(log_list)
@@ -670,13 +679,28 @@ class BaseSession(CustomDict):
     def _validate_extension(self, data: Data, ext: Optional[TypeHint]=None) -> Tuple[Data, TypeHint]:
         if ext: return data, ext
         elif isinstance(data, str) and data:
-            try: return json.loads(data), "json"
-            except: return data, "html"
-        elif isinstance(data, pd.DataFrame):
+            return self._validate_extension_by_text(data)
+        else: return self._validate_extension_by_type(data)
+
+    def _validate_extension_by_text(self, data: str) -> Tuple[Data, TypeHint]:
+        try:
+            if data.startswith('[') or data.startswith('{'):
+                return json.loads(data), "json"
+            elif data.startswith("<!doctype html>"):
+                return BeautifulSoup(data, "html.parser"), "html"
+            elif data.startswith("<?xml"):
+                return xml.dom.minidom.parseString(data), "xml"
+            else: return data, "text"
+        except: return data, "text"
+
+    def _validate_extension_by_type(self, data: Data) -> Tuple[Data, TypeHint]:
+        if isinstance(data, (Dict,List)):
+            return data, "json"
+        if isinstance(data, pd.DataFrame):
             return data, "dataframe"
         elif isinstance(data, Tag):
             return data, "html"
-        else: return data, "json"
+        else: return data, "text"
 
     def _validate_dir(self, dir: str):
         if not os.path.exists(dir):
