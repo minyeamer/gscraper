@@ -68,7 +68,7 @@ PARAMS_CONTEXT = lambda init=None, data=None, task=None, worker=None, locals=Non
 REQUEST_CONTEXT = lambda session=None, semaphore=None, asynchronous=None, method=None, url=None, referer=None, messages=None, \
                         params=None, encode=None, data=None, json=None, headers=None, cookies=None, allow_redirects=None, \
                         validate=None, valid=None, invalid=None, close=None, encoding=None, features=None, \
-                        table_type=None, table_idx=None, table_header=None, engine=None, **context: context
+                        table_type=None, table_idx=None, table_options=None, **context: context
 
 
 RESPONSE_CONTEXT = lambda response=None, tzinfo=None, countryCode=None, iterateUnit=None, logName=None, logLevel=None, logFile=None, \
@@ -354,7 +354,7 @@ class Variable(Value):
 
     def validate_iterable(self, type: TypeHint, iterable=False) -> Union[TypeHint,bool]:
         if isinstance(type, str) and bool(re.match(r"\[[^]]*\]", type)):
-            type = re.sub(r"^\[([^]]*)\]$", "\g<1>", type)
+            type = re.sub(r"^\[([^]]*)\]$", r"\g<1>", type)
             iterable = True
         return type, iterable
 

@@ -948,11 +948,11 @@ class Spider(RequestSession, Iterator, Parser):
                     data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                     session: Optional[requests.Session]=None, allow_redirects=True, validate=False,
                     exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                    table_type="auto", table_idx=0, table_header=None, engine=None, encoding=None, **context) -> pd.DataFrame:
+                    table_type="auto", table_idx=0, table_options: Dict=dict(), **context) -> pd.DataFrame:
         with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(log_response(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return read_table(response.content, file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine, encoding=encoding)
+            return read_table(response.content, file_type=table_type, sheet_name=table_idx, **table_options)
 
     def get_request_options(self) -> Dict:
         return dict(timeout=self.timeout, verify=self.ssl)
@@ -1432,11 +1432,11 @@ class AsyncSpider(AsyncSession, Spider):
                             data=None, json=None, headers=None, cookies=str(), *args, locals: Dict=dict(), drop: _KT=list(),
                             session: Optional[aiohttp.ClientSession]=None, allow_redirects=True, validate=False,
                             exception: Literal["error","interrupt"]="interrupt", valid: Optional[Status]=None, invalid: Optional[Status]=None,
-                            table_type="auto", table_idx=0, table_header=None, engine=None, encoding=None, **context) -> pd.DataFrame:
+                            table_type="auto", table_idx=0, table_options: Dict=dict(), **context) -> pd.DataFrame:
         async with session.request(method, url, **messages, allow_redirects=allow_redirects, **self.get_request_options()) as response:
             self.logger.info(await log_client(response, url=url, **self.get_iterator(**context, _index=True)))
             if validate: self.validate_status(response, how=exception, valid=valid, invalid=invalid)
-            return read_table(await response.read(), file_type=table_type, sheet_name=table_idx, header=table_header, engine=engine, encoding=encoding)
+            return read_table(await response.read(), file_type=table_type, sheet_name=table_idx, **table_options)
 
     def get_request_options(self) -> Dict:
         timeout = aiohttp.ClientTimeout(total=self.timeout) if self.timeout is not None else None

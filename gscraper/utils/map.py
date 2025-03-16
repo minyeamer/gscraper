@@ -8,7 +8,7 @@ from gscraper.base.types import is_comparable, is_kwargs_allowed
 
 from gscraper.utils import isna, notna, is_empty, exists
 from gscraper.utils import isna_plus, notna_plus, is_empty_plus, exists_plus
-from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set, cast_int
+from gscraper.utils.cast import cast_str, cast_list, cast_tuple, cast_set
 
 from typing import Any, Dict, List, Set
 from typing import Callable, Iterable, Literal, Optional, Sequence, Tuple, Union
@@ -615,13 +615,40 @@ def concat_array(left: Sequence, right: Sequence, left_index: Sequence[int]) -> 
     return [left.pop(0) if is_left else right.pop(0) for is_left in left_index]
 
 
-def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first") -> Dict:
-    base = dict()
+def chain_dict(__object: Sequence[Dict], keep: Literal["fist","last"]="first",
+                from_iterable=False, from_dataframe=False) -> Dict:
+    if from_iterable: return _chain_iter_dict(__object)
+    elif from_dataframe: return _chain_df_dict(__object)
+    else: base = dict()
     for __m in __object:
         if not isinstance(__m, Dict): continue
         for __key, __value in __m.items():
             if (keep == "first") and (__key in base): continue
             else: base[__key] = __value
+    return base
+
+
+def _chain_iter_dict(__object: Sequence[Dict[str,Iterable]]) -> Dict[str,Iterable]:
+    base = dict()
+    for __m in __object:
+        if not isinstance(__m, Dict): continue
+        for __key, __value in __m.items():
+            if isinstance(__value, Iterable):
+                if __key not in base:
+                    base[__key] = __value
+                else: base[__key] += __value
+    return base
+
+
+def _chain_df_dict(__object: Sequence[Dict[str,pd.DataFrame]]) -> Dict[str,pd.DataFrame]:
+    base = dict()
+    for __m in __object:
+        if not isinstance(__m, Dict): continue
+        for __key, __value in __m.items():
+            if df_exists(__value):
+                if __key not in base:
+                    base[__key] = __value
+                else: base[__key] = pd.concat([base[__key], __value])
     return base
 
 
@@ -1538,12 +1565,12 @@ def _remove_illegal_characters(df: pd.DataFrame) -> pd.DataFrame:
 ###################################################################
 
 def read_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv","html","xml"]="auto",
-            sheet_name: Optional[Union[str,int,List]]=0, header=None, dtype: Optional[TypeMap]=None, engine=None,
-            encoding=None, parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
+            sheet_name: Optional[Union[str,int,List]]=0, header=None, dtype=None, engine=None,
+            parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
             if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
-            rename: RenameMap=dict(), regex_path=False, reverse_path=False) -> Union[Data,Dict[str,Data]]:
-    io, file_type = _validate_table(io, file_type)
-    table = _read_table(io, file_type, sheet_name, header, dtype, engine, encoding, parse_dates)
+            rename: RenameMap=dict(), regex_path=False, reverse_path=False, **options) -> Union[Data,Dict[str,Data]]:
+    io, file_type = _validate_table(io, file_type, regex_path, reverse_path)
+    table = _read_table(io, file_type, sheet_name, header, dtype, engine, parse_dates, **options)
     args = (columns, default, if_null, reorder, return_type, rename)
     if isinstance(table, Dict): return {__sheet: _to_data(__data, *args) for __sheet, __data in table.items()}
     else: return _to_data(table, *args)
@@ -1582,25 +1609,27 @@ def _validate_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv"
 
 
 def _read_table(io: BytesIO, file_type: Literal["auto","xlsx","csv","html","xml"]="auto", sheet_name: Optional[Union[str,int,List]]=0,
-                header=None, dtype: Optional[TypeMap]=None, engine=None, encoding=None, parse_dates: Optional[IndexLabel]=None) -> pd.DataFrame:
+                header=None, dtype=None, engine=None, parse_dates: Optional[IndexLabel]=None, **options) -> pd.DataFrame:
     if file_type == "xlsx":
-        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, header=header, dtype=dtype, parse_dates=parse_dates)
-        else: return pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates)
-    elif file_type == "csv": return pd.read_csv(io, header=header, dtype=dtype, engine=engine, encoding=encoding, parse_dates=parse_dates)
-    elif file_type == "html": return pd.read_html(io, header=header, converters=dtype, encoding=encoding, parse_dates=parse_dates)[cast_int(sheet_name)]
-    elif file_type == "xml": return pd.read_xml(io, converters=dtype, encoding=encoding, parse_dates=parse_dates)
-    else: return _read_table_auto(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, encoding=encoding, parse_dates=parse_dates)
+        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, header=header, dtype=dtype, parse_dates=parse_dates, **options)
+        else: return pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
+    elif file_type == "csv": return pd.read_csv(io, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
+    elif file_type == "html":
+        table_idx = sheet_name if isinstance(sheet_name, int) else 0
+        return pd.read_html(io, header=header, converters=dtype, parse_dates=parse_dates, **options)[table_idx]
+    elif file_type == "xml": return pd.read_xml(io, converters=dtype, parse_dates=parse_dates, **options)
+    else: return _read_table_auto(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
 
 
-def _read_table_auto(io: BytesIO, **kwargs) -> pd.DataFrame:
-    try: return _read_table(io, "html", **kwargs)
-    except: return _read_table(io, "xlsx", **kwargs)
+def _read_table_auto(io: BytesIO, **options) -> pd.DataFrame:
+    try: return _read_table(io, "html", **options)
+    except: return _read_table(io, "xlsx", **options)
 
 
-def _read_xlrd(io: BytesIO, **kwargs) -> pd.DataFrame:
+def _read_xlrd(io: BytesIO, **options) -> pd.DataFrame:
     from xlrd import open_workbook
     with open_workbook(file_contents=io.getvalue(), logfile=open(os.devnull, "w")) as wb:
-        return pd.read_excel(wb, engine="xlrd", **kwargs)
+        return pd.read_excel(wb, engine="xlrd", **options)
 
 
 def _to_data(df: pd.DataFrame, columns: Optional[IndexLabel]=list(),

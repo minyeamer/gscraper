@@ -12,4 +12,4 @@ from .utils.logs import *
 from .utils.map import *
 from .utils.request import *
 
-__version__ = "4.2.5"
+__version__ = "4.2.6"
