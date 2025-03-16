@@ -51,7 +51,7 @@ PAGE_PARAMS = ["size", "pageSize", "pageStart", "offset"]
 DATE_ITERATOR = ["startDate", "endDate"]
 DATE_PARAMS = ["startDate", "endDate", "interval"]
 
-SCHEMA, ROOT, MATCH, RANK = "schema", "root", "match", "rank"
+SCHEMA, ROOT, MATCH = "schema", "root", "match"
 SCHEMA_KEY = "__key"
 SCHEMA_KEYS = [SCHEMA, ROOT, MATCH]
 
@@ -1497,7 +1497,6 @@ class SequenceMapper(Mapper):
         start = self._get_start_by(countby, count=len(__r), **context)
         for __i, __m in enumerate(__r, start=(start if start else 0)):
             if not self._match_response(__m, match, **context): continue
-            __i = __m[RANK] if isinstance(__m.get(RANK), int) else __i
             kwargs = dict(context, discard=discard, count=len(__r), __i=__i)
             __m = self._map_response(__m, flow, responseType="dict", match=True, **kwargs)
             if __m: data.append(__m)
@@ -1507,11 +1506,11 @@ class SequenceMapper(Mapper):
                     match: Optional[Union[MatchFunction,bool]]=None, discard=True, **context) -> pd.DataFrame:
         df = self._limit_data_size(df, **context)
         start = self._get_start_by(countby, count=len(df), **context)
-        if isinstance(start, int) and (RANK not in df):
-            df[RANK] = range(start, len(df)+start)
+        if isinstance(start, int):
+            df.index = range(start, len(df)+start)
         match = self._match_response(df, match, **context)
         df = df[[match]*len(df) if isinstance(match, bool) else match]
-        context = dict(context, responseType="dataframe", match=True, discard=discard, count=len(df))
+        context = dict(context, responseType="dataframe", match=True, discard=discard, count=len(df), __i=df.index.tolist())
         return self._map_response(df, flow, **context)
 
     def _map_tag_list(self, tag_list: Sequence[Tag], flow: Flow, countby: Optional[Literal["page","start"]]=None,
