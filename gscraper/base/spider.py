@@ -457,7 +457,9 @@ class RequestSession(UploadSession):
     def get_delay(self, delay: Optional[Range]=None) -> Union[float,int]:
         delay = delay if delay is not None else self.delay
         if isinstance(delay, (float,int)): return delay
-        elif isinstance(delay, Sequence) and delay: return get_random_seconds(*delay[:2])
+        elif isinstance(delay, Sequence):
+            if len(delay) > 1: return get_random_seconds(*delay[:2])
+            else: return self.get_delay(delay[0] if delay else None)
         else: return 0.
 
     def get_retry_delay(self, delay: Optional[Range]=None, numRetries=0, retryCount=0, increment=1., **context) -> Union[float,int]:

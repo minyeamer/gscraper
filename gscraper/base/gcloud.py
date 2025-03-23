@@ -9,7 +9,7 @@ from gscraper.base.types import TabularData, PostData, from_literal
 from gscraper.utils.cast import cast_float, cast_list, cast_date, cast_datetime, cast_datetime_format
 from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
 from gscraper.utils.logs import log_table
-from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table, arg_and
+from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table
 from gscraper.utils.map import cloc, to_dataframe, convert_data, rename_data, filter_data, apply_data
 
 from google.oauth2 import service_account
@@ -568,14 +568,15 @@ class GoogleUploader(GoogleQueryReader):
         return data
 
     def map_ignore_data(self, data: pd.DataFrame, base: pd.DataFrame, primary_key: List[str], name=str(), **context) -> pd.DataFrame:
-        if not primary_key: return data
-        elif len(primary_key) == 1:
-            return data[~data[primary_key[0]].isin(set(base[primary_key[0]]))]
-        else: return data[~arg_and(*[data[__key].isin(set(base[__key])) for __key in primary_key])]
+        if (not primary_key) or base.empty: return data
+        data = data.merge(base[primary_key].drop_duplicates(primary_key), how="left", on=primary_key, indicator=True)
+        return data[data["_merge"] == "left_only"].drop(columns=["_merge"])
 
-    def map_upsert_data(self, data: pd.DataFrame, base: pd.DataFrame, primary_key: List[str], name=str(), **context) -> pd.DataFrame:
-        if not primary_key: return data
-        else: return data.set_index(primary_key).combine_first(base.set_index(primary_key)).reset_index()
+    def map_upsert_data(self, data: pd.DataFrame, base: pd.DataFrame, primary_key: List[str],
+                        agg_func: Dict=dict(), name=str(), **context) -> pd.DataFrame:
+        if (not primary_key) or base.empty: return data
+        agg_func = agg_func if agg_func else {__column:"first" for __column in base.columns if __column not in primary_key}
+        return pd.concat([data, base]).groupby(primary_key).agg(agg_func).reset_index()
 
     ###################################################################
     ######################### Map Upload Data #########################
