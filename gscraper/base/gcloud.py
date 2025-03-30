@@ -62,7 +62,7 @@ UPLOAD = lambda name=str(): f"upload_{name}" if name else "upload"
 ############################# Messages ############################
 ###################################################################
 
-INVALID_QUERY_MSG = "To update data, parameters for source and destination are required."
+UPLOAD_FAILED_MSG = "There is no upload data."
 UPLOAD_GBQ_MSG = lambda table: f"Uploading data to '{table}' table"
 
 UPLOAD_STATUS_TITLE = "▷ Upload Status"
@@ -593,6 +593,8 @@ class GoogleUploader(GoogleQueryReader):
             data = self.filter_by_partition(data, **partition)
         if isinstance(set_date, Dict) and set_date:
             data = self.set_upload_date(data, set_date=set_date, name=name, **context)
+        if data.empty:
+            raise ValueError(UPLOAD_FAILED_MSG)
         return data
 
     def get_upload_columns(self, name=str(), **context) -> IndexLabel:
