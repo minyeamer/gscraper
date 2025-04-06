@@ -99,7 +99,8 @@ def cast_datetime(__object: DateFormat, default=None, tzinfo: Optional[Timezone]
         if isinstance(__object, dt.datetime): __datetime = __object
         elif isinstance(__object, dt.date): __datetime = dt.datetime(*__object.timetuple()[:6])
         elif get_ts_unit(__object): return from_timestamp(__object, default, tzinfo, astimezone)
-        else: __datetime = dateparse(__object, yearfirst=True)
+        elif isinstance(__object, str): __datetime = dateparse(__object, yearfirst=True)
+        else: return default
         return set_timezone(__datetime, tzinfo, astimezone, droptz)
     except CastError: return default
 
@@ -122,7 +123,8 @@ def cast_date(__object: DateFormat, default=None, from_ordinal=False) -> dt.date
         if from_ordinal: return dt.date.fromordinal(cast_int(__object, clean=False))
         elif isinstance(__object, dt.datetime): return __object.date()
         elif isinstance(__object, dt.date): return __object
-        else: return dateparse(__object, yearfirst=True).date()
+        elif isinstance(__object, str): return dateparse(__object, yearfirst=True).date()
+        else: return default
     except CastError: return default
 
 

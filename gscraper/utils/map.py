@@ -1565,7 +1565,7 @@ def _remove_illegal_characters(df: pd.DataFrame) -> pd.DataFrame:
 ###################################################################
 
 def read_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv","html","xml"]="auto",
-            sheet_name: Optional[Union[str,int,List]]=0, header=None, dtype=None, engine=None,
+            sheet_name: Optional[Union[str,int,List]]=0, header=0, dtype=None, engine=None,
             parse_dates: Optional[IndexLabel]=None, columns: Optional[IndexLabel]=list(), default=None,
             if_null: Literal["drop","pass"]="pass", reorder=True, return_type: Optional[TypeHint]="dataframe",
             rename: RenameMap=dict(), regex_path=False, reverse_path=False, **options) -> Union[Data,Dict[str,Data]]:
@@ -1609,15 +1609,15 @@ def _validate_table(io: Union[bytes,str], file_type: Literal["auto","xlsx","csv"
 
 
 def _read_table(io: BytesIO, file_type: Literal["auto","xlsx","csv","html","xml"]="auto", sheet_name: Optional[Union[str,int,List]]=0,
-                header=None, dtype=None, engine=None, parse_dates: Optional[IndexLabel]=None, **options) -> pd.DataFrame:
+                header=0, dtype=None, engine=None, parse_dates: Optional[IndexLabel]=None, **options) -> pd.DataFrame:
     if file_type == "xlsx":
-        if engine == "xlrd": return _read_xlrd(io, sheet_name=sheet_name, header=header, dtype=dtype, parse_dates=parse_dates, **options)
-        else: return pd.read_excel(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
-    elif file_type == "csv": return pd.read_csv(io, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
+        if engine == "xlrd": return _read_xlrd(io, **notna_dict(sheet_name=sheet_name, header=header, dtype=dtype, parse_dates=parse_dates), **options)
+        else: return pd.read_excel(io, **notna_dict(sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates), **options)
+    elif file_type == "csv": return pd.read_csv(io, **notna_dict(header=header, dtype=dtype, engine=engine, parse_dates=parse_dates), **options)
     elif file_type == "html":
         table_idx = sheet_name if isinstance(sheet_name, int) else 0
-        return pd.read_html(io, header=header, converters=dtype, parse_dates=parse_dates, **options)[table_idx]
-    elif file_type == "xml": return pd.read_xml(io, converters=dtype, parse_dates=parse_dates, **options)
+        return pd.read_html(io, **notna_dict(header=header, converters=dtype, parse_dates=parse_dates), **options)[table_idx]
+    elif file_type == "xml": return pd.read_xml(io, **notna_dict(converters=dtype, parse_dates=parse_dates), **options)
     else: return _read_table_auto(io, sheet_name=sheet_name, header=header, dtype=dtype, engine=engine, parse_dates=parse_dates, **options)
 
 

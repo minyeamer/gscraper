@@ -7,7 +7,7 @@ from gscraper.base.types import _KT, Context, TypeHint, IndexLabel, DateFormat, 
 from gscraper.base.types import TabularData, PostData, from_literal
 
 from gscraper.utils.cast import cast_float, cast_list, cast_date, cast_datetime, cast_datetime_format
-from gscraper.utils.date import get_datetime, get_date, DATE_UNIT
+from gscraper.utils.date import get_datetime, DATE_UNIT
 from gscraper.utils.logs import log_table
 from gscraper.utils.map import isna, df_empty, to_array, kloc, to_dict, to_records, read_table
 from gscraper.utils.map import cloc, to_dataframe, convert_data, rename_data, filter_data, apply_data
@@ -31,7 +31,7 @@ import os
 import requests
 import sys
 
-from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Tuple, Union
 import datetime as dt
 import json
 import re
@@ -390,10 +390,12 @@ class GspreadUpdateContext(OptionalDict):
 class BigQueryPartition(OptionalDict):
     def __init__(self, field: str, type: Literal["date","datetime","number"]="date",
                 unit: Literal["auto","hour","day","month","year"]="auto",
-                left=None, right=None, value=None, limited=True, drop_partition=False):
+                left=None, right=None, value=None, limited=True, drop_partition=False, filter_partition=True):
         has_value = (left is not None) or (right is not None) or (value is not None)
-        super().__init__(field=field, type=type, unit=unit,
-            optional=dict(left=left, right=right, value=value, limited=limited, drop_partition=drop_partition, has_value=has_value))
+        super().__init__(field=field, type=type, unit=unit.lower(),
+            optional=dict(
+                left=left, right=right, value=value, limited=limited,
+                drop_partition=drop_partition, filter_partition=filter_partition, has_value=has_value))
 
 
 class BigQueryUploadContext(OptionalDict):
@@ -530,7 +532,7 @@ class GoogleUploader(GoogleQueryReader):
     def validate_partition(self, partition=None, startDate=None, endDate=None, busdate=False, **context) -> BigQueryPartition:
         if not (isinstance(partition, Dict) and partition.get("field")):
             return dict()
-        elif partition.get("type") == "date":
+        elif (partition.get("type") in ("date","datetime")) and (partition.get("unit") != "hour"):
             if ("value" not in partition):
                 left, right = self.get_date_pair(partition.get("left", startDate), partition.get("right", endDate), busdate=busdate)
                 partition["left"], partition["right"] = left, right
@@ -583,14 +585,12 @@ class GoogleUploader(GoogleQueryReader):
     ###################################################################
 
     def map_upload_data(self, data: pd.DataFrame, columns: IndexLabel=list(), primary_key: List[str]=list(),
-                        partition=dict(), set_date=None, name=str(), **context) -> pd.DataFrame:
+                        set_date=None, name=str(), **context) -> pd.DataFrame:
         columns = cast_list(columns) if columns else self.get_upload_columns(name=name, **context)
         if columns:
             data = cloc(data, columns, if_null="pass", reorder=True)
         if primary_key:
             data = data.dropna(subset=primary_key, how="any").drop_duplicates(primary_key)
-        if isinstance(partition, Dict) and partition.get("field") and partition.get("has_value"):
-            data = self.filter_by_partition(data, **partition)
         if isinstance(set_date, Dict) and set_date:
             data = self.set_upload_date(data, set_date=set_date, name=name, **context)
         if data.empty:
@@ -599,15 +599,6 @@ class GoogleUploader(GoogleQueryReader):
 
     def get_upload_columns(self, name=str(), **context) -> IndexLabel:
         return list()
-
-    def filter_by_partition(self, data: pd.DataFrame, field: str, type="date", left=None, right=None, value=None, **kwargs) -> pd.DataFrame:
-        if type == "date": values = data[field].apply(cast_date)
-        elif type == "datetime": values = data[field].apply(cast_datetime)
-        else: values = data[field]
-        match_left = (values>=left) if left is not None else values.notna()
-        match_right = (values<=right) if right is not None else values.notna()
-        match_value = (values==value) if value is not None else values.notna()
-        return data[match_left&match_right&match_value]
 
     def set_upload_date(self, data: pd.DataFrame, set_date: Dict[str,DateFormat], name=str(), **context) -> pd.DataFrame:
         data = data.copy()
@@ -700,6 +691,60 @@ def _to_excel_date(__value) -> Union[int,Any]:
 
 BIGQUERY_JOB = {"append":"WRITE_APPEND", "replace":"WRITE_TRUNCATE"}
 
+class PartitionedIterator:
+    data = None
+    field = str()
+    index = 0
+    partition = list()
+    drop_partition = False
+
+    def __init__(self, data: pd.DataFrame, field: str, type: Literal["date","datetime","number"]="date",
+                unit: Literal["auto","hour","day","month","year"]="auto", left=None, right=None, value=None,
+                drop_partition=False, filter_partition=True, has_value=False, **kwargs):
+        data, isCreated = self.create_partition(data, field, type, unit)
+        self.data = data
+        self.field = "_PARTITIONTIME" if isCreated else field
+        self.index = 0
+        self.partition = self.set_partition(data, self.field, type, left, right, value, (filter_partition and has_value))
+        self.drop_partition = True if isCreated else drop_partition
+
+    def create_partition(self, data: pd.DataFrame, field: str, type: Literal["date","datetime","number"]="date",
+                        unit: Literal["auto","hour","day","month","year"]="auto") -> Tuple[pd.DataFrame,bool]:
+        if type in ("date","datetime"):
+            data = data.copy()
+            if (type == "datetime") or (unit != "auto"):
+                data["_PARTITIONTIME"] = data[field].apply(lambda x: get_datetime(x, unit=(unit if unit in DATE_UNIT else "day")))
+                return data[data["_PARTITIONTIME"].notna()], True
+            else: data[field] = data[field].apply(cast_date)
+        return data[data[field].notna()], False
+
+    def set_partition(self, data: pd.DataFrame, field: str, type: Literal["date","datetime","number"]="date",
+                    left=None, right=None, value=None, filter_partition=True) -> List:
+        if filter_partition:
+            if field == "_PARTITIONTIME": left, right, value = cast_datetime(left), cast_datetime(right), cast_datetime(value)
+            elif type == "date": left, right, value = cast_date(left), cast_date(right), cast_date(value)
+            data = self.filter_partition(data, field, left, right, value)
+        return sorted(data[field].unique())
+
+    def filter_partition(self, data: pd.DataFrame, field: str, left=None, right=None, value=None) -> pd.DataFrame:
+        __left = (data[field] >= left) if left is not None else data[field].notna()
+        __right = (data[field] <= right) if right is not None else data[field].notna()
+        __value = (data[field] == value) if value is not None else data[field].notna()
+        return data[__left&__right&__value]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index < len(self.partition):
+            partition = self.data[self.data[self.field]==self.partition[self.index]]
+            self.index += 1
+            return partition.drop(columns=[self.field]) if self.drop_partition else partition
+        else: raise StopIteration
+
+    def __len__(self):
+        return len(self.partition)
+
 
 def create_connection(project_id: str, account: Account=dict()) -> bigquery.Client:
     account = account if account and isinstance(account, dict) else read_gcloud(account)
@@ -775,25 +820,13 @@ def upload_gbq(table: str, project_id: str, data: pd.DataFrame, if_exists: Liter
     if if_exists == "replace":
         client.query(make_delete_query(table, **partition))
     job_config = LoadJobConfig(write_disposition="WRITE_APPEND")
-    iterator = make_gbq_iterator(data, **partition) if _is_partitioned_data(data, partition) else [data]
+    iterator = PartitionedIterator(data, **partition) if _is_partitioned_data(data, partition) else [data]
     for __data in tqdm(iterator, desc=UPLOAD_GBQ_MSG(table), disable=(not progress)):
         client.load_table_from_dataframe(__data, f"{project_id}.{table}", job_config=job_config)
 
 
 def _is_partitioned_data(data: pd.DataFrame, partition: BigQueryPartition=dict()) -> bool:
     return isinstance(partition, Dict) and partition.get("field") and (partition["field"] in data)
-
-
-def make_gbq_iterator(data: pd.DataFrame, field: str, type: Literal["date","datetime","number"]="date",
-                    unit: Literal["auto","hour","day","month","year"]="auto",
-                    drop_partition=False, **kwargs) -> Iterable[pd.DataFrame]:
-    if (type in ("date","datetime")) and (unit.lower() in DATE_UNIT):
-        if unit == "day": data["_PARTITIONTIME"] = data[field].apply(get_date)
-        else: data["_PARTITIONTIME"] = data[field].apply(lambda x: get_datetime(x, unit=unit))
-        field, drop_partition = "_PARTITIONTIME", True
-    for __part in sorted(data[field].unique()):
-        if not drop_partition: yield data[data[field]==__part]
-        else: yield data[data[field]==__part].drop(columns=[field])
 
 
 def upsert_gbq(table: str, project_id: str, data: pd.DataFrame, primary_key: List[str],
