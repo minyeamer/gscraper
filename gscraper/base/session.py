@@ -14,7 +14,7 @@ from gscraper.utils import isna, isna_plus, notna, notna_plus, exists
 from gscraper.utils.cast import cast_object, cast_str, cast_list, cast_tuple, cast_float, cast_int, cast_int1
 from gscraper.utils.date import now, today, get_datetime, get_datetime_pair, get_date, get_date_pair, set_date
 from gscraper.utils.date import is_daily_frequency, get_date_range
-from gscraper.utils.logs import CustomLogger, get_log_level, dumps_data, log_error, log_data
+from gscraper.utils.logs import CustomLogger, get_log_level, log_object, log_error, log_data
 from gscraper.utils.map import exists_one, howin, safe_apply, safe_len, get_scala, unique
 from gscraper.utils.map import concat, rename_value, regex_get, replace_map, startswith, endswith, arg_and, union, diff
 from gscraper.utils.map import iloc, is_same_length, unit_records, concat_array, transpose_array
@@ -489,7 +489,6 @@ class BaseSession(CustomDict):
         logName = logName if logName else self.operation
         self.logLevel = get_log_level(logLevel)
         self.logFile = logFile
-        self.logJson = bool(logFile)
         self.logger = CustomLogger(name=logName, level=self.logLevel, file=self.logFile)
         self.localSave = localSave
         self.debugPoint = cast_list(debugPoint)
@@ -602,7 +601,7 @@ class BaseSession(CustomDict):
     def checkpoint(self, point: str, where: str, msg: Dict,
                     save: Optional[Data]=None, ext: Optional[TypeHint]=None):
         if self.debugPoint and self._isin_log_list(point, self.debugPoint):
-            self.logger.warning(dict(point=f"({point})", **dumps_data(msg, limit=0)))
+            self.logger.warning(log_object(dict(point=f"({point})", **msg)))
         if self.extraSave and self._isin_log_list(point, self.extraSave) and notna(save):
             save, ext = self._validate_extension(save, ext)
             self._validate_dir(CHECKPOINT_PATH)
@@ -734,7 +733,7 @@ class BaseSession(CustomDict):
 
     def log_error(self, func: Callable, msg: Dict):
         func_name = f"{func.__name__}({self.__class__.__name__})"
-        self.logger.error(log_error(func_name, json=self.logJson, **msg))
+        self.logger.error(log_error(func_name, **msg))
         self.errors.append(msg)
 
     def debug_error(self, exception: Exception, func: Callable, msg: Dict):
@@ -1151,7 +1150,7 @@ class Mapper(BaseSession):
             data = self._merge_base(data, __base)
             try: __base = self._map_field(data, __base, field, **context)
             except Exception as exception:
-                self.logger.error(EXCEPTION_MSG(context, field))
+                self.logger.error(log_object({"message": EXCEPTION_MSG(context, field)}))
                 raise exception
         return __base
 
@@ -1623,7 +1622,7 @@ class Parser(SequenceMapper):
         return True
 
     def log_results(self, data: Data, **context):
-        self.logger.info(log_data(data, **context))
+        self.logger.info(log_data(data, context=context))
 
     @validate_response
     def parse(self, response: Any, *args, locals: Dict=dict(), drop: _KT=list(),

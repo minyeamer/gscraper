@@ -329,7 +329,7 @@ class GoogleQueryReader(BaseSession):
         data = read_gspread(key, sheet, fields, default, if_null, head, headers, **kwargs)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={KEY:key, SHEET:sheet, DATA:data}, save=data)
-        self.logger.info(log_table(data, name=name, key=key, sheet=sheet, dump=self.logJson))
+        self.logger.info(log_table(data, name=name, key=key, sheet=sheet))
         return data
 
     def read_gbq(self, query: str, project_id: str, return_type: Literal["records","dataframe"]="dataframe",
@@ -337,7 +337,7 @@ class GoogleQueryReader(BaseSession):
         data = read_gbq(query, project_id, return_type=return_type, account=account)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_gspread", msg={QUERY:query, PID:project_id, DATA:data}, save=data)
-        self.logger.info(log_table(data, name=name, query=query, project_id=project_id, dump=self.logJson))
+        self.logger.info(log_table(data, name=name, query=query, project_id=project_id))
         return data
 
     def read_excel(self, file_path: str, sheet_name: Union[str,int]=0,
@@ -350,7 +350,7 @@ class GoogleQueryReader(BaseSession):
         data = read_table(file_path, sheet_name=sheet_name, columns=fields, default=default, if_null=if_null, **kwargs)
         if isinstance(size, int): data = data[:size]
         self.checkpoint(READ(name), where="read_excel", msg={FILEPATH:file_path, SHEETNAME:sheet_name, DATA:data}, save=data)
-        self.logger.info(log_table(data, name=name, file_path=file_path, sheet_name=sheet_name, dump=self.logJson))
+        self.logger.info(log_table(data, name=name, file_path=file_path, sheet_name=sheet_name))
         return data
 
     def set_query(self, queryList: GoogleQueryList=list(), account: Account=dict()):
@@ -496,7 +496,7 @@ class GoogleUploader(GoogleQueryReader):
         data = self.from_base_data(data, read, **params, **context)
         data = self.map_upload_data(data, columns=columns, **params, **context)
         self.checkpoint(UPLOAD(name), where="upload_gspread", msg={KEY:key, SHEET:sheet, MODE:mode, DATA:data}, save=data)
-        self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode, dump=self.logJson))
+        self.logger.info(log_table(data, name=name, key=key, sheet=sheet, mode=mode))
         cell = "A2" if mode == "replace" else (cell if cell else str())
         update_gspread(key, sheet, data, cell=cell, clear=(mode == "replace"), account=account)
         return True
@@ -525,7 +525,7 @@ class GoogleUploader(GoogleQueryReader):
         data = self.from_base_data(data, read, **params, **context)
         data = self.map_upload_data(data, columns=columns, **params, **context)
         self.checkpoint(UPLOAD(name), where="upload_gbq", msg={TABLE:table, PID:project_id, MODE:mode, DATA:data}, save=data)
-        self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode, dump=self.logJson))
+        self.logger.info(log_table(data, name=name, table=table, pid=project_id, mode=mode))
         upload_gbq(table, project_id, data, mode, partition, progress, account)
         return True
 

@@ -36,7 +36,6 @@ Context = Dict[Any,Any]
 ContextMapper = Callable[[Context],Context]
 
 LogLevel = Union[str,int]
-LogMessage = Dict[str,str]
 
 TypeHint = Union[Type, str]
 TypeList = Sequence[TypeHint]
@@ -44,8 +43,7 @@ TypeList = Sequence[TypeHint]
 GENERAL_TYPES = {
     "_KT":_KT, "_VT":_VT, "_PASS":_PASS, "_TYPE":_TYPE, "_BOOL":_BOOL, "Comparable":Comparable,
     "ClassInstance":ClassInstance, "Arguments":Arguments, "ArgsMapper":ArgsMapper,
-    "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "LogMessage":LogMessage,
-    "TypeHint":TypeHint, "TypeList":TypeList
+    "Context":Context, "ContextMapper":ContextMapper, "LogLevel":LogLevel, "TypeHint":TypeHint, "TypeList":TypeList
 }
 
 
