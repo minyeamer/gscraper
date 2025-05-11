@@ -456,10 +456,12 @@ def _isin(__iterable: Iterable, values: Keyword, how: Literal["exact","include",
 
 
 def _isin_value(__object: Any, __value: Any, how: Literal["exact","include","exclude"]="exact") -> bool:
-    if how == "exact": return __value == __object
-    elif how == "include": return __value in __object
-    elif how == "exclude": return __value not in __object
-    else: raise ValueError(INVALID_ISIN_MSG)
+    try:
+        if how == "exact": return __value == __object
+        elif how == "include": return __value in __object
+        elif how == "exclude": return __value not in __object
+        else: raise ValueError(INVALID_ISIN_MSG)
+    except: return False
 
 
 def isin_dict(__m: Dict, keys: Optional[_KT]=None, exact: Optional[Keyword]=None, include: Optional[Keyword]=None,
@@ -650,6 +652,16 @@ def _chain_df_dict(__object: Sequence[Dict[str,pd.DataFrame]]) -> Dict[str,pd.Da
                     base[__key] = __value
                 else: base[__key] = pd.concat([base[__key], __value])
     return base
+
+
+def concat_records(__r: Records, apply: Optional[Callable]=None, sep='\n') -> Dict:
+    if not __r: return dict()
+    __m = {__key: (apply(__value) if apply is not None else str(__value)) for __key, __value in __r[0].items()}
+    for __row in __r[1:]:
+        for __key, __value in __row.items():
+            if __key in __m:
+                __m[__key] = __m[__key] + sep + (apply(__value) if apply is not None else str(__value))
+    return __m
 
 
 def concat_df(__object: Sequence[pd.DataFrame], axis=0, keep: Literal["fist","last"]="first") -> pd.DataFrame:

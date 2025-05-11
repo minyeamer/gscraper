@@ -2185,6 +2185,7 @@ class Pipeline(EncryptedSession):
 
     def concat_task_fields(self, task_fields: IndexLabel, fields: IndexLabel) -> IndexLabel:
         if isinstance(task_fields, Tuple): return task_fields
+        elif not fields: return list()
         else: return unique(*cast_list(task_fields), *fields)
 
     def set_task_params(self, task: Task, **context) -> Tuple[Context,Context]:
