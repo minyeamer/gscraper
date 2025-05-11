@@ -511,17 +511,16 @@ class RequestSession(UploadSession):
     def arrange_data(func):
         @functools.wraps(func)
         def wrapper(self: RequestSession, *args, fields: Union[List,Dict]=list(), ranges: RangeFilter=list(),
-                    returnType: Optional[TypeHint]=None, convert_dtypes=False, sortby=str(), reset_index=False, **context):
+                    returnType: Optional[TypeHint]=None, convert_dtypes=False, sortby=list(), reset_index=False, **context):
             data = func(self, *args, fields=fields, ranges=ranges, returnType=returnType, **context)
-            reset_index = reset_index or (len(sortby) > 0) or (len(ranges) > 0)
-            params = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=reset_index)
+            params = dict(returnType=returnType, convert_dtypes=convert_dtypes, sortby=sortby, reset_index=(reset_index or sortby or ranges))
             if self.mappedReturn:
                 return traversal_dict(data, fields, apply=self.filter_data_plus, dropna=True, **params)
             else: return self.filter_data_plus(data, fields, **params)
         return wrapper
 
     def filter_data_plus(self, data: Data, fields: IndexLabel=list(), returnType: Optional[TypeHint]=None,
-                        convert_dtypes=False, sortby=str(), reset_index=False) -> Data:
+                        convert_dtypes=False, sortby=list(), reset_index=False) -> Data:
         data = self.filter_data(data, fields=fields, returnType=returnType)
         if not isinstance(data, pd.DataFrame): return data
         if convert_dtypes: data = _convert_dtypes(data)
